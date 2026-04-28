@@ -1,95 +1,83 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { prisma } from '../config/database';
-
-// Durée de validité du token : 8 heures (durée d'une journée de travail)
-const TOKEN_EXPIRATION = '8h';
+import * as authService from '../services/auth.service';
 
 // Nom du cookie qui stockera le token JWT côté navigateur
 const COOKIE_NAME = 'auth_token';
 
+/**
+ * POST /api/auth/login
+ *
+ * Authentifie l'utilisateur avec ses identifiants et le magasin choisi.
+ * Délègue toute la logique métier à authService.login().
+ * Pose un cookie httpOnly en cas de succès.
+ *
+ * Body attendu : { username: string, password: string, storeId: string }
+ */
 export async function login(req: Request, res: Response): Promise<void> {
-  // On extrait les données envoyées par le formulaire de connexion
-  const { username, password } = req.body;
+  // On extrait les trois champs attendus du formulaire de connexion
+  const { username, password, storeId } = req.body as {
+    username: unknown;
+    password: unknown;
+    storeId: unknown;
+  };
 
-  // Validation basique : s'assurer que les deux champs sont présents
-  if (!username || !password) {
+  // Validation de présence des trois champs obligatoires
+  if (!username || !password || !storeId) {
     res.status(400).json({
       success: false,
-      message: 'L\'identifiant et le mot de passe sont obligatoires.',
+      message: 'L\'identifiant, le mot de passe et le magasin sont obligatoires.',
+    });
+    return;
+  }
+
+  // Vérification que les champs sont bien des chaînes de caractères
+  if (
+    typeof username !== 'string' ||
+    typeof password !== 'string' ||
+    typeof storeId !== 'string'
+  ) {
+    res.status(400).json({
+      success: false,
+      message: 'Format de données invalide.',
     });
     return;
   }
 
   try {
-    // Étape 1 : Chercher l'utilisateur dans la base de données par son identifiant
-    const utilisateurTrouve = await prisma.user.findUnique({
-      where: { username: username },
-      include: { role: true },
-    });
+    // Le service gère : recherche user, vérification mdp, vérification accès store, JWT, SessionLog
+    const resultat = await authService.login(username, password, storeId);
 
-    // Si aucun utilisateur n'est trouvé avec cet email, on retourne une erreur
-    // Note : le message d'erreur est volontairement vague pour ne pas
-    // indiquer à un attaquant si l'email existe ou non dans la base
-    if (!utilisateurTrouve) {
-      res.status(401).json({
-        success: false,
-        message: 'Identifiant ou mot de passe incorrect.',
-      });
-      return;
-    }
-
-    // Étape 2 : Comparer le mot de passe fourni avec le hash stocké en base
-    const motDePasseValide = await bcrypt.compare(
-      password,
-      utilisateurTrouve.pwd_hash
-    );
-
-    if (!motDePasseValide) {
-      res.status(401).json({
-        success: false,
-        message: 'Identifiant ou mot de passe incorrect.',
-      });
-      return;
-    }
-
-    // Étape 3 : Le mot de passe est correct. On crée le token JWT.
-    // Ce token contient les informations essentielles de l'utilisateur
-    // et sera vérifié à chaque requête protégée.
-    const secret = process.env.JWT_SECRET as string;
-    const tokenPayload = {
-      userId: utilisateurTrouve.id,
-      email: utilisateurTrouve.email,
-      roleId: utilisateurTrouve.role_id,
-    };
-
-    const token = jwt.sign(tokenPayload, secret, {
-      expiresIn: TOKEN_EXPIRATION,
-    });
-
-    // Étape 4 : On envoie le token dans un cookie httpOnly.
-    // httpOnly = le cookie ne peut PAS être lu par le JavaScript côté navigateur
-    // (protection contre les attaques XSS)
-    // secure = le cookie ne sera envoyé que via HTTPS (désactivé en local pour le développement)
-    res.cookie(COOKIE_NAME, token, {
+    // On envoie le token dans un cookie httpOnly.
+    // httpOnly = le cookie ne peut PAS être lu par JavaScript côté navigateur (protection XSS)
+    // secure = envoyé uniquement via HTTPS en production
+    res.cookie(COOKIE_NAME, resultat.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 8 * 60 * 60 * 1000, // 8 heures en millisecondes
     });
 
-    // On retourne les informations publiques de l'utilisateur (sans le hash du mot de passe)
+    // On retourne les informations publiques de l'utilisateur connecté
     res.status(200).json({
       success: true,
       message: 'Connexion réussie.',
-      user: {
-        id: utilisateurTrouve.id,
-        email: utilisateurTrouve.email,
-        role: utilisateurTrouve.role.name,
-      },
+      user: resultat.user,
     });
   } catch (error) {
+    // Les erreurs métier (identifiants invalides, accès refusé) sont distinguées
+    // des erreurs techniques pour retourner le bon code HTTP
+    if (error instanceof Error) {
+      const messagesMetier = ['Identifiants invalides', 'Accès à ce magasin non autorisé'];
+      if (messagesMetier.includes(error.message)) {
+        res.status(401).json({
+          success: false,
+          message: error.message,
+        });
+        return;
+      }
+    }
+
+    // Toute autre erreur = erreur technique — on ne logue pas les détails vers le client
     console.error('Erreur lors de la connexion :', error);
     res.status(500).json({
       success: false,
@@ -98,6 +86,12 @@ export async function login(req: Request, res: Response): Promise<void> {
   }
 }
 
+/**
+ * POST /api/auth/logout
+ *
+ * Déconnecte l'utilisateur en effaçant le cookie d'authentification.
+ * Simple et sans appel à la base de données.
+ */
 export async function logout(req: Request, res: Response): Promise<void> {
   // Pour déconnecter l'utilisateur, on supprime le cookie du navigateur
   // en le réécrivant avec une date d'expiration dans le passé
@@ -106,4 +100,28 @@ export async function logout(req: Request, res: Response): Promise<void> {
     success: true,
     message: 'Déconnexion réussie.',
   });
+}
+
+/**
+ * GET /api/auth/stores
+ *
+ * Retourne la liste de tous les magasins disponibles.
+ * Endpoint public — utilisé pour alimenter le sélecteur de magasin
+ * dans le formulaire de connexion avant que l'utilisateur soit authentifié.
+ */
+export async function getStores(req: Request, res: Response): Promise<void> {
+  try {
+    const magasins = await authService.getAvailableStores();
+
+    res.status(200).json({
+      success: true,
+      stores: magasins,
+    });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des magasins :', error);
+    res.status(500).json({
+      success: false,
+      message: 'Impossible de récupérer la liste des magasins.',
+    });
+  }
 }

@@ -1,12 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-// Structure des données que nous stockons à l'intérieur du token JWT
+// Structure des données que nous stockons à l'intérieur du token JWT.
+// storeId est obligatoire : depuis la refonte du login, l'utilisateur choisit
+// son magasin au moment de la connexion, donc le JWT le contient toujours.
 interface TokenPayload {
   userId: string;
   email: string;
   roleId: string;
-  storeId: string | null;
+  storeId: string;
 }
 
 // On étend le type Request d'Express pour pouvoir y attacher

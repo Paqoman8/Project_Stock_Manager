@@ -3,9 +3,16 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import apiClient from '@/lib/apiClient';
+
+// Interface représentant un magasin retourné par GET /api/auth/stores
+interface Store {
+  id: string;
+  name: string;
+  location: string | null;
+}
 
 // Schéma de validation du formulaire avec Zod
 // L'identifiant est une chaîne simple, sans validation de format email
@@ -17,6 +24,10 @@ const loginSchema = z.object({
   password: z
     .string()
     .min(1, { message: 'Le mot de passe est obligatoire.' }),
+  // Magasin obligatoire depuis la mise à jour de l'API login
+  storeId: z
+    .string()
+    .min(1, { message: 'Veuillez sélectionner un magasin.' }),
 });
 
 // Type TypeScript déduit automatiquement depuis le schéma Zod
@@ -26,6 +37,33 @@ export default function LoginPage() {
   const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Liste des magasins chargée depuis GET /api/auth/stores au montage
+  const [stores, setStores] = useState<Store[]>([]);
+  const [storesLoading, setStoresLoading] = useState(true);
+
+  // Chargement de la liste des magasins au montage du composant (endpoint public)
+  useEffect(() => {
+    async function fetchStores() {
+      try {
+        const response = await apiClient.get<{ stores: Store[] }>('/api/auth/stores');
+        const liste = response.data?.stores;
+        if (Array.isArray(liste)) {
+          setStores(liste);
+        } else {
+          setStores([]);
+        }
+      } catch {
+        // En cas d'échec, on laisse la liste vide — le formulaire restera bloqué
+        // et l'utilisateur verra le message de validation Zod s'il tente de soumettre
+        setStores([]);
+      } finally {
+        setStoresLoading(false);
+      }
+    }
+
+    fetchStores();
+  }, []);
 
   // Initialisation du formulaire avec react-hook-form et la validation Zod
   const {
@@ -42,10 +80,11 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      // Envoi des identifiants à l'API backend
+      // Envoi des identifiants et du magasin sélectionné à l'API backend
       await apiClient.post('/api/auth/login', {
         username: data.username,
         password: data.password,
+        storeId: data.storeId,
       });
 
       // Succès : on redirige vers le tableau de bord principal
@@ -124,7 +163,7 @@ export default function LoginPage() {
             </div>
 
             {/* Champ Mot de passe */}
-            <div className="mb-5">
+            <div className="mb-4">
               <label
                 htmlFor="password"
                 className="block text-sm font-medium text-textSecondary mb-1"
@@ -148,6 +187,45 @@ export default function LoginPage() {
               {errors.password && (
                 <p className="mt-1 text-xs text-danger" role="alert">
                   {errors.password.message}
+                </p>
+              )}
+            </div>
+
+            {/* Champ Sélection du magasin — obligatoire depuis la v2 de l'API login */}
+            <div className="mb-5">
+              <label
+                htmlFor="storeId"
+                className="block text-sm font-medium text-textSecondary mb-1"
+              >
+                Magasin
+              </label>
+              <select
+                id="storeId"
+                disabled={storesLoading}
+                className={`
+                  w-full px-3 py-2 text-sm bg-background border rounded
+                  text-textPrimary
+                  focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary
+                  transition-colors
+                  disabled:opacity-60 disabled:cursor-not-allowed
+                  ${errors.storeId ? 'border-danger' : 'border-borderLight'}
+                `}
+                {...register('storeId')}
+              >
+                {/* Option par défaut non sélectionnable */}
+                <option value="" disabled>
+                  {storesLoading ? 'Chargement...' : 'Sélectionnez un magasin'}
+                </option>
+                {stores.map((store) => (
+                  <option key={store.id} value={store.id}>
+                    {store.name}
+                    {store.location ? ` — ${store.location}` : ''}
+                  </option>
+                ))}
+              </select>
+              {errors.storeId && (
+                <p className="mt-1 text-xs text-danger" role="alert">
+                  {errors.storeId.message}
                 </p>
               )}
             </div>

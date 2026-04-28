@@ -12,6 +12,8 @@ module.exports = {
         surface: "#FFFFFF",
         textMain: "#212529",
         textMuted: "#6C757D",
+        textPrimary: "#212529",
+        textSecondary: "#6C757D",
         primary: "#0D6EFD",
         borderLight: "#DEE2E6",
         success: "#198754",
