@@ -17,7 +17,8 @@ model Role {
 
 model User {
   id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email        String            @unique
+  username     String            @unique
+  email        String?           @unique
   pwd_hash     String
   role_id      String            @db.Uuid
   role         Role              @relation(fields: [role_id], references: [id])
