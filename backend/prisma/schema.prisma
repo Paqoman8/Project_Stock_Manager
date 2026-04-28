@@ -1,0 +1,182 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Role {
+  id    String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name  String @unique
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String            @unique
+  pwd_hash     String
+  role_id      String            @db.Uuid
+  role         Role              @relation(fields: [role_id], references: [id])
+  store_access UserStoreAccess[]
+  sessions     SessionLog[]
+  transactions Transaction[]
+  audit_logs   AuditLog[]
+
+  @@map("users")
+}
+
+model Store {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  location         String?
+  user_access      UserStoreAccess[]
+  sessions         SessionLog[]
+  inventories      Inventory[]
+  transfers_from   Transfer[]        @relation("TransfersFrom")
+  transfers_to     Transfer[]        @relation("TransfersTo")
+  transactions     Transaction[]
+  audit_logs       AuditLog[]
+
+  @@map("stores")
+}
+
+model UserStoreAccess {
+  user_id  String @db.Uuid
+  store_id String @db.Uuid
+  user     User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  store    Store  @relation(fields: [store_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, store_id])
+  @@map("user_store_access")
+}
+
+model SessionLog {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id  String   @db.Uuid
+  store_id String   @db.Uuid
+  login_at DateTime @default(now())
+  user     User     @relation(fields: [user_id], references: [id])
+  store    Store    @relation(fields: [store_id], references: [id])
+
+  @@map("sessions_log")
+}
+
+model Category {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  parent_id String?    @db.Uuid
+  parent    Category?  @relation("CategoryHierarchy", fields: [parent_id], references: [id])
+  children  Category[] @relation("CategoryHierarchy")
+  products  Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku               String            @unique
+  name              String
+  price             Decimal           @db.Decimal(10, 2)
+  category_id       String            @db.Uuid
+  category          Category          @relation(fields: [category_id], references: [id])
+  inventories       Inventory[]
+  transfer_items    TransferItem[]
+  transaction_items TransactionItem[]
+
+  @@map("products")
+}
+
+model Inventory {
+  store_id       String  @db.Uuid
+  product_id     String  @db.Uuid
+  stock_physical Int     @default(0)
+  stock_reserved Int     @default(0)
+  store          Store   @relation(fields: [store_id], references: [id])
+  product        Product @relation(fields: [product_id], references: [id])
+
+  @@id([store_id, product_id])
+  @@map("inventory")
+}
+
+enum TransferStatus {
+  PENDING
+  DONE
+  CANCEL
+}
+
+model Transfer {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  from_store_id String         @db.Uuid
+  to_store_id   String         @db.Uuid
+  status        TransferStatus @default(PENDING)
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+  from_store    Store          @relation("TransfersFrom", fields: [from_store_id], references: [id])
+  to_store      Store          @relation("TransfersTo", fields: [to_store_id], references: [id])
+  items         TransferItem[]
+
+  @@map("transfers")
+}
+
+model TransferItem {
+  transfer_id String   @db.Uuid
+  product_id  String   @db.Uuid
+  qty         Int
+  transfer    Transfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [product_id], references: [id])
+
+  @@id([transfer_id, product_id])
+  @@map("transfer_items")
+}
+
+enum TransactionType {
+  SALE
+  REFUND
+  EXPENSE
+}
+
+model Transaction {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id     String            @db.Uuid
+  user_id      String            @db.Uuid
+  type         TransactionType
+  total_amount Decimal           @db.Decimal(10, 2)
+  created_at   DateTime          @default(now())
+  store        Store             @relation(fields: [store_id], references: [id])
+  user         User              @relation(fields: [user_id], references: [id])
+  items        TransactionItem[]
+
+  @@map("transactions")
+}
+
+model TransactionItem {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transaction_id String      @db.Uuid
+  product_id     String      @db.Uuid
+  qty            Int
+  price_at_sale  Decimal     @db.Decimal(10, 2)
+  transaction    Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  product        Product     @relation(fields: [product_id], references: [id])
+
+  @@map("transaction_items")
+}
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String   @db.Uuid
+  store_id    String   @db.Uuid
+  action_type String
+  entity_id   String   @db.Uuid
+  before_data Json?    @db.JsonB
+  after_data  Json?    @db.JsonB
+  reason      String?  @db.Text
+  created_at  DateTime @default(now())
+  user        User     @relation(fields: [user_id], references: [id])
+  store       Store    @relation(fields: [store_id], references: [id])
+
+  @@map("audit_logs")
+}
