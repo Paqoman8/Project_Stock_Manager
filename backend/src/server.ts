@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import http from 'http';
 import { Server } from 'socket.io';
 import authRouter from './routes/authRoutes';
+import userRouter from './routes/userRoutes';
+import roleRouter from './routes/roleRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -45,8 +47,15 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'L\'API GStock est opérationnelle' });
 });
 
-// Routes d'authentification (login, logout)
+// Routes d'authentification (login, logout, me)
 app.use('/api/auth', authRouter);
+
+// Routes de gestion des utilisateurs (CRUD — réservé Super Administrateur)
+app.use('/api/users', userRouter);
+
+// Routes des rôles — endpoint public pour alimenter les formulaires d'admin.
+// "Super Administrateur" est exclu systématiquement de la réponse.
+app.use('/api/roles', roleRouter);
 
 
 // --- Gestion des connexions WebSocket ---

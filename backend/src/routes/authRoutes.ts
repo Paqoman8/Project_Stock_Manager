@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { login, logout, getStores } from '../controllers/authController';
+import { login, logout, getStores, getMe, getRoles } from '../controllers/authController';
 import { requireAuth } from '../middlewares/authMiddleware';
 
 const authRouter = Router();
@@ -38,5 +38,11 @@ authRouter.post('/login', loginRateLimiter, login);
 // Route protégée — nécessite d'être connecté (le middleware vérifie le token JWT).
 // POST /api/auth/logout
 authRouter.post('/logout', requireAuth, logout);
+
+// Route protégée — retourne le profil complet de l'utilisateur connecté.
+// Sans rate limit : appel léger, prévu pour être appelé fréquemment par le frontend
+// (ex : hydratation du contexte utilisateur au chargement de l'app).
+// GET /api/auth/me
+authRouter.get('/me', requireAuth, getMe);
 
 export default authRouter;

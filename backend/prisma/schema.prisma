@@ -21,6 +21,7 @@ model User {
   email        String?           @unique
   pwd_hash     String
   role_id      String            @db.Uuid
+  is_active    Boolean           @default(true)
   role         Role              @relation(fields: [role_id], references: [id])
   store_access UserStoreAccess[]
   sessions     SessionLog[]

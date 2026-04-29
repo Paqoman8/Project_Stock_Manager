@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import * as authService from '../services/auth.service';
+import * as userRepository from '../repositories/user.repository';
+import { prisma } from '../config/database';
+import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 // Nom du cookie qui stockera le token JWT côté navigateur
 const COOKIE_NAME = 'auth_token';
@@ -67,7 +70,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     // Les erreurs métier (identifiants invalides, accès refusé) sont distinguées
     // des erreurs techniques pour retourner le bon code HTTP
     if (error instanceof Error) {
-      const messagesMetier = ['Identifiants invalides', 'Accès à ce magasin non autorisé'];
+      const messagesMetier = ['Identifiants invalides', 'Accès à ce magasin non autorisé', 'Ce compte a été désactivé. Contactez votre administrateur.'];
       if (messagesMetier.includes(error.message)) {
         res.status(401).json({
           success: false,
@@ -100,6 +103,109 @@ export async function logout(req: Request, res: Response): Promise<void> {
     success: true,
     message: 'Déconnexion réussie.',
   });
+}
+
+/**
+ * GET /api/auth/me
+ *
+ * Retourne le profil complet de l'utilisateur actuellement connecté.
+ * Protégé par requireAuth — req.user contient le payload JWT décodé.
+ *
+ * On va chercher les données fraîches en base (et non dans le JWT) pour garantir
+ * que username, email, roleName et storeName sont à jour même si modifiés
+ * depuis la dernière connexion.
+ *
+ * Réponse : { success, user: { id, username, email, roleId, roleName, storeId, storeName, isActive } }
+ *
+ * Sécurité : pwd_hash n'est JAMAIS retourné dans cette réponse.
+ */
+export async function getMe(req: AuthenticatedRequest, res: Response): Promise<void> {
+  // req.user est garanti présent par requireAuth — assertion non-null sûre ici
+  const { userId, roleId, storeId } = req.user!;
+
+  try {
+    // Récupération de l'utilisateur en base — données toujours fraîches
+    const utilisateur = await userRepository.findById(userId);
+
+    if (!utilisateur) {
+      res.status(404).json({
+        success: false,
+        message: 'Utilisateur introuvable.',
+      });
+      return;
+    }
+
+    // Récupération du nom du rôle depuis la base (ne pas se fier au JWT)
+    const role = await prisma.role.findUnique({
+      where: { id: roleId },
+      select: { name: true },
+    });
+
+    // Récupération du nom du magasin de connexion actuel
+    const magasin = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { name: true },
+    });
+
+    res.status(200).json({
+      success: true,
+      user: {
+        id: utilisateur.id,
+        username: utilisateur.username,
+        email: utilisateur.email,
+        roleId,
+        roleName: role?.name ?? null,
+        storeId,
+        storeName: magasin?.name ?? null,
+        isActive: utilisateur.is_active,
+      },
+    });
+  } catch (erreur) {
+    console.error('Erreur lors de la récupération du profil utilisateur :', erreur);
+    res.status(500).json({
+      success: false,
+      message: 'Une erreur interne est survenue.',
+    });
+  }
+}
+
+/**
+ * GET /api/roles
+ *
+ * Retourne la liste de tous les rôles disponibles, à l'exclusion du rôle
+ * "Super Administrateur" qui est réservé au compte initial créé par le seed.
+ *
+ * Endpoint public (pas de requireAuth) — utilisé pour alimenter les listes
+ * déroulantes de création/modification d'utilisateur côté frontend.
+ *
+ * Sécurité : le rôle "Super Administrateur" est exclu côté base de données
+ * pour éviter toute erreur d'attribution, même si le frontend ne l'affiche pas.
+ *
+ * Réponse : { success: true, roles: [{ id: string, name: string }] }
+ */
+export async function getRoles(req: Request, res: Response): Promise<void> {
+  try {
+    // On exclut systématiquement "Super Administrateur" — ce rôle ne peut pas
+    // être attribué via l'API. Filtrage côté DB pour ne pas exposer l'ID non plus.
+    const roles = await prisma.role.findMany({
+      where: {
+        name: { not: 'Super Administrateur' },
+      },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+
+    res.status(200).json({
+      success: true,
+      roles,
+    });
+  } catch (erreur) {
+    console.error('Erreur lors de la récupération des rôles :', erreur);
+    res.status(500).json({
+      success: false,
+      message: 'Impossible de récupérer la liste des rôles.',
+    });
+  }
 }
 
 /**

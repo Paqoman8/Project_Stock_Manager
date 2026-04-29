@@ -17,7 +17,9 @@ async function main() {
 
   // 1. Création des rôles par défaut
   // upsert = créer si n'existe pas, ignorer si déjà présent (idempotent)
-  const roles = ['Super Administrateur', 'Manager Magasin', 'Opérateur'];
+  // "Administrateur" est ajouté entre "Super Administrateur" et "Manager Magasin".
+  // Il couvre les opérations d'administration sans les droits réservés au Super Admin.
+  const roles = ['Super Administrateur', 'Administrateur', 'Manager Magasin', 'Opérateur'];
   const createdRoles = [];
 
   for (const roleName of roles) {

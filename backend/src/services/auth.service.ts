@@ -79,6 +79,16 @@ export async function login(
     throw new Error('Identifiants invalides');
   }
 
+  // Étape 2b : Vérification que le compte est actif
+  // Ce check est volontairement placé APRÈS la vérification du mot de passe :
+  // on s'assure que l'utilisateur connaît ses identifiants avant de lui révéler
+  // que son compte est désactivé. Un message distinct est acceptable ici car
+  // c'est un ERP interne — les utilisateurs sont connus et doivent pouvoir
+  // contacter leur administrateur s'ils sont bloqués.
+  if (!utilisateur.is_active) {
+    throw new Error('Ce compte a été désactivé. Contactez votre administrateur.');
+  }
+
   // Étape 3 : Vérification de l'accès au magasin demandé
   const accesAutorise = await userRepository.hasStoreAccess(utilisateur.id, storeId);
   if (!accesAutorise) {
