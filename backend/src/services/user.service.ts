@@ -141,7 +141,7 @@ export async function createUser(
   // Étape 1 : Unicité du username
   const usernameExistant = await userRepository.findByUsername(input.username);
   if (usernameExistant) {
-    throw new Error('Username déjà utilisé');
+    throw new Error('Identifiant déjà utilisé');
   }
 
   // Étape 2 : Unicité de l'email (seulement si fourni)
@@ -205,6 +205,7 @@ export async function updateUser(
   id: string,
   input: UpdateUserInput,
   requesterRoleId: string,
+  requesterId: string,
 ): Promise<UserWithDetails> {
   // Étape 1 : Vérification que l'utilisateur existe, avec son rôle inclus.
   // On a besoin du rôle pour appliquer les règles de protection du Super Admin et
@@ -217,7 +218,16 @@ export async function updateUser(
     throw new Error('Utilisateur introuvable');
   }
 
-  // Règle de sécurité absolue 1 : on ne peut jamais changer le rôle du SA.
+  // Règle de sécurité absolue : seul le SA peut modifier son propre compte.
+  // Aucun autre utilisateur, y compris un Administrateur, ne peut toucher
+  // au compte Super Administrateur — ni le username, ni l'email, ni le mot
+  // de passe, ni quoi que ce soit d'autre.
+  if (utilisateurExistant.role.name === ROLE_SUPER_ADMIN && requesterId !== id) {
+    throw new Error('Le compte Super Administrateur ne peut pas être modifié de cette façon.');
+  }
+
+  // Règle de sécurité absolue : on ne peut jamais changer le rôle du SA,
+  // même si c'est le SA lui-même qui en fait la demande.
   if (utilisateurExistant.role.name === ROLE_SUPER_ADMIN && input.roleId !== undefined) {
     throw new Error('Impossible de modifier le rôle du Super Administrateur.');
   }
@@ -245,16 +255,23 @@ export async function updateUser(
     }
   }
 
-  // Règle de hiérarchie 4 : un Admin ne peut pas modifier un autre Admin.
-  // On vérifie le rôle requêteur et le rôle de la cible.
-  // Note : si input.roleId était fourni, getNomRole a déjà été appelé dans le bloc
-  // précédent — on refait l'appel ici car les blocs sont conditionnels indépendants.
-  // Le coût est une requête Prisma supplémentaire dans le cas d'un Admin modifiant
-  // un non-Admin sans changer le rôle — acceptable pour la clarté du code.
+  // Règle de hiérarchie 4 : un Admin ne peut pas modifier un autre Admin,
+  // MAIS il peut modifier ses propres informations (username, email, password).
   if (utilisateurExistant.role.name === ROLE_ADMIN) {
     const nomRoleRequeteur = await getNomRole(requesterRoleId);
     if (nomRoleRequeteur === ROLE_ADMIN) {
-      throw new Error('Un Administrateur ne peut pas modifier un autre Administrateur.');
+      const modifieSonPropreCompte = id === requesterId;
+
+      if (!modifieSonPropreCompte) {
+        // Un Admin ne peut pas toucher au compte d'un autre Admin.
+        throw new Error('Un Administrateur ne peut pas modifier un autre Administrateur.');
+      }
+
+      // Auto-édition : l'Admin peut changer ses infos personnelles,
+      // mais PAS son propre rôle — le changement de rôle est réservé au SA.
+      if (input.roleId !== undefined) {
+        throw new Error('Un Administrateur ne peut pas modifier son propre rôle.');
+      }
     }
   }
 
@@ -268,7 +285,7 @@ export async function updateUser(
       select: { id: true },
     });
     if (conflitUsername) {
-      throw new Error('Username déjà utilisé');
+      throw new Error('Identifiant déjà utilisé');
     }
   }
 

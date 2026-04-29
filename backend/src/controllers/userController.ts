@@ -22,7 +22,7 @@ const ERREURS_METIER_400 = new Set([
 
 // 409 Conflict : violation d'unicité en base
 const ERREURS_METIER_409 = new Set([
-  'Username déjà utilisé',
+  'Identifiant déjà utilisé',
   'Email déjà utilisé',
 ]);
 
@@ -43,6 +43,7 @@ const ERREURS_METIER_403 = new Set([
   'Un Administrateur ne peut pas attribuer le rôle Administrateur.',
   'Un Administrateur ne peut pas désactiver un autre Administrateur.',
   'Un Administrateur ne peut pas réactiver un autre Administrateur.',
+  'Un Administrateur ne peut pas modifier son propre rôle.',
 ]);
 
 /**
@@ -266,6 +267,7 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
         storeIds: storeIds as string[] | undefined,
       },
       req.user!.roleId,
+      req.user!.userId,
     );
 
     res.status(200).json({

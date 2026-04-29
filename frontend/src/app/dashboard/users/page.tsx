@@ -315,21 +315,30 @@ export default function UsersPage() {
                     {/* Actions */}
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setUserToEdit(user)}
-                          aria-label={`Modifier ${user.username}`}
-                        >
-                          Modifier
-                        </Button>
+                        {/*
+                          "Modifier" est masqué sur la ligne du SA si l'utilisateur
+                          connecté n'est pas lui-même le SA. Seul le SA peut modifier
+                          ses propres informations — un Administrateur n'y a aucun accès.
+                        */}
+                        {(!isSuperAdmin || sessionUser?.roleName === 'Super Administrateur') && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setUserToEdit(user)}
+                            aria-label={`Modifier ${user.username}`}
+                          >
+                            Modifier
+                          </Button>
+                        )}
 
                         {/*
                           "Désactiver" est visible uniquement si :
                           1. Le compte est encore actif
                           2. Ce n'est PAS le Super Administrateur
+                          3. Ce n'est PAS le compte de l'utilisateur connecté
+                             (on ne peut pas désactiver soi-même)
                         */}
-                        {user.is_active && !isSuperAdmin && (
+                        {user.is_active && !isSuperAdmin && user.id !== sessionUser?.id && (
                           <Button
                             variant="danger"
                             size="sm"
@@ -390,6 +399,7 @@ export default function UsersPage() {
         roles={roles}
         stores={stores}
         user={userToEdit}
+        sessionUserId={sessionUser?.id}
       />
 
       {/* Désactivation */}

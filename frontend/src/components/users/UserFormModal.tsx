@@ -63,6 +63,7 @@ interface UserFormModalProps {
   roles: Role[];
   stores: Store[];
   user?: UserRow | null;
+  sessionUserId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,12 +140,21 @@ export function UserFormModal({
   roles,
   stores,
   user = null,
+  sessionUserId,
 }: UserFormModalProps) {
   const isEditMode = user !== null;
 
   // Détermine si on édite le Super Administrateur.
   // Dans ce cas, le champ "Rôle" est masqué et roleId est exclu du body PUT.
   const isEditingSuperAdmin = isEditMode && user?.role.name === 'Super Administrateur';
+
+  // Détermine si un Administrateur édite son propre compte.
+  // Dans ce cas, le champ "Rôle" est également masqué — un Admin ne peut pas
+  // modifier son propre rôle, seul le SA peut le faire.
+  const isEditingOwnAdminAccount =
+    isEditMode &&
+    user?.role.name === 'Administrateur' &&
+    user?.id === sessionUserId;
 
   const [apiError, setApiError] = useState<string | null>(null);
   // Ref sur le panel pour pouvoir y chercher le premier input et y mettre le focus
@@ -225,9 +235,10 @@ export function UserFormModal({
       storeIds: values.storeIds,
     };
 
-    // roleId : exclu si on édite le SA (le backend le refuserait de toute façon,
-    // mais on évite l'envoi de données non pertinentes côté client également).
-    if (!isEditingSuperAdmin) {
+    // roleId : exclu si on édite le SA ou si un Admin édite son propre compte.
+    // Le backend rejette ces cas de toute façon, mais on évite l'envoi de données
+    // non pertinentes côté client.
+    if (!isEditingSuperAdmin && !isEditingOwnAdminAccount) {
       body.roleId = values.roleId;
     }
 
@@ -259,8 +270,9 @@ export function UserFormModal({
     }
   }
 
-  // Titre adapté selon le contexte : SA voit "Modifier mes informations"
-  const title = isEditingSuperAdmin
+  // Titre adapté selon le contexte : SA et Admin éditant leur propre compte
+  // voient "Modifier mes informations" plutôt que le nom d'utilisateur.
+  const title = isEditingSuperAdmin || isEditingOwnAdminAccount
     ? 'Modifier mes informations'
     : isEditMode
       ? `Modifier l'utilisateur — ${user?.username}`
@@ -333,12 +345,11 @@ export function UserFormModal({
           />
 
           {/*
-            Rôle — masqué entièrement si on édite le Super Administrateur.
-            Le SA ne peut pas se voir attribuer un autre rôle.
-            Le backend exclut déjà le SA de GET /api/roles, mais on retire
-            le bloc complet pour éviter tout affichage involontaire.
+            Rôle — masqué si on édite le Super Administrateur, ou si un Admin
+            édite son propre compte (un Admin ne peut pas changer son propre rôle,
+            seul le SA peut le faire).
           */}
-          {!isEditingSuperAdmin && (
+          {!isEditingSuperAdmin && !isEditingOwnAdminAccount && (
             <div className="flex flex-col gap-1">
               <FieldLabel htmlFor="roleId" required>
                 Rôle
