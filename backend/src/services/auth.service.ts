@@ -65,6 +65,7 @@ export async function login(
   username: string,
   password: string,
   storeId: string,
+  ipAddress?: string,
 ): Promise<LoginResult> {
   // Étape 1 : Recherche de l'utilisateur
   const utilisateur = await userRepository.findByUsername(username);
@@ -77,6 +78,7 @@ export async function login(
       actorId:   null,
       actorName: username,
       action:    AuditAction.USER_LOGIN_FAILED,
+      ipAddress,
       metadata:  { attempted_username: username, reason: 'Utilisateur introuvable' },
     });
     throw new Error('Identifiants invalides');
@@ -89,6 +91,7 @@ export async function login(
       actorId:   utilisateur.id,
       actorName: utilisateur.username,
       action:    AuditAction.USER_LOGIN_FAILED,
+      ipAddress,
       metadata:  { attempted_username: username, reason: 'Mot de passe incorrect' },
     });
     throw new Error('Identifiants invalides');
@@ -100,6 +103,7 @@ export async function login(
       actorId:   utilisateur.id,
       actorName: utilisateur.username,
       action:    AuditAction.USER_LOGIN_FAILED,
+      ipAddress,
       metadata:  { attempted_username: username, reason: 'Compte désactivé' },
     });
     throw new Error('Ce compte a été désactivé. Contactez votre administrateur.');
@@ -108,11 +112,19 @@ export async function login(
   // Étape 3 : Vérification de l'accès au magasin demandé
   const accesAutorise = await userRepository.hasStoreAccess(utilisateur.id, storeId);
   if (!accesAutorise) {
+    // On résout le nom du magasin pour le log (jamais d'UUID dans les métadonnées)
+    const magasinTente = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { name: true },
+    });
     await logAction({
       actorId:   utilisateur.id,
       actorName: utilisateur.username,
       action:    AuditAction.USER_LOGIN_FAILED,
-      metadata:  { attempted_username: username, reason: 'Accès magasin non autorisé', store_id: storeId },
+      storeId,
+      storeName: magasinTente?.name ?? 'inconnu',
+      ipAddress,
+      metadata:  { attempted_username: username, reason: 'Accès magasin non autorisé' },
     });
     throw new Error('Accès à ce magasin non autorisé');
   }
@@ -161,6 +173,7 @@ export async function login(
       action:    AuditAction.USER_LOGIN,
       storeId,
       storeName: magasin?.name ?? 'inconnu',
+      ipAddress,
     });
   } catch (errAudit) {
     console.error('[audit] Échec du log de connexion :', errAudit);

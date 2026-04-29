@@ -8,11 +8,11 @@
 //   SA    → tous les logs sans restriction
 //   Admin → uniquement les logs de ses magasins associés
 //
-// Filtres disponibles : type d'action, acteur, plage de dates.
-// Pagination côté serveur (20 entrées par page par défaut).
+// Chaque ligne dispose d'un bouton "Voir" qui ouvre une modale de détail
+// affichant l'intégralité des informations de l'événement.
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { forbidden } from 'next/navigation';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 import { Button } from '@/components/ui/Button';
@@ -41,6 +41,7 @@ interface AuditLog {
   target_name: string | null;
   store_id: string | null;
   store_name: string | null;
+  ip_address: string | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -93,29 +94,217 @@ function formatDate(iso: string): string {
   }).format(new Date(iso));
 }
 
-function MetadataDetails({ metadata }: { metadata: Record<string, unknown> | null }) {
-  if (!metadata || Object.keys(metadata).length === 0) return null;
+// ---------------------------------------------------------------------------
+// Modale de détail d'un événement
+// ---------------------------------------------------------------------------
 
-  const entries = Object.entries(metadata).filter(([, v]) => v !== null && v !== undefined);
-  if (entries.length === 0) return null;
+function AuditDetailModal({
+  log,
+  onClose,
+}: {
+  log: AuditLog;
+  onClose: () => void;
+}) {
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
 
-  const labels: Record<string, string> = {
+  useEffect(() => {
+    setTimeout(() => closeBtnRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  const modifications = log.metadata &&
+    typeof log.metadata === 'object' &&
+    'modifications' in log.metadata
+      ? (log.metadata.modifications as Record<string, unknown>)
+      : null;
+
+  // Métadonnées hors "modifications" (raison, magasins, rôle, etc.)
+  const autresMetadata = log.metadata
+    ? Object.entries(log.metadata).filter(([k]) => k !== 'modifications')
+    : [];
+
+  const labelsMeta: Record<string, string> = {
     reason:             'Raison',
-    role:               'Rôle',
-    stores:             'Magasins',
+    role:               'Rôle attribué',
+    magasins:           'Magasins associés',
     attempted_username: 'Identifiant tenté',
-    store_id:           'Magasin tenté',
+    store_id:           'Magasin tenté (ID)',
   };
 
   return (
-    <ul className="mt-1 space-y-0.5">
-      {entries.map(([key, value]) => (
-        <li key={key} className="text-xs text-textMuted">
-          <span className="font-medium text-textSecondary">{labels[key] ?? key} :</span>{' '}
-          {Array.isArray(value) ? value.join(', ') : String(value)}
-        </li>
-      ))}
-    </ul>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="audit-detail-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/40"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      {/* Panel */}
+      <div className="relative z-10 w-full max-w-lg mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] overflow-y-auto">
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="audit-detail-title" className="text-base font-medium text-textMain">
+            Détails de l&apos;événement
+          </h2>
+          <button
+            ref={closeBtnRef}
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Corps */}
+        <div className="px-6 py-5 flex flex-col gap-4">
+
+          {/* Action */}
+          <Row label="Action">
+            <span className={[
+              'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
+              ACTION_COLORS[log.action] ?? 'bg-[#E9ECEF] text-textMuted border border-borderLight',
+            ].join(' ')}>
+              {ACTION_LABELS[log.action] ?? log.action}
+            </span>
+          </Row>
+
+          {/* Date */}
+          <Row label="Date / Heure">
+            <span className="font-mono text-sm">{formatDate(log.created_at)}</span>
+          </Row>
+
+          {/* Acteur */}
+          <Row label="Effectué par">
+            <span className="font-medium text-textMain">{log.actor_name}</span>
+            {log.actor_id && (
+              <span className="text-xs text-textMuted ml-2 font-mono">{log.actor_id}</span>
+            )}
+          </Row>
+
+          {/* Adresse IP */}
+          {log.ip_address && (
+            <Row label="Adresse IP">
+              <span className="font-mono text-sm">{log.ip_address}</span>
+            </Row>
+          )}
+
+          {/* Cible */}
+          {log.target_name && (
+            <Row label="Cible">
+              {log.target_type && (
+                <span className="text-xs text-textMuted mr-1.5">{log.target_type}</span>
+              )}
+              <span className="font-medium text-textMain">{log.target_name}</span>
+              {log.target_id && (
+                <span className="text-xs text-textMuted ml-2 font-mono">{log.target_id}</span>
+              )}
+            </Row>
+          )}
+
+          {/* Magasin */}
+          {log.store_name && (
+            <Row label="Magasin">
+              <span>{log.store_name}</span>
+            </Row>
+          )}
+
+          {/* Modifications (USER_UPDATED diff) */}
+          {modifications && Object.keys(modifications).length > 0 && (
+            <section>
+              <p className="text-xs font-medium text-textSecondary mb-2">Modifications</p>
+              <div className="rounded border border-borderLight overflow-hidden">
+                {Object.entries(modifications).map(([champ, valeur]) => {
+                  const labels: Record<string, string> = {
+                    identifiant:  'Identifiant',
+                    email:        'Email',
+                    mot_de_passe: 'Mot de passe',
+                    role:         'Rôle',
+                    magasins:     'Magasins',
+                  };
+                  const v = valeur as Record<string, unknown>;
+                  return (
+                    <div
+                      key={champ}
+                      className="flex items-start gap-3 px-3 py-2 text-sm border-b border-borderLight last:border-0 bg-background"
+                    >
+                      <span className="w-28 flex-shrink-0 font-medium text-textSecondary text-xs pt-0.5">
+                        {labels[champ] ?? champ}
+                      </span>
+                      {v.modifie ? (
+                        <span className="text-textMuted italic text-xs">Modifié</span>
+                      ) : (
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="text-xs text-danger line-through">
+                            {Array.isArray(v.avant) ? (v.avant as string[]).join(', ') : String(v.avant ?? '—')}
+                          </span>
+                          <span className="text-xs text-success">
+                            {Array.isArray(v.apres) ? (v.apres as string[]).join(', ') : String(v.apres ?? '—')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Autres métadonnées (raison, magasins créés, etc.) */}
+          {autresMetadata.length > 0 && (
+            <section>
+              <p className="text-xs font-medium text-textSecondary mb-2">Informations complémentaires</p>
+              <div className="flex flex-col gap-1">
+                {autresMetadata.map(([key, value]) => (
+                  <div key={key} className="flex gap-2 text-sm">
+                    <span className="text-xs font-medium text-textSecondary w-28 flex-shrink-0 pt-0.5">
+                      {labelsMeta[key] ?? key}
+                    </span>
+                    <span className="text-sm text-textMain">
+                      {Array.isArray(value)
+                        ? (value as string[]).join(', ')
+                        : String(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* Pied */}
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end">
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Fermer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Ligne d'information dans la modale */
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="text-xs font-medium text-textSecondary w-28 flex-shrink-0 pt-0.5">
+        {label}
+      </span>
+      <div className="flex items-center flex-wrap gap-1 min-w-0">{children}</div>
+    </div>
   );
 }
 
@@ -125,25 +314,32 @@ function MetadataDetails({ metadata }: { metadata: Record<string, unknown> | nul
 
 export default function AuditPage() {
   const { user: sessionUser, isLoading: sessionLoading } = useSession();
+  const router = useRouter();
 
-  if (!sessionLoading && sessionUser !== null) {
-    if (!ROLES_AUTORISES.includes(sessionUser.roleName)) {
-      forbidden();
+  // Redirection côté client si l'utilisateur n'a pas les droits.
+  // On utilise useEffect plutôt que forbidden() (qui est réservé aux Server
+  // Components et Route Handlers — il échoue silencieusement dans un
+  // Client Component car process.env.__NEXT_EXPERIMENTAL_AUTH_INTERRUPTS
+  // n'est pas exposé dans le bundle browser).
+  useEffect(() => {
+    if (!sessionLoading && sessionUser !== null && !ROLES_AUTORISES.includes(sessionUser.roleName)) {
+      router.replace('/dashboard');
     }
-  }
+  }, [sessionLoading, sessionUser, router]);
 
-  // --- État des filtres ---
-  const [filterAction, setFilterAction]     = useState('');
+  const [filterAction, setFilterAction]       = useState('');
   const [filterStartDate, setFilterStartDate] = useState('');
-  const [filterEndDate, setFilterEndDate]   = useState('');
+  const [filterEndDate, setFilterEndDate]     = useState('');
 
-  // --- État des données ---
   const [logs, setLogs]           = useState<AuditLog[]>([]);
   const [total, setTotal]         = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [page, setPage]           = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError]         = useState<string | null>(null);
+
+  // Log sélectionné pour la modale de détail
+  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
 
   const LIMIT = 20;
 
@@ -170,10 +366,18 @@ export default function AuditPage() {
     }
   }, [filterAction, filterStartDate, filterEndDate]);
 
-  // Chargement initial
+  // Ne charge les logs que lorsque la session est prête et l'accès confirmé.
+  // Sans cette garde, des requêtes inutiles (et rejetées par le backend)
+  // partiraient pendant le chargement ou pour les rôles non autorisés.
   useEffect(() => {
-    if (!sessionLoading) loadLogs(1);
-  }, [sessionLoading, loadLogs]);
+    if (
+      !sessionLoading &&
+      sessionUser !== null &&
+      ROLES_AUTORISES.includes(sessionUser.roleName)
+    ) {
+      loadLogs(1);
+    }
+  }, [sessionLoading, sessionUser, loadLogs]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -184,11 +388,26 @@ export default function AuditPage() {
     setFilterAction('');
     setFilterStartDate('');
     setFilterEndDate('');
-    // Le useEffect se rechargera avec les nouveaux états vides
+    // loadLogs(1) sera appelé automatiquement par l'useEffect ci-dessus
+    // lorsque loadLogs change de référence (dépend des filtres)
+  }
+
+  // Garde de rendu : on n'affiche rien pendant le chargement de la session
+  // ou si l'utilisateur n'est pas autorisé (le useEffect gère la redirection).
+  if (sessionLoading || !sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) {
+    return null;
   }
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Modale de détail */}
+      {selectedLog && (
+        <AuditDetailModal
+          log={selectedLog}
+          onClose={() => setSelectedLog(null)}
+        />
+      )}
+
       {/* En-tête */}
       <div>
         <h1 className="text-xl font-semibold text-textMain">Journal d&apos;audit</h1>
@@ -205,7 +424,6 @@ export default function AuditPage() {
         onSubmit={handleSearch}
         className="flex flex-wrap items-end gap-3 p-4 bg-surface border border-borderLight rounded"
       >
-        {/* Type d'action */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-textSecondary">Type d&apos;action</label>
           <select
@@ -220,7 +438,6 @@ export default function AuditPage() {
           </select>
         </div>
 
-        {/* Date de début */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-textSecondary">Du</label>
           <input
@@ -231,7 +448,6 @@ export default function AuditPage() {
           />
         </div>
 
-        {/* Date de fin */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-textSecondary">Au</label>
           <input
@@ -243,9 +459,7 @@ export default function AuditPage() {
         </div>
 
         <div className="flex gap-2">
-          <Button type="submit" variant="primary" size="sm">
-            Filtrer
-          </Button>
+          <Button type="submit" variant="primary" size="sm">Filtrer</Button>
           <Button type="button" variant="secondary" size="sm" onClick={handleReset}>
             Réinitialiser
           </Button>
@@ -261,12 +475,7 @@ export default function AuditPage() {
         </p>
       )}
 
-      {/* Erreur */}
-      {error && (
-        <p role="alert" className="text-sm text-danger">
-          {error}
-        </p>
-      )}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
       {/* Tableau */}
       {isLoading ? (
@@ -279,21 +488,11 @@ export default function AuditPage() {
                 <th className="px-4 py-3 text-left font-medium text-textSecondary whitespace-nowrap">
                   Date / Heure
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-textSecondary">
-                  Acteur
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-textSecondary">
-                  Action
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-textSecondary">
-                  Cible
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-textSecondary">
-                  Magasin
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-textSecondary">
-                  Détails
-                </th>
+                <th className="px-4 py-3 text-left font-medium text-textSecondary">Acteur</th>
+                <th className="px-4 py-3 text-left font-medium text-textSecondary">Action</th>
+                <th className="px-4 py-3 text-left font-medium text-textSecondary">Cible</th>
+                <th className="px-4 py-3 text-left font-medium text-textSecondary">Magasin</th>
+                <th className="px-4 py-3 text-left font-medium text-textSecondary">Détails</th>
               </tr>
             </thead>
             <tbody>
@@ -309,50 +508,35 @@ export default function AuditPage() {
                     key={log.id}
                     className="border-b border-borderLight hover:bg-background/50 transition-colors"
                   >
-                    {/* Date */}
                     <td className="px-4 py-3 whitespace-nowrap text-textMuted font-mono text-xs">
                       {formatDate(log.created_at)}
                     </td>
-
-                    {/* Acteur */}
                     <td className="px-4 py-3 font-medium text-textMain whitespace-nowrap">
                       {log.actor_name}
                     </td>
-
-                    {/* Action */}
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span
-                        className={[
-                          'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
-                          ACTION_COLORS[log.action] ?? 'bg-[#E9ECEF] text-textMuted border border-borderLight',
-                        ].join(' ')}
-                      >
+                      <span className={[
+                        'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
+                        ACTION_COLORS[log.action] ?? 'bg-[#E9ECEF] text-textMuted border border-borderLight',
+                      ].join(' ')}>
                         {ACTION_LABELS[log.action] ?? log.action}
                       </span>
                     </td>
-
-                    {/* Cible */}
-                    <td className="px-4 py-3 text-textMuted">
-                      {log.target_name ? (
-                        <span>
-                          <span className="text-xs text-textMuted mr-1">
-                            {log.target_type}
-                          </span>
-                          <span className="font-medium text-textMain">{log.target_name}</span>
-                        </span>
-                      ) : (
-                        <span aria-label="Sans cible">—</span>
-                      )}
+                    <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                      {log.target_name
+                        ? <span className="font-medium text-textMain">{log.target_name}</span>
+                        : <span aria-label="Sans cible">—</span>}
                     </td>
-
-                    {/* Magasin */}
                     <td className="px-4 py-3 text-textMuted whitespace-nowrap">
                       {log.store_name ?? <span aria-label="Sans magasin">—</span>}
                     </td>
-
-                    {/* Détails */}
                     <td className="px-4 py-3">
-                      <MetadataDetails metadata={log.metadata} />
+                      <button
+                        onClick={() => setSelectedLog(log)}
+                        className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-1 focus:ring-primary rounded px-1"
+                      >
+                        Voir
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -373,11 +557,7 @@ export default function AuditPage() {
           >
             ← Précédent
           </Button>
-
-          <span className="text-sm text-textMuted px-2">
-            {page} / {totalPages}
-          </span>
-
+          <span className="text-sm text-textMuted px-2">{page} / {totalPages}</span>
           <Button
             variant="secondary"
             size="sm"

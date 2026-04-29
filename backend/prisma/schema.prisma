@@ -204,7 +204,11 @@ model AuditLog {
   store_id    String?     @db.Uuid
   store_name  String?     // Dénormalisé
 
-  // Données contextuelles selon l'action : raison, détails…
+  // Adresse IP du poste depuis lequel l'action a été effectuée
+  // VarChar(45) couvre IPv4 (15 cars) et IPv6 complet (39 cars)
+  ip_address  String?     @db.VarChar(45)
+
+  // Données contextuelles selon l'action : raison, modifications, détails…
   metadata    Json?       @db.JsonB
 
   actor       User?       @relation(fields: [actor_id], references: [id])

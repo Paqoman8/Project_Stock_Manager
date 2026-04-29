@@ -25,6 +25,7 @@ export type LogActionInput = {
   targetName?: string;       // Nom au moment du fait (dénormalisé)
   storeId?: string;
   storeName?: string;        // Nom au moment du fait (dénormalisé)
+  ipAddress?: string;        // Adresse IP du poste à l'origine de l'action
   metadata?: Prisma.InputJsonValue;
 };
 
@@ -39,6 +40,7 @@ export type AuditLogRow = {
   target_name: string | null;
   store_id: string | null;
   store_name: string | null;
+  ip_address: string | null;
   metadata: Prisma.JsonValue | null;
 };
 
@@ -75,7 +77,7 @@ export async function logAction(input: LogActionInput): Promise<void> {
   try {
     await prisma.auditLog.create({
       data: {
-        actor_id:    input.actorId   ?? null,
+        actor_id:    input.actorId    ?? null,
         actor_name:  input.actorName,
         action:      input.action,
         target_type: input.targetType  ?? null,
@@ -83,6 +85,7 @@ export async function logAction(input: LogActionInput): Promise<void> {
         target_name: input.targetName  ?? null,
         store_id:    input.storeId    ?? null,
         store_name:  input.storeName  ?? null,
+        ip_address:  input.ipAddress  ?? null,
         metadata:    input.metadata   ?? undefined,
       },
     });
@@ -157,6 +160,7 @@ export async function getAuditLogs(options: GetAuditLogsOptions): Promise<AuditL
         target_name: true,
         store_id:    true,
         store_name:  true,
+        ip_address:  true,
         metadata:    true,
       },
     }),

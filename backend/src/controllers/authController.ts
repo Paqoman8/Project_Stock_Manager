@@ -6,6 +6,15 @@ import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { logAction, resolveActorName, resolveStoreName } from '../services/audit.service';
 
+/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
+function extractIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim() || undefined;
+  }
+  return req.ip ?? undefined;
+}
+
 // Nom du cookie qui stockera le token JWT côté navigateur
 const COOKIE_NAME = 'auth_token';
 
@@ -50,7 +59,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 
   try {
     // Le service gère : recherche user, vérification mdp, vérification accès store, JWT, SessionLog
-    const resultat = await authService.login(username, password, storeId);
+    const resultat = await authService.login(username, password, storeId, extractIp(req));
 
     // On envoie le token dans un cookie httpOnly.
     // httpOnly = le cookie ne peut PAS être lu par JavaScript côté navigateur (protection XSS)
@@ -101,7 +110,7 @@ export async function logout(req: AuthenticatedRequest, res: Response): Promise<
   // Audit de la déconnexion — avant de supprimer le cookie (on a encore req.user)
   if (req.user) {
     const { userId, storeId } = req.user;
-    // Non-bloquant : on ne fait pas échouer le logout si l'audit échoue
+    const ip = extractIp(req);
     Promise.all([resolveActorName(userId), resolveStoreName(storeId)])
       .then(([actorName, storeName]) =>
         logAction({
@@ -110,6 +119,7 @@ export async function logout(req: AuthenticatedRequest, res: Response): Promise<
           action:    AuditAction.USER_LOGOUT,
           storeId,
           storeName,
+          ipAddress: ip,
         }),
       )
       .catch((err) => console.error('[audit] Échec du log de déconnexion :', err));

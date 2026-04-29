@@ -90,6 +90,7 @@ export type RequesterInfo = {
   id: string;
   roleId: string;
   storeId: string;
+  ipAddress?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -241,9 +242,13 @@ export async function createUser(
   });
 
   // Audit — non-bloquant
-  const [actorName, storeName] = await Promise.all([
+  // On résout les noms de magasins pour la dénormalisation (jamais les UUIDs dans les logs)
+  const [actorName, storeName, magasinsCreation] = await Promise.all([
     resolveActorName(requester.id),
     resolveStoreName(requester.storeId),
+    input.storeIds.length > 0
+      ? prisma.store.findMany({ where: { id: { in: input.storeIds } }, select: { name: true } })
+      : Promise.resolve([]),
   ]);
   await logAction({
     actorId:    requester.id,
@@ -254,9 +259,10 @@ export async function createUser(
     targetName: nouvelUtilisateur.username,
     storeId:    requester.storeId,
     storeName,
+    ipAddress:  requester.ipAddress,
     metadata: {
-      role:   roleCible.name,
-      stores: input.storeIds,
+      role:    roleCible.name,
+      magasins: magasinsCreation.map((s) => s.name),
     },
   });
 
@@ -294,7 +300,10 @@ export async function updateUser(
   // la règle de hiérarchie Admin → Admin.
   const utilisateurExistant = await prisma.user.findUnique({
     where: { id },
-    include: { role: true },
+    include: {
+      role: true,
+      store_access: { include: { store: { select: { name: true } } } },
+    },
   });
   if (!utilisateurExistant) {
     throw new Error('Utilisateur introuvable');
@@ -426,6 +435,40 @@ export async function updateUser(
     store_ids: input.storeIds,
   });
 
+  // Audit — construction du diff avant/après (noms lisibles, jamais d'UUIDs ni de hash)
+  const modifications: Record<string, unknown> = {};
+
+  if (input.username !== undefined && input.username !== utilisateurExistant.username) {
+    modifications.identifiant = { avant: utilisateurExistant.username, apres: input.username };
+  }
+  if (input.email !== undefined && input.email !== (utilisateurExistant.email ?? '')) {
+    modifications.email = { avant: utilisateurExistant.email ?? null, apres: input.email };
+  }
+  if (input.password !== undefined) {
+    modifications.mot_de_passe = { modifie: true };
+  }
+  if (input.roleId !== undefined && input.roleId !== utilisateurExistant.role_id) {
+    const nouveauRole = await prisma.role.findUnique({
+      where: { id: input.roleId },
+      select: { name: true },
+    });
+    modifications.role = {
+      avant: utilisateurExistant.role.name,
+      apres: nouveauRole?.name ?? input.roleId,
+    };
+  }
+  if (input.storeIds !== undefined) {
+    const nomsAvant = utilisateurExistant.store_access.map((sa) => sa.store.name).sort();
+    const magasinsApres = await prisma.store.findMany({
+      where: { id: { in: input.storeIds } },
+      select: { name: true },
+    });
+    const nomsApres = magasinsApres.map((s) => s.name).sort();
+    if (JSON.stringify(nomsAvant) !== JSON.stringify(nomsApres)) {
+      modifications.magasins = { avant: nomsAvant, apres: nomsApres };
+    }
+  }
+
   // Audit — non-bloquant
   const [actorName, storeName] = await Promise.all([
     resolveActorName(requester.id),
@@ -440,6 +483,10 @@ export async function updateUser(
     targetName: utilisateurExistant.username,
     storeId:    requester.storeId,
     storeName,
+    ipAddress:  requester.ipAddress,
+    metadata:   Object.keys(modifications).length > 0
+      ? { modifications } as import('@prisma/client').Prisma.InputJsonValue
+      : undefined,
   });
 
   return utilisateurMisAJour;
@@ -501,6 +548,7 @@ export async function deactivateUser(
     targetName: utilisateur.username,
     storeId:    requester.storeId,
     storeName,
+    ipAddress:  requester.ipAddress,
     metadata: reason ? { reason } : undefined,
   });
 }
@@ -567,6 +615,7 @@ export async function reactivateUser(
     targetName: utilisateur.username,
     storeId:    requester.storeId,
     storeName,
+    ipAddress:  requester.ipAddress,
   });
 
   return utilisateurReactive;

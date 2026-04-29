@@ -1,6 +1,15 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import * as userService from '../services/user.service';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
+
+/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
+function extractIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim() || undefined;
+  }
+  return req.ip ?? undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Messages métier — utilisés pour distinguer les erreurs 400/409/403 des erreurs 500
@@ -175,7 +184,7 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
         roleId,
         storeIds,
       },
-      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
     );
 
     res.status(201).json({
@@ -271,7 +280,7 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
         roleId: roleId as string | undefined,
         storeIds: storeIds as string[] | undefined,
       },
-      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
     );
 
     res.status(200).json({
@@ -330,7 +339,7 @@ export async function deactivateUser(req: AuthenticatedRequest, res: Response): 
   try {
     await userService.deactivateUser(
       id,
-      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
       reason,
     );
 
@@ -384,7 +393,7 @@ export async function reactivateUser(req: AuthenticatedRequest, res: Response): 
   try {
     const utilisateurReactive = await userService.reactivateUser(
       id,
-      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
     );
 
     res.status(200).json({
