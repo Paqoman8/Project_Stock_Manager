@@ -17,6 +17,42 @@ const ROLE_SUPER_ADMIN = 'Super Administrateur';
 const ROLE_ADMIN = 'Administrateur';
 
 // ---------------------------------------------------------------------------
+// Règles de validation des données entrantes
+// ---------------------------------------------------------------------------
+
+// Format imposé pour les identifiants : "texte.texte"
+// Lettres (a-z, A-Z), chiffres (0-9), exactement un point séparateur.
+// Exemples valides : jean.dupont, alice.martin2, responsable.stock
+const USERNAME_REGEX = /^[a-zA-Z0-9]+\.[a-zA-Z0-9]+$/;
+
+// Validation du format email côté backend (défense en profondeur).
+// La validation Zod côté frontend est la première ligne ; celle-ci protège
+// les appels directs à l'API.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Vérifie que le mot de passe respecte la politique de sécurité :
+ *   - 8 à 128 caractères
+ *   - Au moins une majuscule, une minuscule, un chiffre, un caractère spécial
+ *
+ * @param password - Mot de passe en clair à valider
+ * @throws Error si le mot de passe ne respecte pas la politique
+ */
+function verifierPolitiqueMotDePasse(password: string): void {
+  const valide =
+    password.length >= 8 &&
+    password.length <= 128 &&
+    /[A-Z]/.test(password) &&
+    /[a-z]/.test(password) &&
+    /[0-9]/.test(password) &&
+    /[^a-zA-Z0-9]/.test(password);
+
+  if (!valide) {
+    throw new Error('Le mot de passe ne respecte pas les critères de sécurité requis.');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types du service — contrat entre service et controller
 // ---------------------------------------------------------------------------
 
@@ -101,6 +137,19 @@ export async function createUser(
   input: CreateUserInput,
   requesterRoleId: string,
 ): Promise<UserWithDetails> {
+  // Validation du format de l'identifiant : "texte.texte" obligatoire
+  if (!USERNAME_REGEX.test(input.username)) {
+    throw new Error("Format d'identifiant invalide. Attendu : prenom.nom");
+  }
+
+  // Validation du format de l'email si fourni
+  if (input.email && !EMAIL_REGEX.test(input.email)) {
+    throw new Error("Format d'adresse email invalide.");
+  }
+
+  // Validation de la politique de mot de passe
+  verifierPolitiqueMotDePasse(input.password);
+
   // Étape 0a : Récupération du rôle cible pour valider son existence ET son nom.
   // Une seule requête qui sert à la fois à vérifier l'existence du rôle
   // et à appliquer les règles de sécurité.
@@ -273,6 +322,21 @@ export async function updateUser(
         throw new Error('Un Administrateur ne peut pas modifier son propre rôle.');
       }
     }
+  }
+
+  // Validation du format de l'identifiant si fourni
+  if (input.username !== undefined && !USERNAME_REGEX.test(input.username)) {
+    throw new Error("Format d'identifiant invalide. Attendu : prenom.nom");
+  }
+
+  // Validation du format de l'email si fourni
+  if (input.email !== undefined && !EMAIL_REGEX.test(input.email)) {
+    throw new Error("Format d'adresse email invalide.");
+  }
+
+  // Validation de la politique de mot de passe si fourni
+  if (input.password !== undefined) {
+    verifierPolitiqueMotDePasse(input.password);
   }
 
   // Étape 2 : Unicité du username (si fourni) — on exclut l'utilisateur en cours

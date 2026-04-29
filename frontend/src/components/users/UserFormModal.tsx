@@ -71,9 +71,26 @@ interface UserFormModalProps {
 // Zod v4 : les messages d'erreur se passent via { error: "..." }
 // ---------------------------------------------------------------------------
 
+// Regex du format d'identifiant imposé sur la plateforme : "texte.texte"
+// Exemples valides : jean.dupont, alice.martin2, responsable.stock
+const USERNAME_REGEX = /^[a-zA-Z0-9]+\.[a-zA-Z0-9]+$/;
+
+// Schéma de mot de passe fort — appliqué en mode création (obligatoire)
+const strongPasswordSchema = z
+  .string()
+  .min(8, { error: 'Minimum 8 caractères.' })
+  .max(128, { error: 'Maximum 128 caractères.' })
+  .regex(/[A-Z]/, { error: 'Au moins une lettre majuscule requise.' })
+  .regex(/[a-z]/, { error: 'Au moins une lettre minuscule requise.' })
+  .regex(/[0-9]/, { error: 'Au moins un chiffre requis.' })
+  .regex(/[^a-zA-Z0-9]/, { error: 'Au moins un caractère spécial requis (!@#$…).' });
+
 // Schéma de base commun aux deux modes
 const baseSchema = z.object({
-  username: z.string().min(3, { error: 'Minimum 3 caractères.' }),
+  username: z
+    .string()
+    .min(3, { error: 'Minimum 3 caractères.' })
+    .regex(USERNAME_REGEX, { error: 'Format invalide. Attendu : prenom.nom (ex : jean.dupont).' }),
   email: z
     .string()
     .email({ error: 'Adresse email invalide.' })
@@ -85,18 +102,14 @@ const baseSchema = z.object({
     .min(1, { error: 'Veuillez sélectionner au moins un magasin.' }),
 });
 
-// Mode création : password obligatoire
+// Mode création : password obligatoire et fort
 const createSchema = baseSchema.extend({
-  password: z.string().min(6, { error: 'Minimum 6 caractères.' }),
+  password: strongPasswordSchema,
 });
 
-// Mode édition : password optionnel (vide = pas de changement)
+// Mode édition : password optionnel — si renseigné, doit respecter la politique
 const editSchema = baseSchema.extend({
-  password: z
-    .string()
-    .min(6, { error: 'Minimum 6 caractères si renseigné.' })
-    .or(z.literal(''))
-    .optional(),
+  password: strongPasswordSchema.or(z.literal('')).optional(),
 });
 
 type CreateFormValues = z.infer<typeof createSchema>;
@@ -334,11 +347,12 @@ export function UserFormModal({
             id="password"
             label="Mot de passe"
             type="password"
+            showPasswordToggle
             required={!isEditMode}
             placeholder={
               isEditMode
                 ? 'Laisser vide pour ne pas changer'
-                : 'Minimum 6 caractères'
+                : 'Minimum 8 caractères, maj, min, chiffre, spécial'
             }
             error={errors.password?.message}
             {...register('password')}

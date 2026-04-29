@@ -63,7 +63,7 @@ async function main() {
   // 3. Création de l'Administrateur par défaut avec un vrai hash bcrypt
   if (superAdminRole) {
     const adminEmail = 'admin@gstock.local';
-    const adminUsername = 'admin';
+    const adminUsername = 'super.admin';
     const motDePasseTest = 'Admin@2024!';
 
     // On hash le mot de passe avant de le stocker. Jamais de mot de passe en clair en base.

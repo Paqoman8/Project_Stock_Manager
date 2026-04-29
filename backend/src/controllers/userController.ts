@@ -11,13 +11,18 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 // Les erreurs inconnues sont des erreurs techniques et retournent 500.
 // ---------------------------------------------------------------------------
 
-// 400 Bad Request : ressource référencée introuvable en base, ou état incohérent
+// 400 Bad Request : ressource référencée introuvable en base, état incohérent,
+// ou données d'entrée ne respectant pas les règles de format.
 const ERREURS_METIER_400 = new Set([
   'Rôle introuvable',
   'Magasin introuvable',
   'Utilisateur introuvable',
   // Tentative de réactivation d'un compte déjà actif — état incohérent, pas un 403
   'Ce compte est déjà actif.',
+  // Validation de format des données entrantes
+  "Format d'identifiant invalide. Attendu : prenom.nom",
+  "Format d'adresse email invalide.",
+  'Le mot de passe ne respecte pas les critères de sécurité requis.',
 ]);
 
 // 409 Conflict : violation d'unicité en base
