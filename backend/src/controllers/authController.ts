@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
+import { AuditAction } from '@prisma/client';
 import * as authService from '../services/auth.service';
 import * as userRepository from '../repositories/user.repository';
 import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
+import { logAction, resolveActorName, resolveStoreName } from '../services/audit.service';
 
 // Nom du cookie qui stockera le token JWT côté navigateur
 const COOKIE_NAME = 'auth_token';
@@ -95,9 +97,24 @@ export async function login(req: Request, res: Response): Promise<void> {
  * Déconnecte l'utilisateur en effaçant le cookie d'authentification.
  * Simple et sans appel à la base de données.
  */
-export async function logout(req: Request, res: Response): Promise<void> {
-  // Pour déconnecter l'utilisateur, on supprime le cookie du navigateur
-  // en le réécrivant avec une date d'expiration dans le passé
+export async function logout(req: AuthenticatedRequest, res: Response): Promise<void> {
+  // Audit de la déconnexion — avant de supprimer le cookie (on a encore req.user)
+  if (req.user) {
+    const { userId, storeId } = req.user;
+    // Non-bloquant : on ne fait pas échouer le logout si l'audit échoue
+    Promise.all([resolveActorName(userId), resolveStoreName(storeId)])
+      .then(([actorName, storeName]) =>
+        logAction({
+          actorId:   userId,
+          actorName,
+          action:    AuditAction.USER_LOGOUT,
+          storeId,
+          storeName,
+        }),
+      )
+      .catch((err) => console.error('[audit] Échec du log de déconnexion :', err));
+  }
+
   res.clearCookie(COOKIE_NAME);
   res.status(200).json({
     success: true,

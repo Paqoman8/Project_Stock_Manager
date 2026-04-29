@@ -7,6 +7,7 @@ import { Server } from 'socket.io';
 import authRouter from './routes/authRoutes';
 import userRouter from './routes/userRoutes';
 import roleRouter from './routes/roleRoutes';
+import auditRouter from './routes/auditRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -56,6 +57,9 @@ app.use('/api/users', userRouter);
 // Routes des rôles — endpoint public pour alimenter les formulaires d'admin.
 // "Super Administrateur" est exclu systématiquement de la réponse.
 app.use('/api/roles', roleRouter);
+
+// Journal d'audit — SA voit tout, Admin voit ses magasins uniquement
+app.use('/api/audit', auditRouter);
 
 
 // --- Gestion des connexions WebSocket ---

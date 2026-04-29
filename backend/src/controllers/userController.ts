@@ -175,7 +175,7 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
         roleId,
         storeIds,
       },
-      req.user!.roleId,
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
     );
 
     res.status(201).json({
@@ -271,8 +271,7 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
         roleId: roleId as string | undefined,
         storeIds: storeIds as string[] | undefined,
       },
-      req.user!.roleId,
-      req.user!.userId,
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
     );
 
     res.status(200).json({
@@ -323,9 +322,17 @@ export async function deactivateUser(req: AuthenticatedRequest, res: Response): 
     return;
   }
 
+  // Raison optionnelle fournie dans le body de la requête DELETE
+  const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+    ? req.body.reason.trim()
+    : undefined;
+
   try {
-    // On passe req.user!.roleId pour que le service applique les règles de hiérarchie.
-    await userService.deactivateUser(id, req.user!.roleId);
+    await userService.deactivateUser(
+      id,
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
+      reason,
+    );
 
     res.status(200).json({
       success: true,
@@ -375,8 +382,10 @@ export async function reactivateUser(req: AuthenticatedRequest, res: Response): 
   }
 
   try {
-    // On passe req.user!.roleId pour que le service applique les règles de hiérarchie.
-    const utilisateurReactive = await userService.reactivateUser(id, req.user!.roleId);
+    const utilisateurReactive = await userService.reactivateUser(
+      id,
+      { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId },
+    );
 
     res.status(200).json({
       success: true,

@@ -26,7 +26,7 @@ model User {
   store_access UserStoreAccess[]
   sessions     SessionLog[]
   transactions Transaction[]
-  audit_logs   AuditLog[]
+  acted_audits AuditLog[]
 
   @@map("users")
 }
@@ -41,7 +41,7 @@ model Store {
   transfers_from   Transfer[]        @relation("TransfersFrom")
   transfers_to     Transfer[]        @relation("TransfersTo")
   transactions     Transaction[]
-  audit_logs       AuditLog[]
+  audit_logs       AuditLog[]        @relation("AuditStore")
 
   @@map("stores")
 }
@@ -167,18 +167,48 @@ model TransactionItem {
   @@map("transaction_items")
 }
 
+// ---------------------------------------------------------------------------
+// Journal d'audit — trace toutes les actions métier de la plateforme
+// ---------------------------------------------------------------------------
+
+enum AuditAction {
+  // Authentification
+  USER_LOGIN
+  USER_LOGIN_FAILED
+  USER_LOGOUT
+
+  // Gestion des utilisateurs
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+}
+
 model AuditLog {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String   @db.Uuid
-  store_id    String   @db.Uuid
-  action_type String
-  entity_id   String   @db.Uuid
-  before_data Json?    @db.JsonB
-  after_data  Json?    @db.JsonB
-  reason      String?  @db.Text
-  created_at  DateTime @default(now())
-  user        User     @relation(fields: [user_id], references: [id])
-  store       Store    @relation(fields: [store_id], references: [id])
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at  DateTime    @default(now())
+
+  // Qui — nullable pour les tentatives de connexion échouées (user inconnu)
+  actor_id    String?     @db.Uuid
+  actor_name  String      // Dénormalisé : nom au moment du fait
+
+  // Quoi
+  action      AuditAction
+
+  // Sur quoi — nullable pour les actions sans cible (login/logout)
+  target_type String?
+  target_id   String?     @db.Uuid
+  target_name String?     // Dénormalisé : nom au moment du fait
+
+  // Contexte magasin — nullable (login échoué peut ne pas avoir de magasin)
+  store_id    String?     @db.Uuid
+  store_name  String?     // Dénormalisé
+
+  // Données contextuelles selon l'action : raison, détails…
+  metadata    Json?       @db.JsonB
+
+  actor       User?       @relation(fields: [actor_id], references: [id])
+  store       Store?      @relation("AuditStore", fields: [store_id], references: [id])
 
   @@map("audit_logs")
 }

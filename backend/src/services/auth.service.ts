@@ -1,7 +1,9 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { AuditAction } from '@prisma/client';
 import { prisma } from '../config/database';
 import * as userRepository from '../repositories/user.repository';
+import { logAction } from './audit.service';
 
 // ---------------------------------------------------------------------------
 // Types exposés par le service — contrat entre service et controller
@@ -70,28 +72,48 @@ export async function login(
   // Message identique pour "utilisateur introuvable" et "mauvais mot de passe"
   // afin de ne pas permettre l'énumération des comptes existants
   if (!utilisateur) {
+    // Audit de l'échec — on logue l'username tenté sans révéler s'il existe
+    await logAction({
+      actorId:   null,
+      actorName: username,
+      action:    AuditAction.USER_LOGIN_FAILED,
+      metadata:  { attempted_username: username, reason: 'Utilisateur introuvable' },
+    });
     throw new Error('Identifiants invalides');
   }
 
   // Étape 2 : Vérification du mot de passe
   const motDePasseValide = await bcrypt.compare(password, utilisateur.pwd_hash);
   if (!motDePasseValide) {
+    await logAction({
+      actorId:   utilisateur.id,
+      actorName: utilisateur.username,
+      action:    AuditAction.USER_LOGIN_FAILED,
+      metadata:  { attempted_username: username, reason: 'Mot de passe incorrect' },
+    });
     throw new Error('Identifiants invalides');
   }
 
   // Étape 2b : Vérification que le compte est actif
-  // Ce check est volontairement placé APRÈS la vérification du mot de passe :
-  // on s'assure que l'utilisateur connaît ses identifiants avant de lui révéler
-  // que son compte est désactivé. Un message distinct est acceptable ici car
-  // c'est un ERP interne — les utilisateurs sont connus et doivent pouvoir
-  // contacter leur administrateur s'ils sont bloqués.
   if (!utilisateur.is_active) {
+    await logAction({
+      actorId:   utilisateur.id,
+      actorName: utilisateur.username,
+      action:    AuditAction.USER_LOGIN_FAILED,
+      metadata:  { attempted_username: username, reason: 'Compte désactivé' },
+    });
     throw new Error('Ce compte a été désactivé. Contactez votre administrateur.');
   }
 
   // Étape 3 : Vérification de l'accès au magasin demandé
   const accesAutorise = await userRepository.hasStoreAccess(utilisateur.id, storeId);
   if (!accesAutorise) {
+    await logAction({
+      actorId:   utilisateur.id,
+      actorName: utilisateur.username,
+      action:    AuditAction.USER_LOGIN_FAILED,
+      metadata:  { attempted_username: username, reason: 'Accès magasin non autorisé', store_id: storeId },
+    });
     throw new Error('Accès à ce magasin non autorisé');
   }
 
@@ -126,7 +148,25 @@ export async function login(
     console.error('Avertissement : impossible de créer le SessionLog :', erreurSessionLog);
   }
 
-  // Étape 6 : Retour du résultat au controller
+  // Étape 6 : Audit de la connexion réussie — non-bloquant
+  // On récupère le nom du magasin pour la dénormalisation
+  try {
+    const magasin = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { name: true },
+    });
+    await logAction({
+      actorId:   utilisateur.id,
+      actorName: utilisateur.username,
+      action:    AuditAction.USER_LOGIN,
+      storeId,
+      storeName: magasin?.name ?? 'inconnu',
+    });
+  } catch (errAudit) {
+    console.error('[audit] Échec du log de connexion :', errAudit);
+  }
+
+  // Étape 7 : Retour du résultat au controller
   return {
     token,
     user: {

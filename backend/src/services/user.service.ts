@@ -1,7 +1,9 @@
 import bcrypt from 'bcrypt';
+import { AuditAction } from '@prisma/client';
 import { prisma } from '../config/database';
 import * as userRepository from '../repositories/user.repository';
 import type { UserWithDetails } from '../repositories/user.repository';
+import { logAction, resolveActorName, resolveStoreName } from './audit.service';
 
 // ---------------------------------------------------------------------------
 // Constantes
@@ -80,6 +82,16 @@ export type UpdateUserInput = {
   storeIds?: string[];
 };
 
+/**
+ * Contexte du requêteur transmis par le controller depuis le JWT.
+ * Remplace les anciens paramètres (requesterRoleId, requesterId) éparpillés.
+ */
+export type RequesterInfo = {
+  id: string;
+  roleId: string;
+  storeId: string;
+};
+
 // ---------------------------------------------------------------------------
 // Fonctions utilitaires internes
 // ---------------------------------------------------------------------------
@@ -135,7 +147,7 @@ export async function getAllUsers(includeInactive = true): Promise<UserWithDetai
  */
 export async function createUser(
   input: CreateUserInput,
-  requesterRoleId: string,
+  requester: RequesterInfo,
 ): Promise<UserWithDetails> {
   // Validation du format de l'identifiant : "texte.texte" obligatoire
   if (!USERNAME_REGEX.test(input.username)) {
@@ -182,7 +194,7 @@ export async function createUser(
   // On récupère le nom du rôle requêteur pour appliquer cette règle.
   // Si le roleId requêteur est invalide (cas impossible en prod, JWT vérifié),
   // on retourne null et on ignore la vérification — le token JWT garantit la cohérence.
-  const nomRoleRequeteur = await getNomRole(requesterRoleId);
+  const nomRoleRequeteur = await getNomRole(requester.roleId);
   if (nomRoleRequeteur === ROLE_ADMIN && roleCible.name === ROLE_ADMIN) {
     throw new Error('Un Administrateur ne peut pas créer un autre Administrateur.');
   }
@@ -220,13 +232,35 @@ export async function createUser(
   const motDePasseHache = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
 
   // Étape 6 : Création atomique via le repository
-  return userRepository.create({
+  const nouvelUtilisateur = await userRepository.create({
     username: input.username,
     email: input.email,
     pwd_hash: motDePasseHache,
     role_id: input.roleId,
     store_ids: input.storeIds,
   });
+
+  // Audit — non-bloquant
+  const [actorName, storeName] = await Promise.all([
+    resolveActorName(requester.id),
+    resolveStoreName(requester.storeId),
+  ]);
+  await logAction({
+    actorId:    requester.id,
+    actorName,
+    action:     AuditAction.USER_CREATED,
+    targetType: 'USER',
+    targetId:   nouvelUtilisateur.id,
+    targetName: nouvelUtilisateur.username,
+    storeId:    requester.storeId,
+    storeName,
+    metadata: {
+      role:   roleCible.name,
+      stores: input.storeIds,
+    },
+  });
+
+  return nouvelUtilisateur;
 }
 
 /**
@@ -253,8 +287,7 @@ export async function createUser(
 export async function updateUser(
   id: string,
   input: UpdateUserInput,
-  requesterRoleId: string,
-  requesterId: string,
+  requester: RequesterInfo,
 ): Promise<UserWithDetails> {
   // Étape 1 : Vérification que l'utilisateur existe, avec son rôle inclus.
   // On a besoin du rôle pour appliquer les règles de protection du Super Admin et
@@ -271,7 +304,7 @@ export async function updateUser(
   // Aucun autre utilisateur, y compris un Administrateur, ne peut toucher
   // au compte Super Administrateur — ni le username, ni l'email, ni le mot
   // de passe, ni quoi que ce soit d'autre.
-  if (utilisateurExistant.role.name === ROLE_SUPER_ADMIN && requesterId !== id) {
+  if (utilisateurExistant.role.name === ROLE_SUPER_ADMIN && requester.id !== id) {
     throw new Error('Le compte Super Administrateur ne peut pas être modifié de cette façon.');
   }
 
@@ -298,7 +331,7 @@ export async function updateUser(
     // Règle de hiérarchie 5b : un Admin ne peut pas attribuer le rôle Administrateur.
     // On récupère le nom du rôle requêteur une seule fois, puis on l'utilise
     // pour toutes les vérifications de hiérarchie qui suivent.
-    const nomRoleRequeteur = await getNomRole(requesterRoleId);
+    const nomRoleRequeteur = await getNomRole(requester.roleId);
     if (nomRoleRequeteur === ROLE_ADMIN && roleVise.name === ROLE_ADMIN) {
       throw new Error('Un Administrateur ne peut pas attribuer le rôle Administrateur.');
     }
@@ -307,9 +340,9 @@ export async function updateUser(
   // Règle de hiérarchie 4 : un Admin ne peut pas modifier un autre Admin,
   // MAIS il peut modifier ses propres informations (username, email, password).
   if (utilisateurExistant.role.name === ROLE_ADMIN) {
-    const nomRoleRequeteur = await getNomRole(requesterRoleId);
+    const nomRoleRequeteur = await getNomRole(requester.roleId);
     if (nomRoleRequeteur === ROLE_ADMIN) {
-      const modifieSonPropreCompte = id === requesterId;
+      const modifieSonPropreCompte = id === requester.id;
 
       if (!modifieSonPropreCompte) {
         // Un Admin ne peut pas toucher au compte d'un autre Admin.
@@ -385,13 +418,31 @@ export async function updateUser(
   }
 
   // Mise à jour via le repository — la transaction est gérée dedans
-  return userRepository.update(id, {
+  const utilisateurMisAJour = await userRepository.update(id, {
     username: input.username,
     email: input.email,
     pwd_hash: motDePasseHache,
     role_id: input.roleId,
     store_ids: input.storeIds,
   });
+
+  // Audit — non-bloquant
+  const [actorName, storeName] = await Promise.all([
+    resolveActorName(requester.id),
+    resolveStoreName(requester.storeId),
+  ]);
+  await logAction({
+    actorId:    requester.id,
+    actorName,
+    action:     AuditAction.USER_UPDATED,
+    targetType: 'USER',
+    targetId:   utilisateurExistant.id,
+    targetName: utilisateurExistant.username,
+    storeId:    requester.storeId,
+    storeName,
+  });
+
+  return utilisateurMisAJour;
 }
 
 /**
@@ -406,7 +457,11 @@ export async function updateUser(
  * @throws Error avec message métier si l'utilisateur est introuvable ou si
  *         une règle de sécurité est enfreinte
  */
-export async function deactivateUser(id: string, requesterRoleId: string): Promise<void> {
+export async function deactivateUser(
+  id: string,
+  requester: RequesterInfo,
+  reason?: string,
+): Promise<void> {
   // Étape 1 : Vérification que l'utilisateur existe, avec son rôle inclus.
   const utilisateur = await prisma.user.findUnique({
     where: { id },
@@ -423,7 +478,7 @@ export async function deactivateUser(id: string, requesterRoleId: string): Promi
 
   // Règle de hiérarchie : un Admin ne peut pas désactiver un autre Admin.
   if (utilisateur.role.name === ROLE_ADMIN) {
-    const nomRoleRequeteur = await getNomRole(requesterRoleId);
+    const nomRoleRequeteur = await getNomRole(requester.roleId);
     if (nomRoleRequeteur === ROLE_ADMIN) {
       throw new Error('Un Administrateur ne peut pas désactiver un autre Administrateur.');
     }
@@ -431,6 +486,23 @@ export async function deactivateUser(id: string, requesterRoleId: string): Promi
 
   // Soft delete — jamais de suppression physique
   await userRepository.softDelete(id);
+
+  // Audit — non-bloquant
+  const [actorName, storeName] = await Promise.all([
+    resolveActorName(requester.id),
+    resolveStoreName(requester.storeId),
+  ]);
+  await logAction({
+    actorId:    requester.id,
+    actorName,
+    action:     AuditAction.USER_DEACTIVATED,
+    targetType: 'USER',
+    targetId:   utilisateur.id,
+    targetName: utilisateur.username,
+    storeId:    requester.storeId,
+    storeName,
+    metadata: reason ? { reason } : undefined,
+  });
 }
 
 /**
@@ -449,10 +521,9 @@ export async function deactivateUser(id: string, requesterRoleId: string): Promi
  */
 export async function reactivateUser(
   id: string,
-  requesterRoleId: string,
+  requester: RequesterInfo,
 ): Promise<UserWithDetails> {
   // Étape 1 : Récupération de l'utilisateur cible avec son rôle inclus.
-  // On a besoin du rôle pour les vérifications SA et Admin.
   const utilisateur = await prisma.user.findUnique({
     where: { id },
     include: { role: true },
@@ -462,27 +533,41 @@ export async function reactivateUser(
   }
 
   // Garde défensive : le compte SA ne doit jamais être manipulé par cette route.
-  // En pratique le SA est toujours actif (règle absolue), mais on garde ce guard
-  // pour signaler clairement qu'il est hors périmètre.
   if (utilisateur.role.name === ROLE_SUPER_ADMIN) {
     throw new Error('Le compte Super Administrateur ne peut pas être modifié de cette façon.');
   }
 
   // Règle de hiérarchie : un Admin ne peut pas réactiver un autre Admin.
   if (utilisateur.role.name === ROLE_ADMIN) {
-    const nomRoleRequeteur = await getNomRole(requesterRoleId);
+    const nomRoleRequeteur = await getNomRole(requester.roleId);
     if (nomRoleRequeteur === ROLE_ADMIN) {
       throw new Error('Un Administrateur ne peut pas réactiver un autre Administrateur.');
     }
   }
 
   // Vérification que le compte est bien inactif.
-  // On retourne une erreur 400 (pas 403) car ce n'est pas une violation de permissions
-  // mais un état incohérent — le client devrait savoir que le compte est déjà actif.
   if (utilisateur.is_active === true) {
     throw new Error('Ce compte est déjà actif.');
   }
 
   // Réactivation via le repository
-  return userRepository.reactivate(id);
+  const utilisateurReactive = await userRepository.reactivate(id);
+
+  // Audit — non-bloquant
+  const [actorName, storeName] = await Promise.all([
+    resolveActorName(requester.id),
+    resolveStoreName(requester.storeId),
+  ]);
+  await logAction({
+    actorId:    requester.id,
+    actorName,
+    action:     AuditAction.USER_REACTIVATED,
+    targetType: 'USER',
+    targetId:   utilisateur.id,
+    targetName: utilisateur.username,
+    storeId:    requester.storeId,
+    storeName,
+  });
+
+  return utilisateurReactive;
 }

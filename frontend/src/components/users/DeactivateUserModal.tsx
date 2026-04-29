@@ -68,15 +68,17 @@ export function DeactivateUserModal({
   user,
 }: DeactivateUserModalProps) {
   const [isConfirming, setIsConfirming] = useState(false);
+  const [reason, setReason] = useState('');
   // Message d'erreur renvoyé par l'API (ex : dernier Super Admin actif)
   const [apiError, setApiError] = useState<string | null>(null);
   // Ref pour le focus initial sur "Annuler" — friction positive (UI_UX_KIT §5)
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // Réinitialise l'erreur et repositionne le focus à chaque ouverture
+  // Réinitialise l'état et repositionne le focus à chaque ouverture
   useEffect(() => {
     if (isOpen) {
       setApiError(null);
+      setReason('');
       // Micro-délai nécessaire pour que le DOM soit rendu avant le focus
       setTimeout(() => cancelRef.current?.focus(), 0);
     }
@@ -104,8 +106,9 @@ export function DeactivateUserModal({
     setApiError(null);
 
     try {
-      await apiClient.delete(`/api/users/${user.id}`);
-      // Succès : on notifie la page parente pour qu'elle recharge la liste
+      await apiClient.delete(`/api/users/${user.id}`, {
+        data: reason.trim() ? { reason: reason.trim() } : undefined,
+      });
       onSuccess();
       onClose();
     } catch (err) {
@@ -150,6 +153,25 @@ export function DeactivateUserModal({
           <br />
           Le compte sera conservé mais l&apos;utilisateur ne pourra plus se connecter.
         </p>
+
+        {/* Raison optionnelle — tracée dans le journal d'audit */}
+        <div className="flex flex-col gap-1 mb-4">
+          <label
+            htmlFor="deactivate-reason"
+            className="text-sm font-medium text-textSecondary"
+          >
+            Raison <span className="text-textMuted font-normal">(optionnel)</span>
+          </label>
+          <textarea
+            id="deactivate-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            maxLength={500}
+            placeholder="Ex : départ de l'entreprise, compte compromis…"
+            className="w-full px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary placeholder-textMuted focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors resize-none"
+          />
+        </div>
 
         {/* Erreur API — visible uniquement en cas d'échec */}
         {apiError && (
