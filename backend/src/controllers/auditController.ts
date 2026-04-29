@@ -28,7 +28,7 @@ export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Pr
     ? actionParam as AuditAction
     : undefined;
 
-  const actorId  = typeof req.query.actorId  === 'string' ? req.query.actorId  : undefined;
+  const actorId   = typeof req.query.actorId === 'string' ? req.query.actorId : undefined;
   const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
   const endDate   = req.query.endDate   ? new Date(req.query.endDate   as string) : undefined;
 
@@ -54,9 +54,22 @@ export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Pr
       allowedStoreIds = accès.map((a) => a.store_id);
     }
 
+    // --- Filtre explicite par magasin (choix de l'utilisateur dans l'UI) ---
+    // Sécurité : on vérifie que le storeId demandé est dans la liste autorisée.
+    // Pour le SA (allowedStoreIds === null), tout storeId est accepté.
+    // Pour un Admin, on rejette silencieusement les storeIds hors de sa liste.
+    const storeIdParam = typeof req.query.storeId === 'string' && req.query.storeId
+      ? req.query.storeId
+      : undefined;
+
+    const filtreStoreId = storeIdParam && (
+      allowedStoreIds === null || allowedStoreIds.includes(storeIdParam)
+    ) ? storeIdParam : undefined;
+
     const résultat = await auditService.getAuditLogs({
       action,
       actorId,
+      storeId:   filtreStoreId,
       startDate: startDateValide,
       endDate:   endDateValide,
       allowedStoreIds,

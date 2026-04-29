@@ -207,3 +207,36 @@ export async function getAvailableStores(): Promise<StoreOption[]> {
     orderBy: { name: 'asc' },
   });
 }
+
+/**
+ * Retourne les magasins accessibles à l'utilisateur connecté.
+ *
+ * - SA             → tous les magasins de la base
+ * - Administrateur → uniquement les magasins qui lui sont assignés
+ *
+ * Utilisé par GET /api/auth/accessible-stores pour alimenter le filtre
+ * par magasin dans le journal d'audit.
+ */
+export async function getAccessibleStores(
+  userId: string,
+  isSuperAdmin: boolean,
+): Promise<StoreOption[]> {
+  if (isSuperAdmin) {
+    return prisma.store.findMany({
+      select: { id: true, name: true, location: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  // Admin : on récupère uniquement les magasins auxquels il a accès
+  const acces = await prisma.userStoreAccess.findMany({
+    where: { user_id: userId },
+    include: {
+      store: { select: { id: true, name: true, location: true } },
+    },
+  });
+
+  return acces
+    .map((a) => a.store)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}

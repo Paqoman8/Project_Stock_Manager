@@ -53,6 +53,11 @@ interface AuditLogsResponse {
   totalPages: number;
 }
 
+interface StoreOption {
+  id: string;
+  name: string;
+}
+
 // ---------------------------------------------------------------------------
 // Libellés et couleurs des actions
 // ---------------------------------------------------------------------------
@@ -82,6 +87,22 @@ const ROLES_AUTORISES = ['Super Administrateur', 'Administrateur'];
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Retourne la date du début de la journée en cours au format datetime-local
+ * (YYYY-MM-DDTHH:MM), utilisé comme valeur par défaut du filtre "Du".
+ *
+ * Choix : "journée en cours" plutôt que "24 dernières heures" car GStock est
+ * un ERP retail dont les shifts et les bilans sont calés sur des jours calendaires.
+ * Les managers raisonnent en "qu'est-ce qui s'est passé aujourd'hui", pas
+ * en fenêtre glissante.
+ */
+function getDebutJournee(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T00:00`;
+}
 
 function formatDate(iso: string): string {
   return new Intl.DateTimeFormat('fr-FR', {
@@ -328,9 +349,13 @@ export default function AuditPage() {
   }, [sessionLoading, sessionUser, router]);
 
   const [filterAction, setFilterAction]       = useState('');
-  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterStoreId, setFilterStoreId]     = useState('');
+  // Par défaut : journée en cours depuis minuit (choix justifié : GStock est un ERP
+  // retail dont les shifts sont calés sur des jours calendaires)
+  const [filterStartDate, setFilterStartDate] = useState(getDebutJournee);
   const [filterEndDate, setFilterEndDate]     = useState('');
 
+  const [stores, setStores]       = useState<StoreOption[]>([]);
   const [logs, setLogs]           = useState<AuditLog[]>([]);
   const [total, setTotal]         = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -343,6 +368,16 @@ export default function AuditPage() {
 
   const LIMIT = 20;
 
+  // Chargement de la liste des magasins accessibles pour le filtre
+  useEffect(() => {
+    if (!sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) return;
+
+    apiClient
+      .get<{ success: boolean; stores: StoreOption[] }>('/api/auth/accessible-stores')
+      .then((res) => setStores(res.data.stores))
+      .catch(() => { /* non-critique : le filtre magasin reste vide */ });
+  }, [sessionUser]);
+
   const loadLogs = useCallback(async (p: number) => {
     setIsLoading(true);
     setError(null);
@@ -351,6 +386,7 @@ export default function AuditPage() {
       params.set('page', String(p));
       params.set('limit', String(LIMIT));
       if (filterAction)    params.set('action',    filterAction);
+      if (filterStoreId)   params.set('storeId',   filterStoreId);
       if (filterStartDate) params.set('startDate', filterStartDate);
       if (filterEndDate)   params.set('endDate',   filterEndDate);
 
@@ -364,7 +400,7 @@ export default function AuditPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [filterAction, filterStartDate, filterEndDate]);
+  }, [filterAction, filterStoreId, filterStartDate, filterEndDate]);
 
   // Ne charge les logs que lorsque la session est prête et l'accès confirmé.
   // Sans cette garde, des requêtes inutiles (et rejetées par le backend)
@@ -386,7 +422,8 @@ export default function AuditPage() {
 
   function handleReset() {
     setFilterAction('');
-    setFilterStartDate('');
+    setFilterStoreId('');
+    setFilterStartDate(getDebutJournee());
     setFilterEndDate('');
     // loadLogs(1) sera appelé automatiquement par l'useEffect ci-dessus
     // lorsque loadLogs change de référence (dépend des filtres)
@@ -424,6 +461,7 @@ export default function AuditPage() {
         onSubmit={handleSearch}
         className="flex flex-wrap items-end gap-3 p-4 bg-surface border border-borderLight rounded"
       >
+        {/* Type d'action */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-textSecondary">Type d&apos;action</label>
           <select
@@ -438,6 +476,24 @@ export default function AuditPage() {
           </select>
         </div>
 
+        {/* Filtre magasin — masqué si l'utilisateur n'a accès qu'à un seul magasin */}
+        {stores.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-textSecondary">Magasin</label>
+            <select
+              value={filterStoreId}
+              onChange={(e) => setFilterStoreId(e.target.value)}
+              className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+            >
+              <option value="">Tous les magasins</option>
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Plage de dates */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-textSecondary">Du</label>
           <input

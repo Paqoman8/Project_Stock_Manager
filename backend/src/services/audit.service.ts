@@ -48,6 +48,7 @@ export type GetAuditLogsOptions = {
   // Filtres
   action?: AuditAction;
   actorId?: string;
+  storeId?: string;       // Filtre par un magasin spécifique (choisi par l'utilisateur)
   startDate?: Date;
   endDate?: Date;
   // Restriction par magasin pour les Admins (null = pas de restriction = SA)
@@ -109,7 +110,7 @@ export async function logAction(input: LogActionInput): Promise<void> {
  *    que par le SA car ils n'appartiennent à aucun magasin.
  */
 export async function getAuditLogs(options: GetAuditLogsOptions): Promise<AuditLogsResult> {
-  const { action, actorId, startDate, endDate, allowedStoreIds, page, limit } = options;
+  const { action, actorId, storeId, startDate, endDate, allowedStoreIds, page, limit } = options;
 
   const where: Prisma.AuditLogWhereInput = {};
 
@@ -131,11 +132,18 @@ export async function getAuditLogs(options: GetAuditLogsOptions): Promise<AuditL
     };
   }
 
-  // Restriction par magasin pour les Admins
-  // null = SA → pas de restriction
-  // string[] = Admin → logs dont store_id est dans la liste (les logs sans store
-  // ne sont pas exposés aux Admins car ils n'ont pas de contexte magasin)
-  if (allowedStoreIds !== null) {
+  // Filtre par magasin — deux niveaux :
+  //   1. storeId (choix explicite de l'utilisateur) est prioritaire
+  //   2. allowedStoreIds (restriction RBAC des Admins) s'applique sinon
+  //
+  // Sécurité : la validation du storeId contre allowedStoreIds est faite
+  // dans le controller avant d'arriver ici. On applique juste le filtre.
+  if (storeId) {
+    where.store_id = storeId;
+  } else if (allowedStoreIds !== null) {
+    // null = SA → pas de restriction
+    // string[] = Admin → logs dont store_id est dans la liste (les logs sans store
+    // ne sont pas exposés aux Admins car ils n'ont pas de contexte magasin)
     where.store_id = { in: allowedStoreIds };
   }
 

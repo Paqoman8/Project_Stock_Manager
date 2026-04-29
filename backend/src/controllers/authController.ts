@@ -258,3 +258,38 @@ export async function getStores(req: Request, res: Response): Promise<void> {
     });
   }
 }
+
+/**
+ * GET /api/auth/accessible-stores
+ *
+ * Retourne les magasins accessibles à l'utilisateur connecté.
+ *
+ *   SA             → tous les magasins
+ *   Administrateur → uniquement ses magasins assignés
+ *
+ * Protégé par requireAuth — le rôle est déduit du JWT.
+ */
+export async function getAccessibleStores(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const { userId, roleId } = req.user!;
+
+  try {
+    const role = await prisma.role.findUnique({
+      where: { id: roleId },
+      select: { name: true },
+    });
+
+    const isSuperAdmin = role?.name === 'Super Administrateur';
+    const magasins = await authService.getAccessibleStores(userId, isSuperAdmin);
+
+    res.status(200).json({
+      success: true,
+      stores: magasins,
+    });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des magasins accessibles :', error);
+    res.status(500).json({
+      success: false,
+      message: 'Impossible de récupérer la liste des magasins.',
+    });
+  }
+}

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { login, logout, getStores, getMe, getRoles } from '../controllers/authController';
+import { login, logout, getStores, getMe, getRoles, getAccessibleStores } from '../controllers/authController';
 import { requireAuth } from '../middlewares/authMiddleware';
+import { requireRole } from '../middlewares/roleMiddleware';
 
 const authRouter = Router();
 
@@ -44,5 +45,16 @@ authRouter.post('/logout', requireAuth, logout);
 // (ex : hydratation du contexte utilisateur au chargement de l'app).
 // GET /api/auth/me
 authRouter.get('/me', requireAuth, getMe);
+
+// Route protégée — retourne les magasins accessibles à l'utilisateur connecté.
+// SA → tous les magasins | Admin → ses magasins assignés uniquement.
+// Utilisée pour alimenter le filtre par magasin dans le journal d'audit.
+// GET /api/auth/accessible-stores
+authRouter.get(
+  '/accessible-stores',
+  requireAuth,
+  requireRole('Super Administrateur', 'Administrateur'),
+  getAccessibleStores,
+);
 
 export default authRouter;
