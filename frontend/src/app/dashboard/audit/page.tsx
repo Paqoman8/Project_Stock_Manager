@@ -10,6 +10,9 @@
 //
 // Chaque ligne dispose d'un bouton "Voir" qui ouvre une modale de détail
 // affichant l'intégralité des informations de l'événement.
+//
+// Filtre "Type d'action" : dropdown multi-sélection avec cases à cocher,
+// groupé par catégorie. Quand aucune action n'est cochée = pas de filtre.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -28,7 +31,12 @@ type AuditAction =
   | 'USER_CREATED'
   | 'USER_UPDATED'
   | 'USER_DEACTIVATED'
-  | 'USER_REACTIVATED';
+  | 'USER_REACTIVATED'
+  | 'STORE_CREATED'
+  | 'STORE_UPDATED'
+  | 'STORE_CLOSED'
+  | 'STORE_REOPENED'
+  | 'STORE_DELETED';
 
 interface AuditLog {
   id: string;
@@ -70,6 +78,11 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   USER_UPDATED:      'Utilisateur modifié',
   USER_DEACTIVATED:  'Utilisateur désactivé',
   USER_REACTIVATED:  'Utilisateur réactivé',
+  STORE_CREATED:     'Établissement créé',
+  STORE_UPDATED:     'Établissement modifié',
+  STORE_CLOSED:      'Établissement fermé',
+  STORE_REOPENED:    'Établissement réouvert',
+  STORE_DELETED:     'Établissement supprimé',
 };
 
 const ACTION_COLORS: Record<AuditAction, string> = {
@@ -80,7 +93,36 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   USER_UPDATED:      'bg-warning/20 text-warning border border-warning/30',
   USER_DEACTIVATED:  'bg-danger/10 text-danger border border-danger/20',
   USER_REACTIVATED:  'bg-success/10 text-success border border-success/20',
+  STORE_CREATED:     'bg-primary/10 text-primary border border-primary/20',
+  STORE_UPDATED:     'bg-warning/20 text-warning border border-warning/30',
+  STORE_CLOSED:      'bg-danger/10 text-danger border border-danger/20',
+  STORE_REOPENED:    'bg-success/10 text-success border border-success/20',
+  STORE_DELETED:     'bg-danger/10 text-danger border border-danger/20',
 };
+
+// ---------------------------------------------------------------------------
+// Groupes pour le dropdown multi-sélection
+// ---------------------------------------------------------------------------
+
+interface ActionGroup {
+  label: string;
+  actions: AuditAction[];
+}
+
+const ACTION_GROUPS: ActionGroup[] = [
+  {
+    label: 'Authentification',
+    actions: ['USER_LOGIN', 'USER_LOGIN_FAILED', 'USER_LOGOUT'],
+  },
+  {
+    label: 'Utilisateurs',
+    actions: ['USER_CREATED', 'USER_UPDATED', 'USER_DEACTIVATED', 'USER_REACTIVATED'],
+  },
+  {
+    label: 'Établissements',
+    actions: ['STORE_CREATED', 'STORE_UPDATED', 'STORE_CLOSED', 'STORE_REOPENED', 'STORE_DELETED'],
+  },
+];
 
 const ROLES_AUTORISES = ['Super Administrateur', 'Administrateur'];
 
@@ -113,6 +155,161 @@ function formatDate(iso: string): string {
     minute: '2-digit',
     second: '2-digit',
   }).format(new Date(iso));
+}
+
+// ---------------------------------------------------------------------------
+// Dropdown multi-sélection des actions — sous-composant inline
+// ---------------------------------------------------------------------------
+
+function ActionMultiSelect({
+  selectedActions,
+  onChange,
+}: {
+  selectedActions: string[];
+  onChange: (actions: string[]) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Fermeture au clic extérieur
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [isOpen]);
+
+  // Fermeture par Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setIsOpen(false);
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isOpen]);
+
+  function toggleAction(action: string) {
+    if (selectedActions.includes(action)) {
+      onChange(selectedActions.filter((a) => a !== action));
+    } else {
+      onChange([...selectedActions, action]);
+    }
+  }
+
+  // Libellé du bouton trigger
+  const triggerLabel =
+    selectedActions.length === 0
+      ? 'Toutes les actions'
+      : `${selectedActions.length} sélectionnée${selectedActions.length > 1 ? 's' : ''}`;
+
+  return (
+    <div ref={wrapperRef} className="relative flex flex-col gap-1">
+      <label className="text-xs font-medium text-textSecondary" id="action-filter-label">
+        Type d&apos;action
+      </label>
+
+      {/* Trigger */}
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-labelledby="action-filter-label"
+        onClick={() => setIsOpen((v) => !v)}
+        className={[
+          'px-3 py-2 text-sm bg-background border rounded text-left',
+          'focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary',
+          'flex items-center justify-between gap-2 min-w-[200px]',
+          isOpen ? 'border-primary' : 'border-borderLight',
+          selectedActions.length > 0 ? 'text-textMain' : 'text-textMuted',
+        ].join(' ')}
+      >
+        <span>{triggerLabel}</span>
+        {/* Chevron */}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          className={['transition-transform', isOpen ? 'rotate-180' : ''].join(' ')}
+          aria-hidden="true"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {/* Panel dropdown */}
+      {isOpen && (
+        <div
+          role="listbox"
+          aria-multiselectable="true"
+          aria-label="Filtrer par type d'action"
+          className={[
+            'absolute top-full left-0 z-20 mt-1 w-64',
+            'bg-surface border border-borderLight rounded shadow-lg',
+            'overflow-y-auto max-h-80',
+          ].join(' ')}
+        >
+          {ACTION_GROUPS.map((group, gi) => (
+            <div key={group.label}>
+              {/* Séparateur entre groupes */}
+              {gi > 0 && <div className="border-t border-borderLight" />}
+
+              {/* En-tête de groupe */}
+              <div className="px-3 py-2 text-xs font-semibold text-textMuted uppercase tracking-wide bg-background">
+                {group.label}
+              </div>
+
+              {/* Actions du groupe */}
+              {group.actions.map((action) => {
+                const isChecked = selectedActions.includes(action);
+                return (
+                  <label
+                    key={action}
+                    role="option"
+                    aria-selected={isChecked}
+                    className={[
+                      'flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer',
+                      'hover:bg-background/80 transition-colors',
+                      isChecked ? 'text-textMain' : 'text-textMuted',
+                    ].join(' ')}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleAction(action)}
+                      className="accent-primary w-3.5 h-3.5 flex-shrink-0 cursor-pointer"
+                    />
+                    {ACTION_LABELS[action]}
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+
+          {/* Pied : bouton "Tout effacer" si des actions sont sélectionnées */}
+          {selectedActions.length > 0 && (
+            <div className="border-t border-borderLight px-3 py-2">
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-xs text-primary hover:underline focus:outline-none focus:ring-1 focus:ring-primary rounded px-1"
+              >
+                Tout effacer
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +545,9 @@ export default function AuditPage() {
     }
   }, [sessionLoading, sessionUser, router]);
 
-  const [filterAction, setFilterAction]       = useState('');
+  // filterActions remplace l'ancien filterAction (string → string[])
+  // Quand le tableau est vide, aucun filtre action n'est appliqué (= toutes les actions)
+  const [filterActions, setFilterActions]     = useState<string[]>([]);
   const [filterStoreId, setFilterStoreId]     = useState('');
   // Par défaut : journée en cours depuis minuit (choix justifié : GStock est un ERP
   // retail dont les shifts sont calés sur des jours calendaires)
@@ -385,7 +584,11 @@ export default function AuditPage() {
       const params = new URLSearchParams();
       params.set('page', String(p));
       params.set('limit', String(LIMIT));
-      if (filterAction)    params.set('action',    filterAction);
+
+      // Actions : transmises comme paramètres multiples ?action=X&action=Y
+      // Quand filterActions est vide, aucun paramètre action n'est ajouté → pas de filtre
+      filterActions.forEach((action) => params.append('action', action));
+
       if (filterStoreId)   params.set('storeId',   filterStoreId);
       if (filterStartDate) params.set('startDate', filterStartDate);
       if (filterEndDate)   params.set('endDate',   filterEndDate);
@@ -400,7 +603,7 @@ export default function AuditPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [filterAction, filterStoreId, filterStartDate, filterEndDate]);
+  }, [filterActions, filterStoreId, filterStartDate, filterEndDate]);
 
   // Ne charge les logs que lorsque la session est prête et l'accès confirmé.
   // Sans cette garde, des requêtes inutiles (et rejetées par le backend)
@@ -421,7 +624,7 @@ export default function AuditPage() {
   }
 
   function handleReset() {
-    setFilterAction('');
+    setFilterActions([]);
     setFilterStoreId('');
     setFilterStartDate(getDebutJournee());
     setFilterEndDate('');
@@ -461,20 +664,11 @@ export default function AuditPage() {
         onSubmit={handleSearch}
         className="flex flex-wrap items-end gap-3 p-4 bg-surface border border-borderLight rounded"
       >
-        {/* Type d'action */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-textSecondary">Type d&apos;action</label>
-          <select
-            value={filterAction}
-            onChange={(e) => setFilterAction(e.target.value)}
-            className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-          >
-            <option value="">Toutes</option>
-            {(Object.entries(ACTION_LABELS) as [AuditAction, string][]).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
+        {/* Type d'action — dropdown multi-sélection */}
+        <ActionMultiSelect
+          selectedActions={filterActions}
+          onChange={setFilterActions}
+        />
 
         {/* Filtre magasin — masqué si l'utilisateur n'a accès qu'à un seul magasin */}
         {stores.length > 1 && (

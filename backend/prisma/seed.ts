@@ -44,31 +44,17 @@ async function main() {
     create: {
       id: '00000000-0000-0000-0000-000000000001',
       name: 'Hub Central GStock',
-      location: 'Siège Social',
+      location: 'Centre de Contrôle Principal',
       color: '#1D4ED8',  // Bleu primary — siège social
     },
   });
   console.log(`Magasin créé/vérifié: ${hubCentral.name}`);
 
-  // 2b. Création du magasin "Centrale" (magasin principal de vente)
-  // ID fixe pour pouvoir rejouer le seed sans créer de doublons
-  const centrale = await prisma.store.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000002' },
-    update: { color: '#059669' },
-    create: {
-      id: '00000000-0000-0000-0000-000000000002',
-      name: 'Centrale',
-      location: 'Magasin Principal',
-      color: '#059669',  // Vert émeraude — visuellement distinct du siège
-    },
-  });
-  console.log(`Magasin créé/vérifié: ${centrale.name}`);
-
   // 3. Création de l'Administrateur par défaut avec un vrai hash bcrypt
   if (superAdminRole) {
     const adminEmail = 'admin@gstock.local';
     const adminUsername = 'super.admin';
-    const motDePasseTest = 'Admin@2024!';
+    const motDePasseTest = 'Admin@2026!';
 
     // On hash le mot de passe avant de le stocker. Jamais de mot de passe en clair en base.
     const motDePasseHashe = await bcrypt.hash(motDePasseTest, BCRYPT_SALT_ROUNDS);
@@ -106,22 +92,6 @@ async function main() {
       },
     });
     console.log(`Accès au Hub accordé à l'Admin.`);
-
-    // Donner également accès à "Centrale" à l'admin
-    await prisma.userStoreAccess.upsert({
-      where: {
-        user_id_store_id: {
-          user_id: admin.id,
-          store_id: centrale.id,
-        },
-      },
-      update: {},
-      create: {
-        user_id: admin.id,
-        store_id: centrale.id,
-      },
-    });
-    console.log(`Accès à "Centrale" accordé à l'Admin.`);
   }
 
   console.log('Seeding terminé avec succès.');

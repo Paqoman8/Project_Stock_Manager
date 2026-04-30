@@ -8,6 +8,7 @@ import authRouter from './routes/authRoutes';
 import userRouter from './routes/userRoutes';
 import roleRouter from './routes/roleRoutes';
 import auditRouter from './routes/auditRoutes';
+import storeRouter from './routes/storeRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -60,6 +61,9 @@ app.use('/api/roles', roleRouter);
 
 // Journal d'audit — SA voit tout, Admin voit ses magasins uniquement
 app.use('/api/audit', auditRouter);
+
+// Gestion des établissements — réservé Super Administrateur
+app.use('/api/stores', storeRouter);
 
 
 // --- Gestion des connexions WebSocket ---

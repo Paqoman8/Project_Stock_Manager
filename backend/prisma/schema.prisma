@@ -36,6 +36,11 @@ model Store {
   name             String
   location         String?
   color            String            @default("#1D4ED8") @db.VarChar(7)
+  type             StoreType         @default(MAGASIN)
+  status           StoreStatus       @default(ACTIVE)
+  closed_at        DateTime?
+  phone            String?           @db.VarChar(20)
+  description      String?
   user_access      UserStoreAccess[]
   sessions         SessionLog[]
   inventories      Inventory[]
@@ -169,6 +174,21 @@ model TransactionItem {
 }
 
 // ---------------------------------------------------------------------------
+// Types d'établissements
+// ---------------------------------------------------------------------------
+
+enum StoreType {
+  MAGASIN
+  BOUTIQUE
+  ENTREPOT
+}
+
+enum StoreStatus {
+  ACTIVE
+  CLOSED
+}
+
+// ---------------------------------------------------------------------------
 // Journal d'audit — trace toutes les actions métier de la plateforme
 // ---------------------------------------------------------------------------
 
@@ -183,6 +203,13 @@ enum AuditAction {
   USER_UPDATED
   USER_DEACTIVATED
   USER_REACTIVATED
+
+  // Gestion des établissements
+  STORE_CREATED
+  STORE_UPDATED
+  STORE_CLOSED
+  STORE_REOPENED
+  STORE_DELETED
 }
 
 model AuditLog {

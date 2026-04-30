@@ -194,12 +194,17 @@ export async function login(
 }
 
 /**
- * Retourne tous les magasins disponibles dans la base.
+ * Retourne les magasins disponibles dans la base — uniquement les établissements ACTIVE.
  * Utilisé par l'endpoint public GET /api/auth/stores pour alimenter
  * le sélecteur de magasin dans le formulaire de connexion.
+ *
+ * Sécurité : les établissements fermés (status CLOSED) ne doivent pas apparaître
+ * dans le sélecteur de connexion — un utilisateur ne doit pas pouvoir
+ * se connecter à un établissement hors service.
  */
 export async function getAvailableStores(): Promise<StoreOption[]> {
   return prisma.store.findMany({
+    where: { status: 'ACTIVE' },
     select: {
       id: true,
       name: true,

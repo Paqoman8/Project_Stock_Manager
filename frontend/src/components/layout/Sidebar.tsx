@@ -51,6 +51,31 @@ function IconUsers({ className }: { className?: string }) {
   );
 }
 
+// Icône "Établissements" : bâtiment / store front.
+function IconStores({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Façade */}
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      {/* Porte */}
+      <polyline points="9 22 9 12 15 12 15 22" />
+    </svg>
+  );
+}
+
 // Icône "Journal d'audit" : presse-papier avec lignes de texte.
 function IconAudit({ className }: { className?: string }) {
   return (
@@ -83,6 +108,7 @@ function IconAudit({ className }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 const ROLES_ADMIN: readonly string[] = ['Super Administrateur', 'Administrateur'];
+const ROLE_SA = 'Super Administrateur';
 
 // ---------------------------------------------------------------------------
 // Helper : élément de navigation
@@ -130,6 +156,7 @@ export function Sidebar() {
   // Les liens réservés SA/Admin sont absents du DOM tant que la session charge,
   // pour éviter tout flash d'accès interdit ou fuite via les technologies d'assistance.
   const estAdmin = !isLoading && user !== null && ROLES_ADMIN.includes(user.roleName);
+  const estSA    = !isLoading && user !== null && user.roleName === ROLE_SA;
 
   return (
     <aside
@@ -154,6 +181,14 @@ export function Sidebar() {
                 currentPath={pathname}
               />
             </>
+          )}
+          {estSA && (
+            <NavItem
+              href="/dashboard/stores"
+              label="Établissements"
+              icon={<IconStores className="flex-shrink-0" />}
+              currentPath={pathname}
+            />
           )}
         </ul>
       </nav>
