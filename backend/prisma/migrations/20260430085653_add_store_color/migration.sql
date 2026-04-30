@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "stores" ADD COLUMN     "color" VARCHAR(7) NOT NULL DEFAULT '#1D4ED8';

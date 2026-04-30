@@ -35,6 +35,7 @@ model Store {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String
   location         String?
+  color            String            @default("#1D4ED8") @db.VarChar(7)
   user_access      UserStoreAccess[]
   sessions         SessionLog[]
   inventories      Inventory[]

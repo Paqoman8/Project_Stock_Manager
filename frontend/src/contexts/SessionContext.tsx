@@ -37,6 +37,7 @@ export interface SessionUser {
   roleName: string;
   storeId: string;
   storeName: string;
+  storeColor: string;
 }
 
 export interface SessionContextValue {
@@ -59,6 +60,7 @@ interface MeApiResponse {
     roleName: string;
     storeId: string;
     storeName: string;
+    storeColor: string;
     isActive: boolean;
   };
 }
@@ -102,9 +104,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
         if (data.success) {
           // On ne stocke que les champs dont l'UI a besoin — isActive est ignoré ici.
-          const { id, username, email, roleId, roleName, storeId, storeName } =
+          const { id, username, email, roleId, roleName, storeId, storeName, storeColor } =
             data.user;
-          setUser({ id, username, email, roleId, roleName, storeId, storeName });
+          setUser({ id, username, email, roleId, roleName, storeId, storeName, storeColor });
         }
       } catch (err) {
         // Si le backend répond 401, le cookie est absent ou expiré :

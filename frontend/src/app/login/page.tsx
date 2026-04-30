@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import apiClient from '@/lib/apiClient';
+import { APP_NAME } from '@/lib/config/app';
 
 // Interface représentant un magasin retourné par GET /api/auth/stores
 interface Store {
@@ -118,7 +119,7 @@ export default function LoginPage() {
         {/* En-tête */}
         <div className="text-center mb-8">
           <h1 className="text-2xl font-semibold text-textPrimary tracking-tight">
-            GStock
+            {APP_NAME}
           </h1>
           <p className="text-sm text-textMuted mt-1">
             Gestion Commerciale Centralisée
@@ -259,7 +260,7 @@ export default function LoginPage() {
 
         {/* Pied de page : pas de lien d'inscription, accès restreint */}
         <p className="text-center text-xs text-textMuted mt-6">
-          GStock — Plateforme interne. Acces restreint.
+          {APP_NAME} — Plateforme interne. Accès restreint.
         </p>
       </div>
     </main>

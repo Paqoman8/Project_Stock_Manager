@@ -18,9 +18,10 @@ import type { Metadata } from 'next';
 import { SessionProvider } from '@/contexts/SessionContext';
 import { Navbar } from '@/components/layout/Navbar';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { APP_NAME } from '@/lib/config/app';
 
 export const metadata: Metadata = {
-  title: 'Dashboard — GStock',
+  title: `Dashboard — ${APP_NAME}`,
 };
 
 export default function DashboardLayout({

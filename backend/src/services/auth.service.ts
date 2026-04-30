@@ -31,6 +31,7 @@ export type StoreOption = {
   id: string;
   name: string;
   location: string | null;
+  color: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -203,6 +204,7 @@ export async function getAvailableStores(): Promise<StoreOption[]> {
       id: true,
       name: true,
       location: true,
+      color: true,
     },
     orderBy: { name: 'asc' },
   });
@@ -223,7 +225,7 @@ export async function getAccessibleStores(
 ): Promise<StoreOption[]> {
   if (isSuperAdmin) {
     return prisma.store.findMany({
-      select: { id: true, name: true, location: true },
+      select: { id: true, name: true, location: true, color: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -232,7 +234,7 @@ export async function getAccessibleStores(
   const acces = await prisma.userStoreAccess.findMany({
     where: { user_id: userId },
     include: {
-      store: { select: { id: true, name: true, location: true } },
+      store: { select: { id: true, name: true, location: true, color: true } },
     },
   });
 

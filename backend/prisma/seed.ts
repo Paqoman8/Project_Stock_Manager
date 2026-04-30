@@ -35,14 +35,17 @@ async function main() {
   const superAdminRole = createdRoles.find(r => r.name === 'Super Administrateur');
 
   // 2. Création du Hub Central
-  // On utilise upsert pour ne pas créer de doublon si le seed est rejoué
+  // On utilise upsert pour ne pas créer de doublon si le seed est rejoué.
+  // La couleur est incluse dans update tant qu'il n'existe pas d'UI de gestion
+  // des couleurs — une fois cette UI créée, retirer color de update.
   const hubCentral = await prisma.store.upsert({
     where: { id: '00000000-0000-0000-0000-000000000001' },
-    update: {},
+    update: { color: '#1D4ED8' },
     create: {
       id: '00000000-0000-0000-0000-000000000001',
       name: 'Hub Central GStock',
       location: 'Siège Social',
+      color: '#1D4ED8',  // Bleu primary — siège social
     },
   });
   console.log(`Magasin créé/vérifié: ${hubCentral.name}`);
@@ -51,11 +54,12 @@ async function main() {
   // ID fixe pour pouvoir rejouer le seed sans créer de doublons
   const centrale = await prisma.store.upsert({
     where: { id: '00000000-0000-0000-0000-000000000002' },
-    update: {},
+    update: { color: '#059669' },
     create: {
       id: '00000000-0000-0000-0000-000000000002',
       name: 'Centrale',
       location: 'Magasin Principal',
+      color: '#059669',  // Vert émeraude — visuellement distinct du siège
     },
   });
   console.log(`Magasin créé/vérifié: ${centrale.name}`);

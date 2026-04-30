@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { APP_NAME } from "@/lib/config/app";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -8,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "GStock - ERP",
+  title: `${APP_NAME} - ERP`,
   description: "Système de Gestion de Stock Centralisé",
 };
 

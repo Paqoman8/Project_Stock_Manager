@@ -168,10 +168,10 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
       select: { name: true },
     });
 
-    // Récupération du nom du magasin de connexion actuel
+    // Récupération du nom et de la couleur du magasin de connexion actuel
     const magasin = await prisma.store.findUnique({
       where: { id: storeId },
-      select: { name: true },
+      select: { name: true, color: true },
     });
 
     res.status(200).json({
@@ -184,6 +184,7 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
         roleName: role?.name ?? null,
         storeId,
         storeName: magasin?.name ?? null,
+        storeColor: magasin?.color ?? '#1D4ED8',
         isActive: utilisateur.is_active,
       },
     });
