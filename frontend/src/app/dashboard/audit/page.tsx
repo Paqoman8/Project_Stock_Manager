@@ -36,7 +36,11 @@ type AuditAction =
   | 'STORE_UPDATED'
   | 'STORE_CLOSED'
   | 'STORE_REOPENED'
-  | 'STORE_DELETED';
+  | 'STORE_DELETED'
+  | 'SUPPLIER_CREATED'
+  | 'SUPPLIER_UPDATED'
+  | 'SUPPLIER_DEACTIVATED'
+  | 'SUPPLIER_REACTIVATED';
 
 interface AuditLog {
   id: string;
@@ -78,11 +82,15 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   USER_UPDATED:      'Utilisateur modifié',
   USER_DEACTIVATED:  'Utilisateur désactivé',
   USER_REACTIVATED:  'Utilisateur réactivé',
-  STORE_CREATED:     'Établissement créé',
-  STORE_UPDATED:     'Établissement modifié',
-  STORE_CLOSED:      'Établissement fermé',
-  STORE_REOPENED:    'Établissement réouvert',
-  STORE_DELETED:     'Établissement supprimé',
+  STORE_CREATED:       'Établissement créé',
+  STORE_UPDATED:       'Établissement modifié',
+  STORE_CLOSED:        'Établissement fermé',
+  STORE_REOPENED:      'Établissement réouvert',
+  STORE_DELETED:       'Établissement supprimé',
+  SUPPLIER_CREATED:    'Fournisseur créé',
+  SUPPLIER_UPDATED:    'Fournisseur modifié',
+  SUPPLIER_DEACTIVATED:'Fournisseur désactivé',
+  SUPPLIER_REACTIVATED:'Fournisseur réactivé',
 };
 
 const ACTION_COLORS: Record<AuditAction, string> = {
@@ -93,11 +101,15 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   USER_UPDATED:      'bg-warning/20 text-warning border border-warning/30',
   USER_DEACTIVATED:  'bg-danger/10 text-danger border border-danger/20',
   USER_REACTIVATED:  'bg-success/10 text-success border border-success/20',
-  STORE_CREATED:     'bg-primary/10 text-primary border border-primary/20',
-  STORE_UPDATED:     'bg-warning/20 text-warning border border-warning/30',
-  STORE_CLOSED:      'bg-danger/10 text-danger border border-danger/20',
-  STORE_REOPENED:    'bg-success/10 text-success border border-success/20',
-  STORE_DELETED:     'bg-danger/10 text-danger border border-danger/20',
+  STORE_CREATED:        'bg-primary/10 text-primary border border-primary/20',
+  STORE_UPDATED:        'bg-warning/20 text-warning border border-warning/30',
+  STORE_CLOSED:         'bg-danger/10 text-danger border border-danger/20',
+  STORE_REOPENED:       'bg-success/10 text-success border border-success/20',
+  STORE_DELETED:        'bg-danger/10 text-danger border border-danger/20',
+  SUPPLIER_CREATED:     'bg-primary/10 text-primary border border-primary/20',
+  SUPPLIER_UPDATED:     'bg-warning/20 text-warning border border-warning/30',
+  SUPPLIER_DEACTIVATED: 'bg-danger/10 text-danger border border-danger/20',
+  SUPPLIER_REACTIVATED: 'bg-success/10 text-success border border-success/20',
 };
 
 // ---------------------------------------------------------------------------
@@ -121,6 +133,10 @@ const ACTION_GROUPS: ActionGroup[] = [
   {
     label: 'Établissements',
     actions: ['STORE_CREATED', 'STORE_UPDATED', 'STORE_CLOSED', 'STORE_REOPENED', 'STORE_DELETED'],
+  },
+  {
+    label: 'Fournisseurs',
+    actions: ['SUPPLIER_CREATED', 'SUPPLIER_UPDATED', 'SUPPLIER_DEACTIVATED', 'SUPPLIER_REACTIVATED'],
   },
 ];
 

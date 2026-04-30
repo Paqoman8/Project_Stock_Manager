@@ -76,6 +76,35 @@ function IconStores({ className }: { className?: string }) {
   );
 }
 
+// Icône "Fournisseurs" : camion de livraison, stroke uniquement.
+function IconSuppliers({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Cabine */}
+      <rect x="1" y="3" width="15" height="13" rx="1" />
+      {/* Remorque */}
+      <path d="M16 8h4l3 5v4h-7V8z" />
+      {/* Roue gauche */}
+      <circle cx="5.5" cy="18.5" r="2.5" />
+      {/* Roue droite */}
+      <circle cx="18.5" cy="18.5" r="2.5" />
+    </svg>
+  );
+}
+
 // Icône "Journal d'audit" : presse-papier avec lignes de texte.
 function IconAudit({ className }: { className?: string }) {
   return (
@@ -183,12 +212,20 @@ export function Sidebar() {
             </>
           )}
           {estSA && (
-            <NavItem
-              href="/dashboard/stores"
-              label="Établissements"
-              icon={<IconStores className="flex-shrink-0" />}
-              currentPath={pathname}
-            />
+            <>
+              <NavItem
+                href="/dashboard/stores"
+                label="Établissements"
+                icon={<IconStores className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
+              <NavItem
+                href="/dashboard/suppliers"
+                label="Fournisseurs"
+                icon={<IconSuppliers className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
+            </>
           )}
         </ul>
       </nav>

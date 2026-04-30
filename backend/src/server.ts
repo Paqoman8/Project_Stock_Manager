@@ -9,6 +9,7 @@ import userRouter from './routes/userRoutes';
 import roleRouter from './routes/roleRoutes';
 import auditRouter from './routes/auditRoutes';
 import storeRouter from './routes/storeRoutes';
+import supplierRouter from './routes/supplierRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -64,6 +65,9 @@ app.use('/api/audit', auditRouter);
 
 // Gestion des établissements — réservé Super Administrateur
 app.use('/api/stores', storeRouter);
+
+// Gestion des fournisseurs — réservé Super Administrateur
+app.use('/api/suppliers', supplierRouter);
 
 
 // --- Gestion des connexions WebSocket ---

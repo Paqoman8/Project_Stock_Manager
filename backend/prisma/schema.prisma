@@ -211,6 +211,38 @@ enum AuditAction {
   STORE_CLOSED
   STORE_REOPENED
   STORE_DELETED
+
+  // Gestion des fournisseurs
+  SUPPLIER_CREATED
+  SUPPLIER_UPDATED
+  SUPPLIER_DEACTIVATED
+  SUPPLIER_REACTIVATED
+}
+
+// ---------------------------------------------------------------------------
+// Fournisseurs — conditions de paiement et référentiel fournisseurs
+// ---------------------------------------------------------------------------
+
+enum PaymentTerms {
+  IMMEDIATE
+  NET30
+  NET60
+  NET90
+}
+
+model Supplier {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  contact_name  String?
+  email         String?      @unique
+  phone         String?      @db.VarChar(20)
+  address       String?
+  payment_terms PaymentTerms @default(NET30)
+  is_active     Boolean      @default(true)
+  created_at    DateTime     @default(now())
+  updated_at    DateTime     @updatedAt
+
+  @@map("suppliers")
 }
 
 model AuditLog {
