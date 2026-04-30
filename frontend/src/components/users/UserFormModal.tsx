@@ -41,6 +41,7 @@ interface Store {
   id: string;
   name: string;
   location: string | null;
+  is_protected?: boolean;
 }
 
 interface StoreAccess {
@@ -243,9 +244,22 @@ export function UserFormModal({
     setApiError(null);
 
     // Construction du body de base
+    let resolvedStoreIds = values.storeIds;
+
+    // Garantit que les stores protégés sont toujours inclus quand on édite le SA.
+    // La checkbox disabled n'est pas toujours fiable dans RHF — on force l'inclusion ici.
+    if (isEditingSuperAdmin) {
+      const protectedIds = stores
+        .filter((s) => s.is_protected)
+        .map((s) => s.id);
+      const storeIdsSet = new Set(resolvedStoreIds);
+      protectedIds.forEach((id) => storeIdsSet.add(id));
+      resolvedStoreIds = Array.from(storeIdsSet);
+    }
+
     const body: Record<string, unknown> = {
       username: values.username,
-      storeIds: values.storeIds,
+      storeIds: resolvedStoreIds,
     };
 
     // roleId : exclu si on édite le SA ou si un Admin édite son propre compte.
@@ -412,27 +426,81 @@ export function UserFormModal({
               </p>
             ) : (
               <div className="flex flex-col gap-2">
-                {stores.map((store) => (
-                  <label
-                    key={store.id}
-                    className="flex items-center gap-2 text-sm text-textMain cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      value={store.id}
-                      {...register('storeIds')}
-                      className="rounded border-borderLight text-primary focus:ring-primary"
-                    />
-                    <span>
-                      {store.name}
-                      {store.location && (
-                        <span className="text-textMuted ml-1 text-xs">
-                          ({store.location})
+                {stores.map((store) => {
+                  // Un store protégé édité pour le SA est toujours coché et non modifiable.
+                  const isForced = isEditingSuperAdmin && store.is_protected === true;
+
+                  if (isForced) {
+                    return (
+                      <div
+                        key={store.id}
+                        className="flex items-center gap-2 text-sm text-textMain"
+                        aria-label={`${store.name} — requis, non modifiable`}
+                      >
+                        {/* Checkbox visible mais désactivée pour l'UX */}
+                        <input
+                          type="checkbox"
+                          checked
+                          disabled
+                          aria-checked="true"
+                          aria-disabled="true"
+                          className="rounded border-borderLight text-primary focus:ring-primary opacity-60 cursor-not-allowed"
+                          readOnly
+                        />
+                        {/* Input caché pour que RHF reçoive bien la valeur */}
+                        <input type="hidden" value={store.id} {...register('storeIds')} />
+                        <span className="flex items-center gap-1.5">
+                          {store.name}
+                          {store.location && (
+                            <span className="text-textMuted text-xs">
+                              ({store.location})
+                            </span>
+                          )}
+                          {/* Indicateur "requis" discret */}
+                          <span className="inline-flex items-center gap-0.5 text-xs text-textMuted select-none">
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+                            requis
+                          </span>
                         </span>
-                      )}
-                    </span>
-                  </label>
-                ))}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <label
+                      key={store.id}
+                      className="flex items-center gap-2 text-sm text-textMain cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        value={store.id}
+                        {...register('storeIds')}
+                        className="rounded border-borderLight text-primary focus:ring-primary"
+                      />
+                      <span>
+                        {store.name}
+                        {store.location && (
+                          <span className="text-textMuted ml-1 text-xs">
+                            ({store.location})
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             )}
 

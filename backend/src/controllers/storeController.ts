@@ -236,6 +236,14 @@ export async function closeStore(req: AuthenticatedRequest, res: Response): Prom
       store,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'STORE_PROTECTED') {
+      res.status(403).json({
+        success: false,
+        message: 'Cet établissement est protégé et ne peut pas être fermé.',
+      });
+      return;
+    }
+
     if (error instanceof Error && error.message.includes('Record to update not found')) {
       res.status(404).json({
         success: false,

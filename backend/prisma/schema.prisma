@@ -41,6 +41,7 @@ model Store {
   closed_at        DateTime?
   phone            String?           @db.VarChar(20)
   description      String?
+  is_protected     Boolean           @default(false)
   user_access      UserStoreAccess[]
   sessions         SessionLog[]
   inventories      Inventory[]

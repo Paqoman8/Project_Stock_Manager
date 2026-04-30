@@ -40,12 +40,13 @@ async function main() {
   // des couleurs — une fois cette UI créée, retirer color de update.
   const hubCentral = await prisma.store.upsert({
     where: { id: '00000000-0000-0000-0000-000000000001' },
-    update: { color: '#1D4ED8' },
+    update: { color: '#1D4ED8', is_protected: true },
     create: {
       id: '00000000-0000-0000-0000-000000000001',
       name: 'Hub Central GStock',
       location: 'Centre de Contrôle Principal',
       color: '#1D4ED8',  // Bleu primary — siège social
+      is_protected: true,
     },
   });
   console.log(`Magasin créé/vérifié: ${hubCentral.name}`);

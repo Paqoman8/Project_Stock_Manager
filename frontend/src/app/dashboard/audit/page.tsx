@@ -271,6 +271,10 @@ function ActionMultiSelect({
               {group.actions.map((action) => {
                 const isChecked = selectedActions.includes(action);
                 return (
+                  // onClick sur le label + e.preventDefault() évite le double-fire :
+                  // sans ça, cliquer sur la checkbox déclenche onChange (1) puis le
+                  // label re-dispatche le clic sur la checkbox → onChange (2) → toggle
+                  // deux fois = état net inchangé.
                   <label
                     key={action}
                     role="option"
@@ -280,11 +284,15 @@ function ActionMultiSelect({
                       'hover:bg-background/80 transition-colors',
                       isChecked ? 'text-textMain' : 'text-textMuted',
                     ].join(' ')}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      toggleAction(action);
+                    }}
                   >
                     <input
                       type="checkbox"
                       checked={isChecked}
-                      onChange={() => toggleAction(action)}
+                      readOnly
                       className="accent-primary w-3.5 h-3.5 flex-shrink-0 cursor-pointer"
                     />
                     {ACTION_LABELS[action]}
@@ -554,6 +562,19 @@ export default function AuditPage() {
   const [filterStartDate, setFilterStartDate] = useState(getDebutJournee);
   const [filterEndDate, setFilterEndDate]     = useState('');
 
+  // Ref pour exposer les valeurs courantes des filtres à loadLogs sans en faire des dépendances.
+  // Cela évite que chaque changement de filtre (clic sur une case à cocher, saisie de date…)
+  // ne déclenche un rechargement immédiat. Le rechargement n'a lieu qu'au clic "Filtrer"
+  // ou à la réinitialisation — pas à chaque frappe.
+  const filtersRef = useRef({
+    filterActions:   [] as string[],
+    filterStoreId:   '',
+    filterStartDate: getDebutJournee(),
+    filterEndDate:   '',
+  });
+  // Synchronisation à chaque render (avant tout useEffect)
+  filtersRef.current = { filterActions, filterStoreId, filterStartDate, filterEndDate };
+
   const [stores, setStores]       = useState<StoreOption[]>([]);
   const [logs, setLogs]           = useState<AuditLog[]>([]);
   const [total, setTotal]         = useState(0);
@@ -572,12 +593,16 @@ export default function AuditPage() {
     if (!sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) return;
 
     apiClient
-      .get<{ success: boolean; stores: StoreOption[] }>('/api/auth/accessible-stores')
+      .get<{ success: boolean; stores: StoreOption[] }>('/api/auth/accessible-stores?activeOnly=false')
       .then((res) => setStores(res.data.stores))
       .catch(() => { /* non-critique : le filtre magasin reste vide */ });
   }, [sessionUser]);
 
   const loadLogs = useCallback(async (p: number) => {
+    // Lit les filtres depuis la ref (toujours à jour) plutôt que depuis la closure.
+    // La ref est synchronisée à chaque render avant que cet effet ne s'exécute.
+    const { filterActions, filterStoreId, filterStartDate, filterEndDate } = filtersRef.current;
+
     setIsLoading(true);
     setError(null);
     try {
@@ -603,7 +628,10 @@ export default function AuditPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [filterActions, filterStoreId, filterStartDate, filterEndDate]);
+  // Référence stable (deps vide) : les filtres sont lus depuis filtersRef.current.
+  // Cela empêche le rechargement automatique à chaque changement de filtre —
+  // le rechargement n'a lieu qu'à l'action explicite de l'utilisateur (Filtrer / Reset).
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ne charge les logs que lorsque la session est prête et l'accès confirmé.
   // Sans cette garde, des requêtes inutiles (et rejetées par le backend)
@@ -624,12 +652,20 @@ export default function AuditPage() {
   }
 
   function handleReset() {
-    setFilterActions([]);
-    setFilterStoreId('');
-    setFilterStartDate(getDebutJournee());
-    setFilterEndDate('');
-    // loadLogs(1) sera appelé automatiquement par l'useEffect ci-dessus
-    // lorsque loadLogs change de référence (dépend des filtres)
+    const defaults = {
+      filterActions:   [] as string[],
+      filterStoreId:   '',
+      filterStartDate: getDebutJournee(),
+      filterEndDate:   '',
+    };
+    setFilterActions(defaults.filterActions);
+    setFilterStoreId(defaults.filterStoreId);
+    setFilterStartDate(defaults.filterStartDate);
+    setFilterEndDate(defaults.filterEndDate);
+    // Met à jour la ref immédiatement pour que loadLogs lise les valeurs réinitialisées
+    // (les setState sont asynchrones, la ref est synchrone)
+    filtersRef.current = defaults;
+    loadLogs(1);
   }
 
   // Garde de rendu : on n'affiche rien pendant le chargement de la session

@@ -420,6 +420,20 @@ export async function updateUser(
     }
   }
 
+  // Étape 5b : Si l'utilisateur cible est Super Administrateur, les stores protégés
+  // ne peuvent pas lui être retirés — le SA doit toujours avoir accès au Hub Central.
+  if (input.storeIds !== undefined && utilisateurExistant.role.name === ROLE_SUPER_ADMIN) {
+    const storesProtegés = await prisma.store.findMany({
+      where: { is_protected: true },
+      select: { id: true },
+    });
+    const storeIdsSet = new Set(input.storeIds);
+    const storeProtégéManquant = storesProtegés.some((s) => !storeIdsSet.has(s.id));
+    if (storeProtégéManquant) {
+      throw new Error('SA_PROTECTED_STORE_REQUIRED');
+    }
+  }
+
   // Étape 6 : Hachage du mot de passe si un nouveau est fourni
   let motDePasseHache: string | undefined;
   if (input.password !== undefined) {

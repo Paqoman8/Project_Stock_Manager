@@ -58,6 +58,7 @@ interface StoreRow {
   type: StoreType;
   status: StoreStatus;
   closed_at: string | null;
+  is_protected: boolean;
   _count: { user_access: number };
 }
 
@@ -1057,7 +1058,7 @@ export default function StoresPage() {
                           Modifier
                         </Button>
 
-                        {store.status === 'ACTIVE' && (
+                        {store.status === 'ACTIVE' && !store.is_protected && (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -1066,6 +1067,32 @@ export default function StoresPage() {
                           >
                             Fermer
                           </Button>
+                        )}
+
+                        {/* Store protégé : bouton "Fermer" remplacé par un badge discret */}
+                        {store.status === 'ACTIVE' && store.is_protected && (
+                          <span
+                            title="Cet établissement est protégé et ne peut pas être fermé"
+                            aria-label="Établissement protégé — fermeture impossible"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-textMuted bg-background border border-borderLight select-none"
+                          >
+                            {/* Icône cadenas inline — pas de dépendance externe */}
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+                            Protégé
+                          </span>
                         )}
 
                         {store.status === 'CLOSED' && (

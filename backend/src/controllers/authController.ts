@@ -280,7 +280,9 @@ export async function getAccessibleStores(req: AuthenticatedRequest, res: Respon
     });
 
     const isSuperAdmin = role?.name === 'Super Administrateur';
-    const magasins = await authService.getAccessibleStores(userId, isSuperAdmin);
+    // activeOnly=false permet à l'audit d'inclure les établissements fermés dans son filtre
+    const activeOnly = req.query.activeOnly !== 'false';
+    const magasins = await authService.getAccessibleStores(userId, isSuperAdmin, activeOnly);
 
     res.status(200).json({
       success: true,

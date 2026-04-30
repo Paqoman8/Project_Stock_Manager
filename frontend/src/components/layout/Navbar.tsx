@@ -9,6 +9,7 @@
 // Pendant l'hydratation (isLoading=true), des placeholders animate-pulse
 // évitent le flash d'un contenu absent.
 
+import Link from 'next/link';
 import { useSession } from '@/contexts/SessionContext';
 import { UserDropdown } from '@/components/layout/UserDropdown';
 import { APP_NAME } from '@/lib/config/app';
@@ -25,10 +26,13 @@ export function Navbar() {
       {/* Zone gauche : nom de l'app + badge magasin                          */}
       {/* ------------------------------------------------------------------ */}
       <div className="flex items-center gap-3">
-        {/* Nom de l'application — configurable via NEXT_PUBLIC_APP_NAME */}
-        <span className="font-semibold text-textMain tracking-tight">
+        {/* Nom de l'application — lien vers /dashboard, configurable via NEXT_PUBLIC_APP_NAME */}
+        <Link
+          href="/dashboard"
+          className="font-semibold text-textMain tracking-tight hover:opacity-75 transition-opacity"
+        >
           {APP_NAME}
-        </span>
+        </Link>
 
         {/* Badge magasin actif — couleur issue de store.color (style inline,
             car valeur dynamique runtime — les classes arbitraires Tailwind

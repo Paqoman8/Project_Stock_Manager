@@ -289,6 +289,14 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
       user: utilisateurMisAJour,
     });
   } catch (erreur) {
+    if (erreur instanceof Error && erreur.message === 'SA_PROTECTED_STORE_REQUIRED') {
+      res.status(422).json({
+        success: false,
+        message: 'Le Hub Central ne peut pas être retiré des accès du Super Administrateur.',
+      });
+      return;
+    }
+
     if (erreur instanceof Error) {
       const codeHttp = codeHttpPourErreurMetier(erreur.message);
       if (codeHttp !== null) {

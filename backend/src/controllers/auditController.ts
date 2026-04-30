@@ -23,10 +23,19 @@ export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Pr
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
 
   // --- Filtres ---
-  const actionParam = req.query.action as string | undefined;
-  const action = actionParam && Object.values(AuditAction).includes(actionParam as AuditAction)
-    ? actionParam as AuditAction
-    : undefined;
+  // req.query.action peut être une string (1 valeur) ou string[] (plusieurs valeurs)
+  // selon qu'Express reçoit ?action=X ou ?action=X&action=Y
+  const rawActions = req.query.action;
+  const actionList: string[] = Array.isArray(rawActions)
+    ? rawActions as string[]
+    : typeof rawActions === 'string' && rawActions
+      ? [rawActions]
+      : [];
+  // On ne garde que les valeurs qui correspondent à un AuditAction valide
+  const validActions = actionList.filter(
+    (a): a is AuditAction => Object.values(AuditAction).includes(a as AuditAction),
+  );
+  const actions = validActions.length > 0 ? validActions : undefined;
 
   const actorId   = typeof req.query.actorId === 'string' ? req.query.actorId : undefined;
   const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
@@ -67,7 +76,7 @@ export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Pr
     ) ? storeIdParam : undefined;
 
     const résultat = await auditService.getAuditLogs({
-      action,
+      actions,
       actorId,
       storeId:   filtreStoreId,
       startDate: startDateValide,

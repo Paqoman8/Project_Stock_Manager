@@ -53,6 +53,7 @@ interface Store {
   id: string;
   name: string;
   location: string | null;
+  is_protected?: boolean;
 }
 
 interface StoreAccess {
@@ -165,7 +166,7 @@ export default function UsersPage() {
     try {
       const [usersRes, storesRes, rolesRes] = await Promise.all([
         apiClient.get<{ success: boolean; users: UserRow[] }>('/api/users'),
-        apiClient.get<{ success: boolean; stores: Store[] }>('/api/auth/stores'),
+        apiClient.get<{ success: boolean; stores: Store[] }>('/api/auth/accessible-stores'),
         apiClient.get<{ success: boolean; roles: Role[] }>('/api/roles'),
       ]);
 

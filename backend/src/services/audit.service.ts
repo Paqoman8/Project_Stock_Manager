@@ -46,7 +46,7 @@ export type AuditLogRow = {
 
 export type GetAuditLogsOptions = {
   // Filtres
-  action?: AuditAction;
+  actions?: AuditAction[];   // tableau vide ou absent = pas de filtre action
   actorId?: string;
   storeId?: string;       // Filtre par un magasin spécifique (choisi par l'utilisateur)
   startDate?: Date;
@@ -110,13 +110,13 @@ export async function logAction(input: LogActionInput): Promise<void> {
  *    que par le SA car ils n'appartiennent à aucun magasin.
  */
 export async function getAuditLogs(options: GetAuditLogsOptions): Promise<AuditLogsResult> {
-  const { action, actorId, storeId, startDate, endDate, allowedStoreIds, page, limit } = options;
+  const { actions, actorId, storeId, startDate, endDate, allowedStoreIds, page, limit } = options;
 
   const where: Prisma.AuditLogWhereInput = {};
 
-  // Filtre par type d'action
-  if (action) {
-    where.action = action;
+  // Filtre par type(s) d'action — supporte la sélection multiple
+  if (actions && actions.length > 0) {
+    where.action = { in: actions };
   }
 
   // Filtre par acteur

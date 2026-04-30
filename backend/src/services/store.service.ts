@@ -27,6 +27,7 @@ export interface StoreRow {
   color: string;
   phone: string | null;
   description: string | null;
+  is_protected: boolean;
   type: 'MAGASIN' | 'BOUTIQUE' | 'ENTREPOT';
   status: 'ACTIVE' | 'CLOSED';
   closed_at: Date | null;
@@ -62,6 +63,7 @@ const STORE_SELECT = {
   color: true,
   phone: true,
   description: true,
+  is_protected: true,
   type: true,
   status: true,
   closed_at: true,
@@ -208,6 +210,15 @@ export async function closeStore(
   actorName: string,
   ip: string,
 ): Promise<StoreRow> {
+  // Vérification : un établissement protégé ne peut pas être fermé
+  const storeToClose = await prisma.store.findUnique({
+    where: { id },
+    select: { is_protected: true, name: true },
+  });
+  if (storeToClose?.is_protected) {
+    throw new Error('STORE_PROTECTED');
+  }
+
   const store = await prisma.store.update({
     where:  { id },
     data:   { status: 'CLOSED', closed_at: new Date() },

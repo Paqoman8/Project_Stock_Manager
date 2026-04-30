@@ -32,6 +32,7 @@ export type StoreOption = {
   name: string;
   location: string | null;
   color: string;
+  is_protected: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,7 @@ export async function getAvailableStores(): Promise<StoreOption[]> {
       name: true,
       location: true,
       color: true,
+      is_protected: true,
     },
     orderBy: { name: 'asc' },
   });
@@ -227,23 +229,33 @@ export async function getAvailableStores(): Promise<StoreOption[]> {
 export async function getAccessibleStores(
   userId: string,
   isSuperAdmin: boolean,
+  activeOnly: boolean = true,
 ): Promise<StoreOption[]> {
+  // Filtre de statut : par défaut on n'expose que les établissements ouverts.
+  // L'audit passe activeOnly=false pour pouvoir filtrer l'historique sur les
+  // établissements fermés également.
+  const statusFilter = activeOnly ? { status: 'ACTIVE' as const } : {};
+
   if (isSuperAdmin) {
     return prisma.store.findMany({
-      select: { id: true, name: true, location: true, color: true },
+      where: statusFilter,
+      select: { id: true, name: true, location: true, color: true, is_protected: true },
       orderBy: { name: 'asc' },
     });
   }
 
-  // Admin : on récupère uniquement les magasins auxquels il a accès
-  const acces = await prisma.userStoreAccess.findMany({
-    where: { user_id: userId },
-    include: {
-      store: { select: { id: true, name: true, location: true, color: true } },
+  // Admin : on cherche directement les Store accessibles à cet utilisateur.
+  // On utilise prisma.store.findMany avec un filtre de relation (user_access.some)
+  // plutôt que userStoreAccess.findMany + include, car Prisma n'accepte pas
+  // de clause `where` dans un `include` sur une relation to-one.
+  const stores = await prisma.store.findMany({
+    where: {
+      ...statusFilter,
+      user_access: { some: { user_id: userId } },
     },
+    select: { id: true, name: true, location: true, color: true, is_protected: true },
+    orderBy: { name: 'asc' },
   });
 
-  return acces
-    .map((a) => a.store)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  return stores;
 }
