@@ -6,6 +6,15 @@ const nextConfig: NextConfig = {
     // Voir : next/dist/docs/01-app/03-api-reference/04-functions/forbidden.md
     authInterrupts: true,
   },
+  allowedDevOrigins: ['192.168.2.182'],
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:5001/api/:path*',
+      },
+    ];
+  },
 };
 
 export default nextConfig;
