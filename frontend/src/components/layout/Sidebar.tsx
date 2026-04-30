@@ -105,6 +105,35 @@ function IconSuppliers({ className }: { className?: string }) {
   );
 }
 
+// Icône "Catalogue" : grille 2×2 (4 carreaux), stroke uniquement.
+function IconCatalogue({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Carreau haut-gauche */}
+      <rect x="3" y="3" width="8" height="8" rx="1" />
+      {/* Carreau haut-droit */}
+      <rect x="13" y="3" width="8" height="8" rx="1" />
+      {/* Carreau bas-gauche */}
+      <rect x="3" y="13" width="8" height="8" rx="1" />
+      {/* Carreau bas-droit */}
+      <rect x="13" y="13" width="8" height="8" rx="1" />
+    </svg>
+  );
+}
+
 // Icône "Journal d'audit" : presse-papier avec lignes de texte.
 function IconAudit({ className }: { className?: string }) {
   return (
@@ -207,6 +236,12 @@ export function Sidebar() {
                 href="/dashboard/audit"
                 label="Journal d'audit"
                 icon={<IconAudit className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
+              <NavItem
+                href="/dashboard/catalogue"
+                label="Catalogue"
+                icon={<IconCatalogue className="flex-shrink-0" />}
                 currentPath={pathname}
               />
             </>
