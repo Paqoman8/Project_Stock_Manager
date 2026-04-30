@@ -7,9 +7,11 @@
 //   - Chargement en parallèle de /api/users, /api/auth/stores et /api/roles au montage
 //   - Les rôles sont chargés depuis GET /api/roles (le backend exclut déjà le SA)
 //   - Quatre états de modale : création / édition / désactivation / réactivation
+//   - Filtrage 100% client-side via useMemo (pas d'appel API supplémentaire)
 //
 // Sécurité UI :
-//   - Vérification de rôle après hydratation de la session → forbidden() si insuffisant
+//   - Vérification de rôle après hydratation → redirect('/dashboard') si insuffisant
+//     (forbidden() est réservé aux Server Components — ne fonctionne pas côté client)
 //   - Le bouton "Désactiver" n'apparaît JAMAIS sur la ligne du Super Administrateur
 //   - Le bouton "Réactiver" n'apparaît que sur les comptes inactifs non-SA
 //   - Le SA est identifié par user.role.name === 'Super Administrateur'
@@ -21,9 +23,9 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { forbidden } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { RoleBadge } from '@/components/ui/RoleBadge';
 import { UserFormModal } from '@/components/users/UserFormModal';
@@ -103,47 +105,64 @@ function SkeletonRows() {
 }
 
 // ---------------------------------------------------------------------------
+// Sous-composant : Icône reset (×)
+// ---------------------------------------------------------------------------
+
+function IconReset() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+      aria-hidden="true">
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Composant principal
 // ---------------------------------------------------------------------------
 
 export default function UsersPage() {
   const { user: sessionUser, isLoading: sessionLoading } = useSession();
+  const router = useRouter();
 
-  // Vérification du rôle après hydratation de la session.
-  // On attend que isLoading soit false pour avoir une valeur fiable.
-  // forbidden() déclenche le rendu de src/app/dashboard/users/forbidden.tsx.
-  if (!sessionLoading && sessionUser !== null) {
-    if (!ROLES_AUTORISES.includes(sessionUser.roleName)) {
-      forbidden();
+  // Redirection si non autorisé — useEffect plutôt que forbidden() car ce composant
+  // est un Client Component (forbidden() ne fonctionne qu'en Server Component).
+  useEffect(() => {
+    if (!sessionLoading && sessionUser !== null && !ROLES_AUTORISES.includes(sessionUser.roleName)) {
+      router.replace('/dashboard');
     }
-  }
+  }, [sessionLoading, sessionUser, router]);
 
   // --- État des données ---
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
-  // Rôles assignables chargés depuis le backend (SA exclu par le backend)
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [users, setUsers]       = useState<UserRow[]>([]);
+  const [stores, setStores]     = useState<Store[]>([]);
+  const [roles, setRoles]       = useState<Role[]>([]);
+  const [isLoading, setIsLoading]     = useState(true);
+  const [fetchError, setFetchError]   = useState<string | null>(null);
+
+  // --- Filtres (client-side) ---
+  // Statut par défaut : "active" — les comptes inactifs sont l'exception.
+  const [search, setSearch]         = useState('');
+  const [filterRole, setFilterRole] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'active' | 'inactive' | 'all'>('all');
+  const [filterStore, setFilterStore]   = useState('');
 
   // --- Contrôle des modales ---
-  const [modalCreate, setModalCreate] = useState(false);
-  const [userToEdit, setUserToEdit] = useState<UserRow | null>(null);
-  const [userToDeactivate, setUserToDeactivate] = useState<UserRow | null>(null);
-  const [userToReactivate, setUserToReactivate] = useState<UserRow | null>(null);
+  const [modalCreate, setModalCreate]             = useState(false);
+  const [userToEdit, setUserToEdit]               = useState<UserRow | null>(null);
+  const [userToDeactivate, setUserToDeactivate]   = useState<UserRow | null>(null);
+  const [userToReactivate, setUserToReactivate]   = useState<UserRow | null>(null);
 
   // ---------------------------------------------------------------------------
   // Chargement des données
   // ---------------------------------------------------------------------------
 
-  // Fonction stable (useCallback) pour pouvoir l'appeler depuis les callbacks
-  // de succès des modales sans recréer le handler à chaque render.
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setFetchError(null);
 
     try {
-      // Les trois appels sont indépendants — on les lance en parallèle.
       const [usersRes, storesRes, rolesRes] = await Promise.all([
         apiClient.get<{ success: boolean; users: UserRow[] }>('/api/users'),
         apiClient.get<{ success: boolean; stores: Store[] }>('/api/auth/stores'),
@@ -155,9 +174,7 @@ export default function UsersPage() {
       setRoles(rolesRes.data.roles ?? []);
     } catch (err) {
       if (axios.isAxiosError(err)) {
-        setFetchError(
-          err.response?.data?.message ?? 'Impossible de charger les données.'
-        );
+        setFetchError(err.response?.data?.message ?? 'Impossible de charger les données.');
       } else {
         setFetchError('Une erreur inattendue est survenue.');
       }
@@ -167,32 +184,78 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    // On ne charge les données que lorsque la session est prête
-    // et que l'utilisateur est autorisé (évite un appel inutile avant forbidden)
     if (sessionLoading) return;
     if (!sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) return;
     loadData();
   }, [loadData, sessionLoading, sessionUser]);
 
   // ---------------------------------------------------------------------------
-  // Rendu — skeleton pendant le chargement de la session
+  // Filtrage client-side — recalculé uniquement quand les données ou filtres changent
   // ---------------------------------------------------------------------------
 
-  // Ne pas rendre le contenu tant que la session est en chargement
-  if (sessionLoading) {
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return users.filter((u) => {
+      // Recherche libre : username OU email
+      if (q) {
+        const matchUsername = u.username.toLowerCase().includes(q);
+        const matchEmail    = u.email?.toLowerCase().includes(q) ?? false;
+        if (!matchUsername && !matchEmail) return false;
+      }
+
+      // Filtre par rôle
+      if (filterRole && u.role.name !== filterRole) return false;
+
+      // Filtre par statut
+      if (filterStatus === 'active'   && !u.is_active) return false;
+      if (filterStatus === 'inactive' &&  u.is_active) return false;
+
+      // Filtre par magasin
+      if (filterStore) {
+        const hasStore = u.store_access.some((sa) => sa.store.id === filterStore);
+        if (!hasStore) return false;
+      }
+
+      return true;
+    });
+  }, [users, search, filterRole, filterStatus, filterStore]);
+
+  // Un filtre non-par-défaut est "actif" dès que quelque chose a changé
+  const hasActiveFilters =
+    search !== '' ||
+    filterRole !== '' ||
+    filterStatus !== 'all' ||
+    filterStore !== '';
+
+  function handleReset() {
+    setSearch('');
+    setFilterRole('');
+    setFilterStatus('all');
+    setFilterStore('');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Garde de rendu — skeleton pendant la session
+  // ---------------------------------------------------------------------------
+
+  if (sessionLoading || !sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) {
     return (
       <div className="flex flex-col gap-6">
         <div className="h-8 w-56 bg-borderLight rounded animate-pulse" aria-hidden="true" />
         <div className="bg-surface border border-borderLight rounded overflow-x-auto">
           <table className="w-full text-sm" aria-hidden="true">
-            <tbody>
-              <SkeletonRows />
-            </tbody>
+            <tbody><SkeletonRows /></tbody>
           </table>
         </div>
       </div>
     );
   }
+
+  // Classes communes aux selects et à l'input de recherche
+  const inputCls =
+    'px-3 py-2 text-sm bg-background border border-borderLight rounded text-textMain ' +
+    'focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary';
 
   // ---------------------------------------------------------------------------
   // Rendu principal
@@ -200,40 +263,136 @@ export default function UsersPage() {
 
   return (
     <div className="flex flex-col gap-6">
+
       {/* En-tête de page */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-textMain">
           Gestion des utilisateurs
         </h1>
-        <Button
-          variant="primary"
-          size="md"
-          onClick={() => setModalCreate(true)}
-        >
+        <Button variant="primary" size="md" onClick={() => setModalCreate(true)}>
           Créer un utilisateur
         </Button>
       </div>
 
-      {/* Erreur de chargement */}
-      {fetchError && (
-        <p role="alert" className="text-sm text-danger">
-          {fetchError}
+      {/* ------------------------------------------------------------------ */}
+      {/* Barre de recherche et filtres                                        */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="flex flex-wrap items-end gap-3 p-4 bg-surface border border-borderLight rounded">
+
+        {/* Recherche libre */}
+        <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+          <label htmlFor="search-users" className="text-xs font-medium text-textSecondary">
+            Recherche
+          </label>
+          <input
+            id="search-users"
+            type="search"
+            placeholder="Identifiant ou email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+
+        {/* Filtre par rôle */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="filter-role" className="text-xs font-medium text-textSecondary">
+            Rôle
+          </label>
+          <select
+            id="filter-role"
+            value={filterRole}
+            onChange={(e) => setFilterRole(e.target.value)}
+            className={inputCls}
+          >
+            <option value="">Tous les rôles</option>
+            {/* On affiche aussi le SA dans ce filtre car le SA peut vouloir
+                retrouver son propre compte. Les rôles chargés depuis /api/roles
+                excluent le SA — on l'ajoute manuellement ici. */}
+            <option value="Super Administrateur">Super Administrateur</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.name}>{r.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Filtre par statut */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="filter-status" className="text-xs font-medium text-textSecondary">
+            Statut
+          </label>
+          <select
+            id="filter-status"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as 'active' | 'inactive' | 'all')}
+            className={inputCls}
+          >
+            <option value="all">Tous</option>
+            <option value="active">Actifs</option>
+            <option value="inactive">Inactifs</option>
+          </select>
+        </div>
+
+        {/* Filtre par magasin — masqué s'il n'y a qu'un seul magasin */}
+        {stores.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="filter-store" className="text-xs font-medium text-textSecondary">
+              Magasin
+            </label>
+            <select
+              id="filter-store"
+              value={filterStore}
+              onChange={(e) => setFilterStore(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">Tous les magasins</option>
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Bouton réinitialiser — visible uniquement si un filtre est actif */}
+        {hasActiveFilters && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={handleReset}
+            className="flex items-center gap-1.5 self-end"
+          >
+            <IconReset />
+            Réinitialiser
+          </Button>
+        )}
+      </div>
+
+      {/* Compteur de résultats */}
+      {!isLoading && !fetchError && (
+        <p className="text-xs text-textMuted -mt-3">
+          {filteredUsers.length === 0
+            ? 'Aucun utilisateur ne correspond aux filtres.'
+            : filteredUsers.length === users.length
+              ? `${users.length} utilisateur${users.length > 1 ? 's' : ''}`
+              : `${filteredUsers.length} utilisateur${filteredUsers.length > 1 ? 's' : ''} affiché${filteredUsers.length > 1 ? 's' : ''} sur ${users.length}`
+          }
         </p>
       )}
 
-      {/* Tableau */}
+      {/* Erreur de chargement */}
+      {fetchError && (
+        <p role="alert" className="text-sm text-danger">{fetchError}</p>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Tableau                                                              */}
+      {/* ------------------------------------------------------------------ */}
       <div className="bg-surface border border-borderLight rounded overflow-x-auto">
         <table className="w-full text-sm" role="table" aria-label="Liste des utilisateurs">
           <thead>
             <tr className="bg-background border-b border-borderLight">
-              {[
-                'Identifiant',
-                'Email',
-                'Rôle',
-                'Magasins',
-                'Statut',
-                'Actions',
-              ].map((col) => (
+              {['Identifiant', 'Email', 'Rôle', 'Magasins', 'Statut', 'Actions'].map((col) => (
                 <th
                   key={col}
                   scope="col"
@@ -248,23 +407,17 @@ export default function UsersPage() {
           <tbody>
             {isLoading ? (
               <SkeletonRows />
-            ) : users.length === 0 ? (
+            ) : filteredUsers.length === 0 ? (
               <tr>
-                <td
-                  colSpan={6}
-                  className="px-4 py-10 text-center text-sm text-textMuted"
-                >
-                  Aucun utilisateur trouvé.
+                <td colSpan={6} className="px-4 py-10 text-center text-sm text-textMuted">
+                  {users.length === 0
+                    ? 'Aucun utilisateur trouvé.'
+                    : 'Aucun utilisateur ne correspond aux filtres.'}
                 </td>
               </tr>
             ) : (
-              users.map((user) => {
-                // Noms des magasins concaténés — affichage compact
-                const storeNames = user.store_access
-                  .map((sa) => sa.store.name)
-                  .join(', ');
-
-                // Détermine si ce compte est protégé (Super Administrateur)
+              filteredUsers.map((user) => {
+                const storeNames = user.store_access.map((sa) => sa.store.name).join(', ');
                 const isSuperAdmin = user.role.name === 'Super Administrateur';
 
                 return (
@@ -272,7 +425,7 @@ export default function UsersPage() {
                     key={user.id}
                     className="border-b border-borderLight hover:bg-background/50 transition-colors"
                   >
-                    {/* Identifiant — avec indicateur discret si SA */}
+                    {/* Identifiant */}
                     <td className="px-4 py-3 font-medium text-textMain whitespace-nowrap">
                       <span className="flex items-center gap-1.5">
                         {user.username}
@@ -290,9 +443,7 @@ export default function UsersPage() {
 
                     {/* Email */}
                     <td className="px-4 py-3 text-textMuted">
-                      {user.email ?? (
-                        <span aria-label="Aucun email">—</span>
-                      )}
+                      {user.email ?? <span aria-label="Aucun email">—</span>}
                     </td>
 
                     {/* Rôle */}
@@ -302,9 +453,7 @@ export default function UsersPage() {
 
                     {/* Magasins */}
                     <td className="px-4 py-3 text-sm text-textMuted max-w-[200px]">
-                      {storeNames || (
-                        <span aria-label="Aucun magasin">—</span>
-                      )}
+                      {storeNames || <span aria-label="Aucun magasin">—</span>}
                     </td>
 
                     {/* Statut */}
@@ -315,11 +464,6 @@ export default function UsersPage() {
                     {/* Actions */}
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        {/*
-                          "Modifier" est masqué sur la ligne du SA si l'utilisateur
-                          connecté n'est pas lui-même le SA. Seul le SA peut modifier
-                          ses propres informations — un Administrateur n'y a aucun accès.
-                        */}
                         {(!isSuperAdmin || sessionUser?.roleName === 'Super Administrateur') && (
                           <Button
                             variant="secondary"
@@ -331,13 +475,6 @@ export default function UsersPage() {
                           </Button>
                         )}
 
-                        {/*
-                          "Désactiver" est visible uniquement si :
-                          1. Le compte est encore actif
-                          2. Ce n'est PAS le Super Administrateur
-                          3. Ce n'est PAS le compte de l'utilisateur connecté
-                             (on ne peut pas désactiver soi-même)
-                        */}
                         {user.is_active && !isSuperAdmin && user.id !== sessionUser?.id && (
                           <Button
                             variant="danger"
@@ -349,13 +486,6 @@ export default function UsersPage() {
                           </Button>
                         )}
 
-                        {/*
-                          "Réactiver" est visible uniquement si :
-                          1. Le compte est inactif
-                          2. Ce n'est PAS le Super Administrateur
-                          Style : couleur success pour distinguer l'action de réactivation
-                          de l'action de désactivation (danger).
-                        */}
                         {!user.is_active && !isSuperAdmin && (
                           <Button
                             variant="secondary"
@@ -377,11 +507,10 @@ export default function UsersPage() {
         </table>
       </div>
 
-      {/* -----------------------------------------------------------------
-          Modales
-      ----------------------------------------------------------------- */}
+      {/* ------------------------------------------------------------------ */}
+      {/* Modales                                                              */}
+      {/* ------------------------------------------------------------------ */}
 
-      {/* Création */}
       <UserFormModal
         isOpen={modalCreate}
         onClose={() => setModalCreate(false)}
@@ -391,7 +520,6 @@ export default function UsersPage() {
         user={null}
       />
 
-      {/* Édition — userToEdit non-null déclenche l'ouverture */}
       <UserFormModal
         isOpen={userToEdit !== null}
         onClose={() => setUserToEdit(null)}
@@ -402,7 +530,6 @@ export default function UsersPage() {
         sessionUserId={sessionUser?.id}
       />
 
-      {/* Désactivation */}
       <DeactivateUserModal
         isOpen={userToDeactivate !== null}
         onClose={() => setUserToDeactivate(null)}
@@ -410,7 +537,6 @@ export default function UsersPage() {
         user={userToDeactivate}
       />
 
-      {/* Réactivation */}
       <ReactivateUserModal
         isOpen={userToReactivate !== null}
         onClose={() => setUserToReactivate(null)}
