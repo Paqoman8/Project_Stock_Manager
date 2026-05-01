@@ -245,7 +245,10 @@ export async function updatePurchaseOrder(
 /**
  * Passe une commande DRAFT au statut SENT (enregistre sent_at).
  *
- * Règle métier : seule une commande en statut DRAFT peut être envoyée.
+ * Règles métier vérifiées avant transition :
+ *   1. Le fournisseur doit toujours être actif.
+ *   2. Chaque ligne de commande doit référencer un supplier_product ET un produit actifs.
+ *      Si au moins une ligne est invalide, la commande ne peut pas être envoyée.
  *
  * @param id         - UUID de la commande
  * @param actorId    - UUID de l'utilisateur connecté
@@ -256,6 +259,8 @@ export async function updatePurchaseOrder(
  * @returns La commande mise à jour
  * @throws Error('ORDER_NOT_FOUND')           si la commande n'existe pas
  * @throws Error('INVALID_STATUS_TRANSITION') si la commande n'est pas en DRAFT
+ * @throws Error('SUPPLIER_INACTIVE')         si le fournisseur a été désactivé
+ * @throws Error('INACTIVE_ORDER_ITEMS')      si au moins une ligne pointe vers un produit/catalogue désactivé
  */
 export async function sendPurchaseOrder(
   id: string,
@@ -271,6 +276,39 @@ export async function sendPurchaseOrder(
   }
   if (existing.status !== PurchaseOrderStatus.DRAFT) {
     throw new Error('INVALID_STATUS_TRANSITION');
+  }
+
+  // Vérification 1 : le fournisseur est toujours actif
+  const supplier = await prisma.supplier.findUnique({
+    where:  { id: existing.supplier_id },
+    select: { is_active: true, name: true },
+  });
+  if (!supplier || !supplier.is_active) {
+    throw new Error('SUPPLIER_INACTIVE');
+  }
+
+  // Vérification 2 : chaque ligne référence un supplier_product ET un produit actifs
+  const supplierProductIds = existing.items.map((i) => i.supplier_product_id);
+  const supplierProducts = await prisma.supplierProduct.findMany({
+    where:  { id: { in: supplierProductIds } },
+    select: {
+      id:        true,
+      is_active: true,
+      product:   { select: { name: true, is_active: true } },
+    },
+  });
+
+  const inactiveItems: string[] = [];
+  for (const sp of supplierProducts) {
+    if (!sp.is_active || !sp.product.is_active) {
+      inactiveItems.push(sp.product.name);
+    }
+  }
+
+  if (inactiveItems.length > 0) {
+    const err = new Error('INACTIVE_ORDER_ITEMS') as Error & { items: string[] };
+    err.items = inactiveItems;
+    throw err;
   }
 
   const order = await orderRepo.updateStatus(id, PurchaseOrderStatus.SENT, { sent_at: true });

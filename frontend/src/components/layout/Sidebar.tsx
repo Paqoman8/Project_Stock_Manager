@@ -189,6 +189,34 @@ function IconPurchaseOrders({ className }: { className?: string }) {
   );
 }
 
+// Icône "Réceptions" : boîte ouverte avec flèche pointant vers le bas (livraison entrante).
+function IconReceptions({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Boîte ouverte */}
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      {/* Flèche vers le bas */}
+      <line x1="10" y1="12" x2="14" y2="12" />
+      <line x1="12" y1="10" x2="12" y2="16" />
+      <polyline points="9 14 12 17 15 14" />
+    </svg>
+  );
+}
+
 // Icône "Journal d'audit" : presse-papier avec lignes de texte.
 function IconAudit({ className }: { className?: string }) {
   return (
@@ -222,6 +250,7 @@ function IconAudit({ className }: { className?: string }) {
 
 const ROLES_ADMIN: readonly string[] = ['Super Administrateur', 'Administrateur'];
 const ROLE_SA = 'Super Administrateur';
+const ROLES_AGENT: readonly string[] = ['Manager Magasin', 'Opérateur'];
 
 // ---------------------------------------------------------------------------
 // Helper : élément de navigation
@@ -270,6 +299,7 @@ export function Sidebar() {
   // pour éviter tout flash d'accès interdit ou fuite via les technologies d'assistance.
   const estAdmin = !isLoading && user !== null && ROLES_ADMIN.includes(user.roleName);
   const estSA    = !isLoading && user !== null && user.roleName === ROLE_SA;
+  const estAgent = !isLoading && user !== null && ROLES_AGENT.includes(user.roleName);
 
   return (
     <aside
@@ -305,6 +335,12 @@ export function Sidebar() {
                 icon={<IconPurchaseOrders className="flex-shrink-0" />}
                 currentPath={pathname}
               />
+              <NavItem
+                href="/dashboard/receptions"
+                label="Réceptions"
+                icon={<IconReceptions className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
             </>
           )}
           {estSA && (
@@ -328,6 +364,14 @@ export function Sidebar() {
                 currentPath={pathname}
               />
             </>
+          )}
+          {estAgent && (
+            <NavItem
+              href="/dashboard/receptions"
+              label="Réceptions"
+              icon={<IconReceptions className="flex-shrink-0" />}
+              currentPath={pathname}
+            />
           )}
         </ul>
       </nav>

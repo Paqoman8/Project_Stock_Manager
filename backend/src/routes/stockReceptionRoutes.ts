@@ -3,8 +3,10 @@
 // Routes de gestion des réceptions de stock (StockReception).
 //
 // Accès :
-//   - Lecture, création, confirmation : requireAuth (SA + Admin)
-//   - Annulation                      : requireAuth + requireRole('Super Administrateur')
+//   - Lecture              : requireAuth (tous les rôles connectés)
+//   - Création (POST)      : SA, Admin, Manager Magasin, Opérateur
+//   - Confirmation (PATCH) : SA, Administrateur
+//   - Annulation (PATCH)   : Super Administrateur uniquement
 
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
@@ -26,11 +28,21 @@ stockReceptionRouter.get('/by-order/:orderId', requireAuth, getReceptionsByOrder
 // GET /api/receptions/:id — récupère une réception par son UUID
 stockReceptionRouter.get('/:id', requireAuth, getReceptionById);
 
-// POST /api/receptions — crée une nouvelle réception
-stockReceptionRouter.post('/', requireAuth, createReception);
+// POST /api/receptions — crée une réception (SA + Admin + agents terrain)
+stockReceptionRouter.post(
+  '/',
+  requireAuth,
+  requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin', 'Opérateur'),
+  createReception,
+);
 
-// PATCH /api/receptions/:id/confirm — confirme une réception et met à jour le stock
-stockReceptionRouter.patch('/:id/confirm', requireAuth, confirmReception);
+// PATCH /api/receptions/:id/confirm — confirme et met à jour le stock (SA + Admin)
+stockReceptionRouter.patch(
+  '/:id/confirm',
+  requireAuth,
+  requireRole('Super Administrateur', 'Administrateur'),
+  confirmReception,
+);
 
 // PATCH /api/receptions/:id/cancel — annule une réception (SA uniquement)
 stockReceptionRouter.patch(

@@ -356,6 +356,22 @@ export async function sendPurchaseOrder(req: AuthenticatedRequest, res: Response
       });
       return;
     }
+    if (error instanceof Error && error.message === 'SUPPLIER_INACTIVE') {
+      res.status(422).json({
+        success: false,
+        message: 'Le fournisseur de cette commande a été désactivé. Impossible de l\'envoyer.',
+      });
+      return;
+    }
+    if (error instanceof Error && error.message === 'INACTIVE_ORDER_ITEMS') {
+      const items = (error as Error & { items: string[] }).items;
+      const list  = items.join(', ');
+      res.status(422).json({
+        success: false,
+        message: `Impossible d'envoyer la commande : ${items.length} ligne(s) référencent un produit ou un catalogue fournisseur désactivé (${list}).`,
+      });
+      return;
+    }
 
     console.error('Erreur lors de l\'envoi de la commande :', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
