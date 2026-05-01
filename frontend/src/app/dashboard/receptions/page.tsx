@@ -16,7 +16,7 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
@@ -496,7 +496,6 @@ function OrderReceptionsModal({
       )
       .then((res) => {
         if (!cancelled) {
-          // Trier par date décroissante (plus récent en premier)
           const sorted = [...(res.data.receptions ?? [])].sort(
             (a, b) =>
               new Date(b.received_at).getTime() - new Date(a.received_at).getTime()
@@ -525,6 +524,40 @@ function OrderReceptionsModal({
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
   }, [order, onClose]);
+
+  // ---------------------------------------------------------------------------
+  // Récapitulatif d'avancement — calculé depuis les réceptions CONFIRMED
+  //
+  // Pour chaque produit de la commande :
+  //   - ordered_qty      : quantité commandée (en unités de commande)
+  //   - total_received   : somme des received_qty des réceptions CONFIRMED
+  //   - remaining        : différence (peut être négative en cas de sur-réception)
+  //   - pct              : taux de complétion (plafonné à 100 %)
+  // ---------------------------------------------------------------------------
+  const completionSummary = useMemo(() => {
+    if (!order) return [];
+
+    // Agréger les quantités reçues confirmées par product_id
+    const confirmedByProduct = new Map<string, number>();
+    for (const reception of receptions) {
+      if (reception.status !== 'CONFIRMED') continue;
+      for (const item of reception.items) {
+        confirmedByProduct.set(
+          item.product_id,
+          (confirmedByProduct.get(item.product_id) ?? 0) + item.received_qty,
+        );
+      }
+    }
+
+    return order.items.map((oi) => {
+      const product   = oi.supplier_product.product;
+      const ordered   = oi.ordered_qty;
+      const received  = confirmedByProduct.get(product.id) ?? 0;
+      const remaining = Math.max(0, ordered - received);
+      const pct       = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
+      return { product, orderUnit: oi.supplier_product.order_unit, ordered, received, remaining, pct };
+    });
+  }, [order, receptions]);
 
   if (!order) return null;
 
@@ -556,99 +589,194 @@ function OrderReceptionsModal({
         </div>
 
         {/* Corps */}
-        <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
-          {isLoading ? (
-            <div className="flex flex-col gap-3">
-              {[1, 2].map((n) => (
-                <div
-                  key={n}
-                  className="h-24 bg-borderLight rounded animate-pulse"
-                  aria-hidden="true"
-                />
-              ))}
-            </div>
-          ) : fetchError ? (
-            <p role="alert" className="text-sm text-danger">{fetchError}</p>
-          ) : receptions.length === 0 ? (
-            <p className="text-sm text-textMuted py-4 text-center">
-              Aucune réception enregistrée pour cette commande.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-4" aria-label="Liste des réceptions">
-              {receptions.map((reception) => (
-                <li
-                  key={reception.id}
-                  className="border border-borderLight rounded p-4 flex flex-col gap-3 bg-background"
-                >
-                  {/* En-tête de la réception */}
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <ReceptionStatusBadge status={reception.status} />
-                      <span className="text-xs text-textMuted">
-                        {formatDateTime(reception.received_at)}
-                      </span>
-                      <span className="text-xs text-textMuted">
-                        · par <strong className="text-textMain">{reception.received_by.username}</strong>
-                      </span>
+        <div className="px-6 py-5 flex flex-col gap-5 overflow-y-auto flex-1">
+
+          {/* ----------------------------------------------------------------
+              Récapitulatif d'avancement — toujours affiché (skeleton pendant le chargement)
+          ----------------------------------------------------------------- */}
+          <div className="flex flex-col gap-2">
+            <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+              Avancement de la réception
+            </h3>
+
+            {isLoading ? (
+              <div className="flex flex-col gap-2">
+                {order.items.map((oi) => (
+                  <div
+                    key={oi.id}
+                    className="h-10 bg-borderLight rounded animate-pulse"
+                    aria-hidden="true"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {completionSummary.map(({ product, orderUnit, ordered, received, remaining, pct }) => {
+                  const isComplete = pct >= 100;
+                  const hasStarted = received > 0;
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="flex flex-col gap-1 p-3 bg-background border border-borderLight rounded"
+                    >
+                      {/* Ligne principale : nom + chiffres */}
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div className="flex flex-col gap-0">
+                          <span className="text-sm font-medium text-textMain">{product.name}</span>
+                          <span className="text-xs text-textMuted font-mono">{product.sku}</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs text-textMuted whitespace-nowrap">
+                          <span>
+                            Commandé&nbsp;:&nbsp;
+                            <strong className="text-textMain">{ordered}</strong> {orderUnit}
+                          </span>
+                          <span>
+                            Reçu&nbsp;:&nbsp;
+                            <strong className={isComplete ? 'text-green-700' : hasStarted ? 'text-orange-600' : 'text-textMuted'}>
+                              {received}
+                            </strong> {orderUnit}
+                          </span>
+                          <span>
+                            Restant&nbsp;:&nbsp;
+                            <strong className={remaining === 0 ? 'text-green-700' : 'text-textMain'}>
+                              {remaining}
+                            </strong> {orderUnit}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Barre de progression */}
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="flex-1 h-1.5 bg-borderLight rounded-full overflow-hidden"
+                          role="progressbar"
+                          aria-valuenow={pct}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-label={`${product.name} : ${pct}% reçu`}
+                        >
+                          <div
+                            className={[
+                              'h-full rounded-full transition-all',
+                              isComplete ? 'bg-green-500' : hasStarted ? 'bg-orange-400' : 'bg-borderLight',
+                            ].join(' ')}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className={[
+                          'text-xs font-medium tabular-nums w-8 text-right',
+                          isComplete ? 'text-green-700' : hasStarted ? 'text-orange-600' : 'text-textMuted',
+                        ].join(' ')}>
+                          {pct}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ----------------------------------------------------------------
+              Liste des réceptions individuelles
+          ----------------------------------------------------------------- */}
+          <div className="flex flex-col gap-2">
+            <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+              Historique des réceptions
+            </h3>
+
+            {isLoading ? (
+              <div className="flex flex-col gap-3">
+                {[1, 2].map((n) => (
+                  <div
+                    key={n}
+                    className="h-24 bg-borderLight rounded animate-pulse"
+                    aria-hidden="true"
+                  />
+                ))}
+              </div>
+            ) : fetchError ? (
+              <p role="alert" className="text-sm text-danger">{fetchError}</p>
+            ) : receptions.length === 0 ? (
+              <p className="text-sm text-textMuted py-2 text-center">
+                Aucune réception enregistrée pour cette commande.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-4" aria-label="Liste des réceptions">
+                {receptions.map((reception) => (
+                  <li
+                    key={reception.id}
+                    className="border border-borderLight rounded p-4 flex flex-col gap-3 bg-background"
+                  >
+                    {/* En-tête de la réception */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <ReceptionStatusBadge status={reception.status} />
+                        <span className="text-xs text-textMuted">
+                          {formatDateTime(reception.received_at)}
+                        </span>
+                        <span className="text-xs text-textMuted">
+                          · par <strong className="text-textMain">{reception.received_by.username}</strong>
+                        </span>
+                      </div>
+
+                      {/* Actions (uniquement PENDING) */}
+                      {reception.status === 'PENDING' && (isAdmin || isSA) && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => onConfirm(reception)}
+                            aria-label="Confirmer cette réception"
+                          >
+                            Confirmer
+                          </Button>
+                          {isSA && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => onCancel(reception)}
+                              aria-label="Annuler cette réception"
+                            >
+                              Annuler
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Actions (uniquement PENDING) */}
-                    {reception.status === 'PENDING' && (isAdmin || isSA) && (
-                      <div className="flex items-center gap-2">
-                        {/* SA et Admin peuvent confirmer */}
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => onConfirm(reception)}
-                          aria-label="Confirmer cette réception"
-                        >
-                          Confirmer
-                        </Button>
-                        {/* SA peut aussi annuler */}
-                        {isSA && (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => onCancel(reception)}
-                            aria-label="Annuler cette réception"
-                          >
-                            Annuler
-                          </Button>
-                        )}
-                      </div>
+                    {/* Articles reçus */}
+                    <div className="flex flex-col gap-1">
+                      <h4 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+                        Articles
+                      </h4>
+                      <ul className="flex flex-col gap-1">
+                        {reception.items.map((item) => (
+                          <li key={item.id} className="text-xs text-textMuted">
+                            <span className="font-medium text-textMain">{item.product.name}</span>
+                            {' — '}
+                            {item.received_qty} reçu(s)
+                            {' → '}
+                            <span className="text-green-700 font-medium">
+                              {item.stock_units_added} unité(s) ajoutée(s) au stock
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Notes */}
+                    {reception.notes && (
+                      <p className="text-xs text-textMuted italic">
+                        Notes : {reception.notes}
+                      </p>
                     )}
-                  </div>
-
-                  {/* Articles reçus */}
-                  <div className="flex flex-col gap-1">
-                    <h4 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
-                      Articles
-                    </h4>
-                    <ul className="flex flex-col gap-1">
-                      {reception.items.map((item) => (
-                        <li key={item.id} className="text-xs text-textMuted">
-                          <span className="font-medium text-textMain">{item.product.name}</span>
-                          {' — '}
-                          {item.received_qty} reçu(s)
-                          {' → '}
-                          <span className="text-green-700 font-medium">
-                            {item.stock_units_added} unité(s) ajoutée(s) au stock
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  {/* Notes */}
-                  {reception.notes && (
-                    <p className="text-xs text-textMuted italic">
-                      Notes : {reception.notes}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         {/* Pied */}
