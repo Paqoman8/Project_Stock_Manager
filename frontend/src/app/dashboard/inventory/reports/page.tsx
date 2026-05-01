@@ -178,42 +178,63 @@ function CreateReportModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" role="dialog" aria-modal="true">
-      <div className="flex min-h-full items-center justify-center p-4">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
-          <h2 className="text-base font-semibold text-textMain">Nouveau rapport d'inventaire</h2>
-          <button onClick={onClose} className="text-textMuted hover:text-textMain" aria-label="Fermer">✕</button>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-create-report-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <h2 id="modal-create-report-title" className="text-base font-medium text-textMain">
+            Nouveau rapport d'inventaire
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+            aria-label="Fermer"
+          >
+            ×
+          </button>
         </div>
-        <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-textMain mb-1">Établissement</label>
-            <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className={inputCls}>
-              <option value="">— Choisir —</option>
-              {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-textMain mb-1">Début de période</label>
-              <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={inputCls} />
+
+        {/* Corps scrollable */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Établissement</label>
+              <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className={inputCls}>
+                <option value="">— Choisir —</option>
+                {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-textMain mb-1">Fin de période</label>
-              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={inputCls} />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">Début de période</label>
+                <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className={inputCls} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">Fin de période</label>
+                <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={inputCls} />
+              </div>
             </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Notes (optionnel)</label>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} rows={2} />
+            </div>
+            {error && (
+              <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">{error}</p>
+            )}
           </div>
-          <div>
-            <label className="block text-sm font-medium text-textMain mb-1">Notes (optionnel)</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} rows={2} />
-          </div>
-          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
-          <div className="flex justify-end gap-2 pt-2">
+
+          {/* Pied fixe */}
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2 flex-shrink-0">
             <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
             <Button type="submit" disabled={saving}>{saving ? 'Création…' : 'Créer le rapport'}</Button>
           </div>
         </form>
-      </div>
       </div>
     </div>
   );
@@ -320,14 +341,19 @@ function ReportDetailModal({
   const hasVariances = lines.some((l) => l.variance !== 0);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" role="dialog" aria-modal="true">
-      <div className="flex min-h-full items-center justify-center p-4">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-report-detail-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-4xl mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
         {/* En-tête */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
           <div>
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-textMain">{report.reference}</h2>
+              <h2 id="modal-report-detail-title" className="text-base font-medium text-textMain">{report.reference}</h2>
               <ReportStatusBadge status={report.status} />
             </div>
             <p className="text-sm text-textMuted mt-0.5">
@@ -338,7 +364,13 @@ function ReportDetailModal({
               Créé par {report.created_by.username}
             </p>
           </div>
-          <button onClick={onClose} className="text-textMuted hover:text-textMain" aria-label="Fermer">✕</button>
+          <button
+            onClick={onClose}
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+            aria-label="Fermer"
+          >
+            ×
+          </button>
         </div>
 
         {/* Motif de rejet — état terminal */}
@@ -521,7 +553,6 @@ function ReportDetailModal({
             </div>
           </div>
         </div>
-      </div>
       </div>
     </div>
   );

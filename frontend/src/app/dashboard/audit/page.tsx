@@ -61,7 +61,13 @@ type AuditAction =
   | 'INVOICE_CREATED'
   | 'INVOICE_UPDATED'
   | 'INVOICE_PAID'
-  | 'INVOICE_DISPUTED';
+  | 'INVOICE_DISPUTED'
+  | 'STOCK_MOVEMENT_CREATED'
+  | 'INVENTORY_REPORT_CREATED'
+  | 'INVENTORY_REPORT_SUBMITTED'
+  | 'INVENTORY_REPORT_VALIDATED'
+  | 'INVENTORY_REPORT_REJECTED'
+  | 'INVENTORY_REPORT_ADJUSTED';
 
 interface AuditLog {
   id: string;
@@ -133,6 +139,12 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   INVOICE_UPDATED:          'Facture modifiée',
   INVOICE_PAID:             'Facture payée',
   INVOICE_DISPUTED:         'Facture contestée',
+  STOCK_MOVEMENT_CREATED:       'Mouvement de stock',
+  INVENTORY_REPORT_CREATED:     'Rapport créé',
+  INVENTORY_REPORT_SUBMITTED:   'Rapport soumis',
+  INVENTORY_REPORT_VALIDATED:   'Rapport validé',
+  INVENTORY_REPORT_REJECTED:    'Rapport rejeté',
+  INVENTORY_REPORT_ADJUSTED:    'Ajustements appliqués',
 };
 
 const ACTION_COLORS: Record<AuditAction, string> = {
@@ -173,6 +185,12 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   INVOICE_UPDATED:          'bg-warning/20 text-warning border border-warning/30',
   INVOICE_PAID:             'bg-success/10 text-success border border-success/20',
   INVOICE_DISPUTED:         'bg-orange-50 text-orange-700 border border-orange-200',
+  STOCK_MOVEMENT_CREATED:       'bg-blue-50 text-blue-700 border border-blue-200',
+  INVENTORY_REPORT_CREATED:     'bg-primary/10 text-primary border border-primary/20',
+  INVENTORY_REPORT_SUBMITTED:   'bg-blue-50 text-blue-700 border border-blue-200',
+  INVENTORY_REPORT_VALIDATED:   'bg-success/10 text-success border border-success/20',
+  INVENTORY_REPORT_REJECTED:    'bg-danger/10 text-danger border border-danger/20',
+  INVENTORY_REPORT_ADJUSTED:    'bg-orange-50 text-orange-700 border border-orange-200',
 };
 
 // ---------------------------------------------------------------------------
@@ -224,6 +242,20 @@ const ACTION_GROUPS: ActionGroup[] = [
   {
     label: 'Factures fournisseurs',
     actions: ['INVOICE_CREATED', 'INVOICE_UPDATED', 'INVOICE_PAID', 'INVOICE_DISPUTED'],
+  },
+  {
+    label: 'Mouvements de stock',
+    actions: ['STOCK_MOVEMENT_CREATED'],
+  },
+  {
+    label: 'Rapports d\'inventaire',
+    actions: [
+      'INVENTORY_REPORT_CREATED',
+      'INVENTORY_REPORT_SUBMITTED',
+      'INVENTORY_REPORT_VALIDATED',
+      'INVENTORY_REPORT_REJECTED',
+      'INVENTORY_REPORT_ADJUSTED',
+    ],
   },
 ];
 
@@ -551,6 +583,13 @@ function AuditDetailModal({
     // Réceptions
     order_reference:           'Référence commande',
     received_items:            'Articles reçus',
+    // Mouvements de stock & rapports d'inventaire
+    type:                      'Type',
+    qty:                       'Quantité',
+    reason:                    'Motif',
+    period_start:              'Début de période',
+    period_end:                'Fin de période',
+    adjustments_count:         'Ajustements appliqués',
   };
 
   return (

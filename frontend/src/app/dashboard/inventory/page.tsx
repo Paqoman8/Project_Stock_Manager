@@ -148,98 +148,98 @@ function EditThresholdsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-thresholds-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
     >
-      <div className="flex min-h-full items-center justify-center p-4">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
         {/* En-tête */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
-          <h2 id="modal-thresholds-title" className="text-base font-semibold text-textMain">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <h2 id="modal-thresholds-title" className="text-base font-medium text-textMain">
             Seuils d'alerte
           </h2>
           <button
             onClick={onClose}
-            className="text-textMuted hover:text-textMain transition-colors"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
             aria-label="Fermer"
           >
-            ✕
+            ×
           </button>
         </div>
 
-        {/* Corps */}
-        <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
-          {/* Contexte */}
-          <div className="text-sm text-textMuted space-y-0.5">
-            <p>
-              <span className="font-medium text-textMain">{row.product.name}</span>
-              {' · '}
-              <span className="font-mono text-xs">{row.product.sku}</span>
-            </p>
-            <p>
-              Établissement :{' '}
-              <span
-                className="font-medium"
-                style={{ color: row.store.color }}
-              >
-                {row.store.name}
-              </span>
-            </p>
-            <p>
-              Stock actuel :{' '}
-              <span className="font-medium text-textMain">
-                {row.stock_physical} {UNIT_LABELS[row.product.unit] ?? row.product.unit}
-              </span>
-            </p>
+        {/* Corps scrollable */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
+            {/* Contexte */}
+            <div className="text-sm text-textMuted space-y-0.5 bg-background rounded px-3 py-2 border border-borderLight">
+              <p>
+                <span className="font-medium text-textMain">{row.product.name}</span>
+                {' · '}
+                <span className="font-mono text-xs">{row.product.sku}</span>
+              </p>
+              <p>
+                Établissement :{' '}
+                <span className="font-medium" style={{ color: row.store.color }}>
+                  {row.store.name}
+                </span>
+              </p>
+              <p>
+                Stock actuel :{' '}
+                <span className="font-medium text-textMain">
+                  {row.stock_physical} {UNIT_LABELS[row.product.unit] ?? row.product.unit}
+                </span>
+              </p>
+            </div>
+
+            {/* stock_min */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="stock-min" className="text-xs font-medium text-textSecondary">
+                Seuil d'alerte (stock bas)
+              </label>
+              <input
+                id="stock-min"
+                type="number"
+                min={0}
+                value={stockMin}
+                onChange={(e) => setStockMin(e.target.value)}
+                className={inputCls}
+                placeholder="ex. 10"
+              />
+              <p className="text-xs text-textMuted">
+                Une alerte s'affiche quand le stock physique est ≤ à ce seuil (0 = désactivé).
+              </p>
+            </div>
+
+            {/* stock_reorder */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="stock-reorder" className="text-xs font-medium text-textSecondary">
+                Seuil de réapprovisionnement
+              </label>
+              <input
+                id="stock-reorder"
+                type="number"
+                min={0}
+                value={stockReorder}
+                onChange={(e) => setStockReorder(e.target.value)}
+                className={inputCls}
+                placeholder="ex. 20"
+              />
+              <p className="text-xs text-textMuted">
+                Indicatif : quantité à partir de laquelle une commande doit être passée.
+              </p>
+            </div>
+
+            {error && (
+              <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+                {error}
+              </p>
+            )}
           </div>
 
-          {/* stock_min */}
-          <div>
-            <label htmlFor="stock-min" className="block text-sm font-medium text-textMain mb-1">
-              Seuil d'alerte (stock bas)
-            </label>
-            <input
-              id="stock-min"
-              type="number"
-              min={0}
-              value={stockMin}
-              onChange={(e) => setStockMin(e.target.value)}
-              className={inputCls}
-              placeholder="ex. 10"
-            />
-            <p className="mt-1 text-xs text-textMuted">
-              Une alerte s'affiche quand le stock physique est ≤ à ce seuil (0 = désactivé).
-            </p>
-          </div>
-
-          {/* stock_reorder */}
-          <div>
-            <label htmlFor="stock-reorder" className="block text-sm font-medium text-textMain mb-1">
-              Seuil de réapprovisionnement
-            </label>
-            <input
-              id="stock-reorder"
-              type="number"
-              min={0}
-              value={stockReorder}
-              onChange={(e) => setStockReorder(e.target.value)}
-              className={inputCls}
-              placeholder="ex. 20"
-            />
-            <p className="mt-1 text-xs text-textMuted">
-              Indicatif : quantité à partir de laquelle une commande doit être passée.
-            </p>
-          </div>
-
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-              {error}
-            </p>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
+          {/* Pied fixe */}
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2 flex-shrink-0">
             <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
               Annuler
             </Button>
@@ -248,7 +248,6 @@ function EditThresholdsModal({
             </Button>
           </div>
         </form>
-      </div>
       </div>
     </div>
   );
@@ -317,67 +316,84 @@ function StockMovementModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" role="dialog" aria-modal="true">
-      <div className="flex min-h-full items-center justify-center p-4">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
-          <h2 className="text-base font-semibold text-textMain">Mouvement de stock</h2>
-          <button onClick={onClose} className="text-textMuted hover:text-textMain transition-colors" aria-label="Fermer">✕</button>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-movement-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <h2 id="modal-movement-title" className="text-base font-medium text-textMain">
+            Mouvement de stock
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+            aria-label="Fermer"
+          >
+            ×
+          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
-          {/* Contexte si pré-sélectionné */}
-          {row && (
-            <div className="text-sm text-textMuted bg-background rounded px-3 py-2 space-y-0.5">
-              <p><span className="font-medium text-textMain">{row.product.name}</span> · <span className="font-mono text-xs">{row.product.sku}</span></p>
-              <p>Établissement : <span className="font-medium" style={{ color: row.store.color }}>{row.store.name}</span></p>
-              <p>Stock actuel : <span className="font-medium text-textMain">{row.stock_physical} {UNIT_LABELS[row.product.unit] ?? row.product.unit}</span></p>
+        {/* Corps scrollable */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
+            {/* Contexte si pré-sélectionné */}
+            {row && (
+              <div className="text-sm text-textMuted bg-background rounded px-3 py-2 space-y-0.5 border border-borderLight">
+                <p><span className="font-medium text-textMain">{row.product.name}</span> · <span className="font-mono text-xs">{row.product.sku}</span></p>
+                <p>Établissement : <span className="font-medium" style={{ color: row.store.color }}>{row.store.name}</span></p>
+                <p>Stock actuel : <span className="font-medium text-textMain">{row.stock_physical} {UNIT_LABELS[row.product.unit] ?? row.product.unit}</span></p>
+              </div>
+            )}
+
+            {/* Type */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Type de mouvement</label>
+              <select value={type} onChange={(e) => setType(e.target.value as MovementType)} className={inputCls}>
+                {(Object.entries(MOVEMENT_TYPE_LABELS) as [MovementType, string][]).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
             </div>
-          )}
 
-          {/* Type */}
-          <div>
-            <label className="block text-sm font-medium text-textMain mb-1">Type de mouvement</label>
-            <select value={type} onChange={(e) => setType(e.target.value as MovementType)} className={inputCls}>
-              {(Object.entries(MOVEMENT_TYPE_LABELS) as [MovementType, string][]).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            {/* Quantité */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Quantité</label>
+              <input
+                type="number" min={1} value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                className={inputCls} placeholder="ex. 50"
+              />
+            </div>
+
+            {/* Motif (obligatoire pour ajustements) */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">
+                Motif {needsReason && <span className="text-red-500">*</span>}
+              </label>
+              <input
+                type="text" value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className={inputCls}
+                placeholder={needsReason ? 'Obligatoire pour les ajustements…' : 'Optionnel'}
+              />
+            </div>
+
+            {error && (
+              <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">{error}</p>
+            )}
           </div>
 
-          {/* Quantité */}
-          <div>
-            <label className="block text-sm font-medium text-textMain mb-1">Quantité</label>
-            <input
-              type="number" min={1} value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className={inputCls} placeholder="ex. 50"
-            />
-          </div>
-
-          {/* Motif (obligatoire pour ajustements) */}
-          <div>
-            <label className="block text-sm font-medium text-textMain mb-1">
-              Motif {needsReason && <span className="text-red-500">*</span>}
-            </label>
-            <input
-              type="text" value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className={inputCls}
-              placeholder={needsReason ? 'Obligatoire pour les ajustements…' : 'Optionnel'}
-            />
-          </div>
-
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
+          {/* Pied fixe */}
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2 flex-shrink-0">
             <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
             <Button type="submit" disabled={saving}>{saving ? 'Enregistrement…' : 'Enregistrer'}</Button>
           </div>
         </form>
-      </div>
       </div>
     </div>
   );
