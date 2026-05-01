@@ -217,6 +217,33 @@ function IconReceptions({ className }: { className?: string }) {
   );
 }
 
+// Icône "Factures fournisseurs" : document avec symbole monétaire.
+function IconInvoices({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Document */}
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      {/* Symbole XOF / monétaire */}
+      <line x1="9" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="17" x2="13" y2="17" />
+    </svg>
+  );
+}
+
 // Icône "Journal d'audit" : presse-papier avec lignes de texte.
 function IconAudit({ className }: { className?: string }) {
   return (
@@ -339,6 +366,12 @@ export function Sidebar() {
                 href="/dashboard/receptions"
                 label="Réceptions"
                 icon={<IconReceptions className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
+              <NavItem
+                href="/dashboard/invoices"
+                label="Factures fournisseurs"
+                icon={<IconInvoices className="flex-shrink-0" />}
                 currentPath={pathname}
               />
             </>

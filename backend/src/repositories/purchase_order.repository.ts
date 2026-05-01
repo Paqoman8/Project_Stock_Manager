@@ -47,6 +47,7 @@ export interface PurchaseOrderRow {
   destination_store: { id: string; name: string };
   ordered_by: { id: string; username: string };
   items: PurchaseOrderItemRow[];
+  invoice: { id: string; status: string } | null;
 }
 
 /** Filtres acceptés par findAll. */
@@ -110,6 +111,7 @@ const PURCHASE_ORDER_INCLUDE = {
       },
     },
   },
+  invoice: { select: { id: true, status: true } },
 } as const;
 
 // ---------------------------------------------------------------------------

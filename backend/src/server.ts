@@ -15,6 +15,7 @@ import categoryRouter         from './routes/categoryRoutes';
 import productRouter          from './routes/productRoutes';
 import purchaseOrderRouter    from './routes/purchaseOrderRoutes';
 import stockReceptionRouter   from './routes/stockReceptionRoutes';
+import supplierInvoiceRouter  from './routes/supplierInvoiceRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -81,9 +82,10 @@ app.use('/api/supplier-products', supplierProductRouter);
 app.use('/api/categories', categoryRouter);
 app.use('/api/products',   productRouter);
 
-// Commandes fournisseurs et réceptions de stock
+// Commandes fournisseurs, réceptions de stock et factures fournisseurs
 app.use('/api/purchase-orders', purchaseOrderRouter);
 app.use('/api/receptions',      stockReceptionRouter);
+app.use('/api/invoices',        supplierInvoiceRouter);
 
 
 // --- Gestion des connexions WebSocket ---
