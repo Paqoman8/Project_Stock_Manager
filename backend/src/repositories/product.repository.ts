@@ -23,6 +23,7 @@ export interface ProductRow {
   name:        string;
   description: string | null;
   price:       string;   // Decimal sérialisé en string
+  unit:        string;   // ProductUnit enum
   is_active:   boolean;
   created_at:  Date;
   updated_at:  Date;
@@ -50,6 +51,7 @@ export type CreateProductData = {
   sku:         string;
   name:        string;
   price:       number;
+  unit?:       string;
   category_id: string;
   description?: string;
 };
@@ -71,6 +73,7 @@ const PRODUCT_SELECT = {
   name:        true,
   description: true,
   price:       true,
+  unit:        true,
   is_active:   true,
   created_at:  true,
   updated_at:  true,
@@ -224,6 +227,7 @@ function serializeProduct(row: {
   name:        string;
   description: string | null;
   price:       { toString(): string };
+  unit:        string;
   is_active:   boolean;
   created_at:  Date;
   updated_at:  Date;
@@ -237,6 +241,7 @@ function serializeProduct(row: {
     name:        row.name,
     description: row.description,
     price:       row.price.toString(),
+    unit:        row.unit,
     is_active:   row.is_active,
     created_at:  row.created_at,
     updated_at:  row.updated_at,

@@ -42,6 +42,8 @@ function formatZodErrors(err: ZodError): string[] {
  * Schéma de validation des données produit.
  * Utilisé tel quel pour la création ; rendu entièrement optionnel pour la mise à jour.
  */
+const PRODUCT_UNITS = ['PIECE', 'KG', 'G', 'L', 'CL', 'ML', 'BOUTEILLE', 'SACHET', 'BOITE'] as const;
+
 const productSchema = z.object({
   /** SKU (Stock Keeping Unit) — obligatoire, non vide */
   sku:         z.string().min(1, 'Le SKU est obligatoire'),
@@ -49,6 +51,8 @@ const productSchema = z.object({
   name:        z.string().min(1, 'Le nom est obligatoire'),
   /** Prix de vente — doit être strictement positif */
   price:       z.number().positive('Le prix doit être positif'),
+  /** Unité de stock — optionnelle, défaut PIECE en base */
+  unit:        z.enum(PRODUCT_UNITS).optional(),
   /** UUID de la catégorie parente — obligatoire */
   category_id: z.string().uuid('UUID de catégorie invalide'),
   /** Description libre — optionnelle */

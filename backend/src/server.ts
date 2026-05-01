@@ -16,6 +16,9 @@ import productRouter          from './routes/productRoutes';
 import purchaseOrderRouter    from './routes/purchaseOrderRoutes';
 import stockReceptionRouter   from './routes/stockReceptionRoutes';
 import supplierInvoiceRouter  from './routes/supplierInvoiceRoutes';
+import inventoryRouter        from './routes/inventoryRoutes';
+import stockMovementRouter    from './routes/stockMovementRoutes';
+import inventoryReportRouter  from './routes/inventoryReportRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -86,6 +89,11 @@ app.use('/api/products',   productRouter);
 app.use('/api/purchase-orders', purchaseOrderRouter);
 app.use('/api/receptions',      stockReceptionRouter);
 app.use('/api/invoices',        supplierInvoiceRouter);
+
+// Inventaire — niveaux de stock, seuils, mouvements et rapports
+app.use('/api/inventory',         inventoryRouter);
+app.use('/api/stock-movements',   stockMovementRouter);
+app.use('/api/inventory-reports', inventoryReportRouter);
 
 
 // --- Gestion des connexions WebSocket ---

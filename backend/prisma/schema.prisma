@@ -23,12 +23,15 @@ model User {
   role_id        String            @db.Uuid
   is_active      Boolean           @default(true)
   role           Role              @relation(fields: [role_id], references: [id])
-  store_access   UserStoreAccess[]
-  sessions       SessionLog[]
-  transactions   Transaction[]
-  acted_audits   AuditLog[]
-  purchase_orders PurchaseOrder[]
-  receptions     StockReception[]
+  store_access      UserStoreAccess[]
+  sessions          SessionLog[]
+  transactions      Transaction[]
+  acted_audits      AuditLog[]
+  purchase_orders   PurchaseOrder[]
+  receptions        StockReception[]
+  stock_movements   StockMovement[]   @relation("MovementsPerformedBy")
+  created_reports   InventoryReport[] @relation("ReportsCreatedBy")
+  validated_reports InventoryReport[] @relation("ReportsValidatedBy")
 
   @@map("users")
 }
@@ -44,14 +47,16 @@ model Store {
   phone            String?           @db.VarChar(20)
   description      String?
   is_protected     Boolean           @default(false)
-  user_access      UserStoreAccess[]
-  sessions         SessionLog[]
-  inventories      Inventory[]
-  transfers_from   Transfer[]        @relation("TransfersFrom")
-  transfers_to     Transfer[]        @relation("TransfersTo")
-  transactions     Transaction[]
-  audit_logs       AuditLog[]        @relation("AuditStore")
-  purchase_orders  PurchaseOrder[]   @relation("PurchaseOrderDestination")
+  user_access        UserStoreAccess[]
+  sessions           SessionLog[]
+  inventories        Inventory[]
+  transfers_from     Transfer[]        @relation("TransfersFrom")
+  transfers_to       Transfer[]        @relation("TransfersTo")
+  transactions       Transaction[]
+  audit_logs         AuditLog[]        @relation("AuditStore")
+  purchase_orders    PurchaseOrder[]   @relation("PurchaseOrderDestination")
+  stock_movements    StockMovement[]
+  inventory_reports  InventoryReport[]
 
   @@map("stores")
 }
@@ -121,6 +126,8 @@ model Product {
   transaction_items TransactionItem[]
   supplier_products SupplierProduct[]
   reception_items   ReceptionItem[]
+  stock_movements   StockMovement[]
+  report_lines      InventoryReportLine[]
 
   @@map("products")
 }
@@ -130,6 +137,8 @@ model Inventory {
   product_id     String  @db.Uuid
   stock_physical Int     @default(0)
   stock_reserved Int     @default(0)
+  stock_min      Int     @default(0)     // Seuil d'alerte stock bas
+  stock_reorder  Int     @default(0)     // Seuil de déclenchement de réapprovisionnement
   store          Store   @relation(fields: [store_id], references: [id])
   product        Product @relation(fields: [product_id], references: [id])
 
@@ -274,6 +283,16 @@ enum AuditAction {
   INVOICE_UPDATED
   INVOICE_PAID
   INVOICE_DISPUTED
+
+  // Mouvements de stock
+  STOCK_MOVEMENT_CREATED
+
+  // Rapports d'inventaire
+  INVENTORY_REPORT_CREATED
+  INVENTORY_REPORT_SUBMITTED
+  INVENTORY_REPORT_VALIDATED
+  INVENTORY_REPORT_REJECTED
+  INVENTORY_REPORT_ADJUSTED
 }
 
 // ---------------------------------------------------------------------------
@@ -484,4 +503,81 @@ model AuditLog {
   store       Store?      @relation("AuditStore", fields: [store_id], references: [id])
 
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Mouvements de stock — ledger de toutes les modifications de stock_physical
+// ---------------------------------------------------------------------------
+
+enum MovementType {
+  INITIAL        // Saisie initiale du stock (premier enregistrement)
+  ADJUSTMENT_IN  // Régularisation positive (retour, erreur de comptage…)
+  ADJUSTMENT_OUT // Régularisation négative (casse, perte, vol…)
+  RECEPTION      // Créé automatiquement à la confirmation d'une réception
+}
+
+model StockMovement {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id        String       @db.Uuid
+  product_id      String       @db.Uuid
+  type            MovementType
+  qty             Int          // Toujours positif — la direction est portée par le type
+  reason          String?      // Motif libre (obligatoire pour ADJUSTMENT_*)
+  performed_by_id String       @db.Uuid
+  created_at      DateTime     @default(now())
+  store           Store        @relation(fields: [store_id], references: [id])
+  product         Product      @relation(fields: [product_id], references: [id])
+  performed_by    User         @relation("MovementsPerformedBy", fields: [performed_by_id], references: [id])
+
+  @@map("stock_movements")
+}
+
+// ---------------------------------------------------------------------------
+// Rapports d'inventaire — comptage physique hebdomadaire par établissement
+// ---------------------------------------------------------------------------
+
+enum ReportStatus {
+  DRAFT      // En cours de saisie
+  SUBMITTED  // Soumis au responsable pour validation
+  VALIDATED  // Approuvé
+  REJECTED   // Rejeté — retour pour correction
+}
+
+model InventoryReport {
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reference        String               // Format : INV-YYYY-WXX — unique par établissement
+  store_id         String               @db.Uuid
+  status           ReportStatus         @default(DRAFT)
+  period_start     DateTime
+  period_end       DateTime
+  notes            String?
+  rejection_reason String?
+  created_by_id    String               @db.Uuid
+  submitted_at     DateTime?
+  validated_at     DateTime?
+  validated_by_id  String?              @db.Uuid
+  created_at       DateTime             @default(now())
+  updated_at       DateTime             @updatedAt
+  store            Store                @relation(fields: [store_id], references: [id])
+  created_by       User                 @relation("ReportsCreatedBy", fields: [created_by_id], references: [id])
+  validated_by     User?                @relation("ReportsValidatedBy", fields: [validated_by_id], references: [id])
+  lines            InventoryReportLine[]
+
+  @@unique([store_id, reference])
+  @@map("inventory_reports")
+}
+
+model InventoryReportLine {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  report_id         String          @db.Uuid
+  product_id        String          @db.Uuid
+  stock_theoretical Int             // Stock système au moment de la création du rapport
+  stock_counted     Int             @default(0) // Quantité physiquement comptée
+  variance          Int             @default(0) // stock_counted − stock_theoretical (dénormalisé)
+  note              String?         // Motif si écart significatif
+  report            InventoryReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  product           Product         @relation(fields: [product_id], references: [id])
+
+  @@unique([report_id, product_id])
+  @@map("inventory_report_lines")
 }

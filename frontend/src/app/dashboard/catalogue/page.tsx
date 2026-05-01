@@ -49,12 +49,29 @@ interface CategoryRow {
   _count: { products: number; children: number };
 }
 
+type ProductUnit = 'PIECE' | 'KG' | 'G' | 'L' | 'CL' | 'ML' | 'BOUTEILLE' | 'SACHET' | 'BOITE';
+
+const UNIT_LABELS: Record<ProductUnit, string> = {
+  PIECE:    'Pièce',
+  KG:       'Kilogramme (kg)',
+  G:        'Gramme (g)',
+  L:        'Litre (L)',
+  CL:       'Centilitre (cL)',
+  ML:       'Millilitre (mL)',
+  BOUTEILLE:'Bouteille',
+  SACHET:   'Sachet',
+  BOITE:    'Boîte',
+};
+
+const PRODUCT_UNITS: ProductUnit[] = ['PIECE', 'KG', 'G', 'L', 'CL', 'ML', 'BOUTEILLE', 'SACHET', 'BOITE'];
+
 interface ProductRow {
   id: string;
   sku: string;
   name: string;
   description: string | null;
   price: string; // Decimal as string — parseFloat() pour affichage
+  unit: ProductUnit;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -451,6 +468,7 @@ interface ProductFormData {
   sku: string;
   name: string;
   price: string;
+  unit: ProductUnit;
   category_id: string;
   description: string;
 }
@@ -474,6 +492,7 @@ function ProductFormModal({
     sku:         '',
     name:        '',
     price:       '',
+    unit:        'PIECE',
     category_id: '',
     description: '',
   };
@@ -491,6 +510,7 @@ function ProductFormModal({
         sku:         product.sku,
         name:        product.name,
         price:       parseFloat(product.price).toString(),
+        unit:        product.unit,
         category_id: product.category_id,
         description: product.description ?? '',
       });
@@ -535,6 +555,7 @@ function ProductFormModal({
     const payload: Record<string, string | number> = {
       name:        form.name.trim(),
       price:       parseFloat(form.price),
+      unit:        form.unit,
       category_id: form.category_id,
     };
     // Champs optionnels — omis si vides (Zod rejette null sur .optional())
@@ -680,6 +701,23 @@ function ProductFormModal({
                   {errors.price}
                 </p>
               )}
+            </div>
+
+            {/* Unité */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="prod-unit" className="text-xs font-medium text-textSecondary">
+                Unité de stock <span className="text-danger" aria-hidden="true">*</span>
+              </label>
+              <select
+                id="prod-unit"
+                value={form.unit}
+                onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value as ProductUnit }))}
+                className={inputCls}
+              >
+                {PRODUCT_UNITS.map((u) => (
+                  <option key={u} value={u}>{UNIT_LABELS[u]}</option>
+                ))}
+              </select>
             </div>
 
             {/* Catégorie */}
@@ -1196,7 +1234,7 @@ function ProductsTab({
     setFilterStatus('');
   }
 
-  const colCount = canEditProducts ? 7 : 6;
+  const colCount = canEditProducts ? 7 : 6;  // SKU Nom Catégorie Unité Prix Statut [Actions]
 
   return (
     <div className="flex flex-col gap-6">
@@ -1301,7 +1339,7 @@ function ProductsTab({
         >
           <thead>
             <tr className="bg-background border-b border-borderLight">
-              {['SKU', 'Nom', 'Catégorie', 'Prix', 'Statut', ...(canEditProducts ? ['Actions'] : [])].map((col) => (
+              {['SKU', 'Nom', 'Catégorie', 'Unité', 'Prix', 'Statut', ...(canEditProducts ? ['Actions'] : [])].map((col) => (
                 <th
                   key={col}
                   scope="col"
@@ -1340,6 +1378,9 @@ function ProductsTab({
                   </td>
                   <td className="px-4 py-3 text-textMuted whitespace-nowrap">
                     {product.category.name}
+                  </td>
+                  <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                    {UNIT_LABELS[product.unit] ?? product.unit}
                   </td>
                   <td className="px-4 py-3 text-textMuted whitespace-nowrap tabular-nums">
                     {formatPrice(product.price)}
