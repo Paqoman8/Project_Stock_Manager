@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     // Voir : next/dist/docs/01-app/03-api-reference/04-functions/forbidden.md
     authInterrupts: true,
   },
-  allowedDevOrigins: ['192.168.2.182'],
+  allowedDevOrigins: ['192.168.2.215'],
   async rewrites() {
     return [
       {

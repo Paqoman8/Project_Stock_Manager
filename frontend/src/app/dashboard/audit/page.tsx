@@ -40,7 +40,14 @@ type AuditAction =
   | 'SUPPLIER_CREATED'
   | 'SUPPLIER_UPDATED'
   | 'SUPPLIER_DEACTIVATED'
-  | 'SUPPLIER_REACTIVATED';
+  | 'SUPPLIER_REACTIVATED'
+  | 'CATEGORY_CREATED'
+  | 'CATEGORY_UPDATED'
+  | 'CATEGORY_DELETED'
+  | 'PRODUCT_CREATED'
+  | 'PRODUCT_UPDATED'
+  | 'PRODUCT_DEACTIVATED'
+  | 'PRODUCT_REACTIVATED';
 
 interface AuditLog {
   id: string;
@@ -91,6 +98,13 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   SUPPLIER_UPDATED:    'Fournisseur modifié',
   SUPPLIER_DEACTIVATED:'Fournisseur désactivé',
   SUPPLIER_REACTIVATED:'Fournisseur réactivé',
+  CATEGORY_CREATED:    'Catégorie créée',
+  CATEGORY_UPDATED:    'Catégorie modifiée',
+  CATEGORY_DELETED:    'Catégorie supprimée',
+  PRODUCT_CREATED:     'Produit créé',
+  PRODUCT_UPDATED:     'Produit modifié',
+  PRODUCT_DEACTIVATED: 'Produit désactivé',
+  PRODUCT_REACTIVATED: 'Produit réactivé',
 };
 
 const ACTION_COLORS: Record<AuditAction, string> = {
@@ -110,6 +124,13 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   SUPPLIER_UPDATED:     'bg-warning/20 text-warning border border-warning/30',
   SUPPLIER_DEACTIVATED: 'bg-danger/10 text-danger border border-danger/20',
   SUPPLIER_REACTIVATED: 'bg-success/10 text-success border border-success/20',
+  CATEGORY_CREATED:     'bg-primary/10 text-primary border border-primary/20',
+  CATEGORY_UPDATED:     'bg-warning/20 text-warning border border-warning/30',
+  CATEGORY_DELETED:     'bg-danger/10 text-danger border border-danger/20',
+  PRODUCT_CREATED:      'bg-primary/10 text-primary border border-primary/20',
+  PRODUCT_UPDATED:      'bg-warning/20 text-warning border border-warning/30',
+  PRODUCT_DEACTIVATED:  'bg-danger/10 text-danger border border-danger/20',
+  PRODUCT_REACTIVATED:  'bg-success/10 text-success border border-success/20',
 };
 
 // ---------------------------------------------------------------------------
@@ -138,6 +159,14 @@ const ACTION_GROUPS: ActionGroup[] = [
     label: 'Fournisseurs',
     actions: ['SUPPLIER_CREATED', 'SUPPLIER_UPDATED', 'SUPPLIER_DEACTIVATED', 'SUPPLIER_REACTIVATED'],
   },
+  {
+    label: 'Catalogue — Catégories',
+    actions: ['CATEGORY_CREATED', 'CATEGORY_UPDATED', 'CATEGORY_DELETED'],
+  },
+  {
+    label: 'Catalogue — Produits',
+    actions: ['PRODUCT_CREATED', 'PRODUCT_UPDATED', 'PRODUCT_DEACTIVATED', 'PRODUCT_REACTIVATED'],
+  },
 ];
 
 const ROLES_AUTORISES = ['Super Administrateur', 'Administrateur'];
@@ -155,12 +184,89 @@ const ROLES_AUTORISES = ['Super Administrateur', 'Administrateur'];
  * Les managers raisonnent en "qu'est-ce qui s'est passé aujourd'hui", pas
  * en fenêtre glissante.
  */
-function getDebutJournee(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
+// ---------------------------------------------------------------------------
+// Gestion des périodes prédéfinies
+// ---------------------------------------------------------------------------
+
+type DatePeriod =
+  | 'today' | 'yesterday'
+  | 'this_week' | 'last_week'
+  | 'this_month' | 'last_month'
+  | 'this_year' | 'last_year'
+  | 'custom';
+
+const PERIOD_LABELS: Record<DatePeriod, string> = {
+  today:      "Aujourd'hui",
+  yesterday:  'Hier',
+  this_week:  'Semaine en cours',
+  last_week:  'Semaine dernière',
+  this_month: 'Mois en cours',
+  last_month: 'Mois dernier',
+  this_year:  'Année en cours',
+  last_year:  'Année dernière',
+  custom:     'Personnalisé',
+};
+
+function toDatetimeLocal(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T00:00`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+function getPeriodDates(period: Exclude<DatePeriod, 'custom'>): { start: string; end: string } {
+  const now = new Date();
+
+  const startOfDay = (d: Date) => { const r = new Date(d); r.setHours(0, 0, 0, 0); return r; };
+  const endOfDay   = (d: Date) => { const r = new Date(d); r.setHours(23, 59, 0, 0); return r; };
+
+  switch (period) {
+    case 'today':
+      return { start: toDatetimeLocal(startOfDay(now)), end: toDatetimeLocal(endOfDay(now)) };
+
+    case 'yesterday': {
+      const d = new Date(now); d.setDate(d.getDate() - 1);
+      return { start: toDatetimeLocal(startOfDay(d)), end: toDatetimeLocal(endOfDay(d)) };
+    }
+
+    case 'this_week': {
+      const day = now.getDay();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+      return { start: toDatetimeLocal(startOfDay(monday)), end: toDatetimeLocal(endOfDay(now)) };
+    }
+
+    case 'last_week': {
+      const day = now.getDay();
+      const thisMonday = new Date(now);
+      thisMonday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+      const lastMonday = new Date(thisMonday); lastMonday.setDate(thisMonday.getDate() - 7);
+      const lastSunday = new Date(lastMonday); lastSunday.setDate(lastMonday.getDate() + 6);
+      return { start: toDatetimeLocal(startOfDay(lastMonday)), end: toDatetimeLocal(endOfDay(lastSunday)) };
+    }
+
+    case 'this_month': {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { start: toDatetimeLocal(startOfDay(start)), end: toDatetimeLocal(endOfDay(now)) };
+    }
+
+    case 'last_month': {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end   = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: toDatetimeLocal(startOfDay(start)), end: toDatetimeLocal(endOfDay(end)) };
+    }
+
+    case 'this_year': {
+      const start = new Date(now.getFullYear(), 0, 1);
+      return { start: toDatetimeLocal(startOfDay(start)), end: toDatetimeLocal(endOfDay(now)) };
+    }
+
+    case 'last_year': {
+      const start = new Date(now.getFullYear() - 1, 0, 1);
+      const end   = new Date(now.getFullYear() - 1, 11, 31);
+      return { start: toDatetimeLocal(startOfDay(start)), end: toDatetimeLocal(endOfDay(end)) };
+    }
+  }
+}
+
 
 function formatDate(iso: string): string {
   return new Intl.DateTimeFormat('fr-FR', {
@@ -573,20 +679,16 @@ export default function AuditPage() {
   // Quand le tableau est vide, aucun filtre action n'est appliqué (= toutes les actions)
   const [filterActions, setFilterActions]     = useState<string[]>([]);
   const [filterStoreId, setFilterStoreId]     = useState('');
-  // Par défaut : journée en cours depuis minuit (choix justifié : GStock est un ERP
-  // retail dont les shifts sont calés sur des jours calendaires)
-  const [filterStartDate, setFilterStartDate] = useState(getDebutJournee);
-  const [filterEndDate, setFilterEndDate]     = useState('');
+  const [filterPeriod, setFilterPeriod]       = useState<DatePeriod>('today');
+  const [filterStartDate, setFilterStartDate] = useState(() => getPeriodDates('today').start);
+  const [filterEndDate, setFilterEndDate]     = useState(() => getPeriodDates('today').end);
 
   // Ref pour exposer les valeurs courantes des filtres à loadLogs sans en faire des dépendances.
-  // Cela évite que chaque changement de filtre (clic sur une case à cocher, saisie de date…)
-  // ne déclenche un rechargement immédiat. Le rechargement n'a lieu qu'au clic "Filtrer"
-  // ou à la réinitialisation — pas à chaque frappe.
   const filtersRef = useRef({
     filterActions:   [] as string[],
     filterStoreId:   '',
-    filterStartDate: getDebutJournee(),
-    filterEndDate:   '',
+    filterStartDate: getPeriodDates('today').start,
+    filterEndDate:   getPeriodDates('today').end,
   });
   // Synchronisation à chaque render (avant tout useEffect)
   filtersRef.current = { filterActions, filterStoreId, filterStartDate, filterEndDate };
@@ -662,24 +764,33 @@ export default function AuditPage() {
     }
   }, [sessionLoading, sessionUser, loadLogs]);
 
+  function handlePeriodChange(period: DatePeriod) {
+    setFilterPeriod(period);
+    if (period !== 'custom') {
+      const { start, end } = getPeriodDates(period);
+      setFilterStartDate(start);
+      setFilterEndDate(end);
+    }
+  }
+
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     loadLogs(1);
   }
 
   function handleReset() {
+    const { start, end } = getPeriodDates('today');
     const defaults = {
       filterActions:   [] as string[],
       filterStoreId:   '',
-      filterStartDate: getDebutJournee(),
-      filterEndDate:   '',
+      filterStartDate: start,
+      filterEndDate:   end,
     };
     setFilterActions(defaults.filterActions);
     setFilterStoreId(defaults.filterStoreId);
+    setFilterPeriod('today');
     setFilterStartDate(defaults.filterStartDate);
     setFilterEndDate(defaults.filterEndDate);
-    // Met à jour la ref immédiatement pour que loadLogs lise les valeurs réinitialisées
-    // (les setState sont asynchrones, la ref est synchrone)
     filtersRef.current = defaults;
     loadLogs(1);
   }
@@ -739,26 +850,44 @@ export default function AuditPage() {
           </div>
         )}
 
-        {/* Plage de dates */}
+        {/* Raccourci de période */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-textSecondary">Du</label>
-          <input
-            type="datetime-local"
-            value={filterStartDate}
-            onChange={(e) => setFilterStartDate(e.target.value)}
+          <label className="text-xs font-medium text-textSecondary">Période</label>
+          <select
+            value={filterPeriod}
+            onChange={(e) => handlePeriodChange(e.target.value as DatePeriod)}
             className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-          />
+          >
+            {(Object.keys(PERIOD_LABELS) as DatePeriod[]).map((p) => (
+              <option key={p} value={p}>{PERIOD_LABELS[p]}</option>
+            ))}
+          </select>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-textSecondary">Au</label>
-          <input
-            type="datetime-local"
-            value={filterEndDate}
-            onChange={(e) => setFilterEndDate(e.target.value)}
-            className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-          />
-        </div>
+        {/* Plage personnalisée — visible uniquement en mode "Personnalisé" */}
+        {filterPeriod === 'custom' && (
+          <>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Du</label>
+              <input
+                type="datetime-local"
+                value={filterStartDate}
+                onChange={(e) => setFilterStartDate(e.target.value)}
+                className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Au</label>
+              <input
+                type="datetime-local"
+                value={filterEndDate}
+                onChange={(e) => setFilterEndDate(e.target.value)}
+                className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textPrimary focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+              />
+            </div>
+          </>
+        )}
 
         <div className="flex gap-2">
           <Button type="submit" variant="primary" size="sm">Filtrer</Button>

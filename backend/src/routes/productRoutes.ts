@@ -29,16 +29,16 @@ productRouter.get('/', requireAuth, getProducts);
 // GET /api/products/:id — récupère un produit par son UUID
 productRouter.get('/:id', requireAuth, getProductById);
 
-// POST /api/products — crée un nouveau produit
-productRouter.post('/', superAdminOnly, createProduct);
+// POST /api/products — crée un nouveau produit (SA + Admin)
+productRouter.post('/', requireAuth, createProduct);
 
-// PUT /api/products/:id — met à jour les champs fournis (sku exclu)
-productRouter.put('/:id', superAdminOnly, updateProduct);
+// PUT /api/products/:id — met à jour les champs fournis / sku exclu (SA + Admin)
+productRouter.put('/:id', requireAuth, updateProduct);
 
-// PATCH /api/products/:id/deactivate — désactive un produit (soft delete)
+// PATCH /api/products/:id/deactivate — désactive un produit (SA uniquement)
 productRouter.patch('/:id/deactivate', superAdminOnly, deactivateProduct);
 
-// PATCH /api/products/:id/reactivate — réactive un produit désactivé
+// PATCH /api/products/:id/reactivate — réactive un produit désactivé (SA uniquement)
 productRouter.patch('/:id/reactivate', superAdminOnly, reactivateProduct);
 
 export default productRouter;

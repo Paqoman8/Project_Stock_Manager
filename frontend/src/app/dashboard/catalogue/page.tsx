@@ -210,10 +210,9 @@ function CategoryFormModal({
     }
 
     setIsSubmitting(true);
-    const payload: { name: string; parent_id: string | null } = {
-      name: name.trim(),
-      parent_id: parentId === '' ? null : parentId,
-    };
+    // Ne pas inclure parent_id si vide — Zod rejette null sur un champ .optional()
+    const payload: { name: string; parent_id?: string } = { name: name.trim() };
+    if (parentId) payload.parent_id = parentId;
 
     try {
       if (isEdit && category) {
@@ -533,16 +532,15 @@ function ProductFormModal({
     setIsSubmitting(true);
     setApiError(null);
 
-    const payload: Record<string, string | number | null> = {
+    const payload: Record<string, string | number> = {
       name:        form.name.trim(),
       price:       parseFloat(form.price),
       category_id: form.category_id,
-      description: form.description.trim() || null,
     };
+    // Champs optionnels — omis si vides (Zod rejette null sur .optional())
+    if (form.description.trim()) payload.description = form.description.trim();
     // SKU uniquement en création (immuable en édition)
-    if (!isEdit) {
-      payload.sku = form.sku.trim();
-    }
+    if (!isEdit) payload.sku = form.sku.trim();
 
     try {
       if (isEdit && product) {
@@ -701,11 +699,29 @@ function ProductFormModal({
                 aria-describedby={errors.category_id ? 'prod-cat-err' : undefined}
               >
                 <option value="">— Sélectionner une catégorie —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+                {(() => {
+                  // Catégories racines avec sous-catégories → optgroup (non sélectionnables)
+                  // Catégories racines sans enfants → option sélectionnable
+                  // Sous-catégories → regroupées dans l'optgroup de leur parent
+                  const roots    = categories.filter((c) => c.parent_id === null);
+                  const children = categories.filter((c) => c.parent_id !== null);
+
+                  return roots.map((root) => {
+                    const subs = children.filter((c) => c.parent_id === root.id);
+                    if (subs.length > 0) {
+                      // Catégorie parente → repère visuel, sous-catégories sélectionnables
+                      return (
+                        <optgroup key={root.id} label={root.name}>
+                          {subs.map((sub) => (
+                            <option key={sub.id} value={sub.id}>{sub.name}</option>
+                          ))}
+                        </optgroup>
+                      );
+                    }
+                    // Catégorie feuille (pas d'enfants) → sélectionnable directement
+                    return <option key={root.id} value={root.id}>{root.name}</option>;
+                  });
+                })()}
               </select>
               {errors.category_id && (
                 <p id="prod-cat-err" role="alert" className="text-xs text-danger">
@@ -1127,6 +1143,7 @@ function ProductsTab({
   isLoading,
   fetchError,
   isSA,
+  canEditProducts,
   onReload,
 }: {
   products: ProductRow[];
@@ -1134,6 +1151,7 @@ function ProductsTab({
   isLoading: boolean;
   fetchError: string | null;
   isSA: boolean;
+  canEditProducts: boolean;
   onReload: () => void;
 }) {
   // Filtres
@@ -1178,12 +1196,12 @@ function ProductsTab({
     setFilterStatus('');
   }
 
-  const colCount = isSA ? 7 : 6;
+  const colCount = canEditProducts ? 7 : 6;
 
   return (
     <div className="flex flex-col gap-6">
       {/* En-tête onglet */}
-      {isSA && (
+      {canEditProducts && (
         <div className="flex justify-end">
           <Button variant="primary" size="md" onClick={() => setModalCreate(true)}>
             Créer un produit
@@ -1283,7 +1301,7 @@ function ProductsTab({
         >
           <thead>
             <tr className="bg-background border-b border-borderLight">
-              {['SKU', 'Nom', 'Catégorie', 'Prix', 'Statut', ...(isSA ? ['Actions'] : [])].map((col) => (
+              {['SKU', 'Nom', 'Catégorie', 'Prix', 'Statut', ...(canEditProducts ? ['Actions'] : [])].map((col) => (
                 <th
                   key={col}
                   scope="col"
@@ -1329,7 +1347,7 @@ function ProductsTab({
                   <td className="px-4 py-3 whitespace-nowrap">
                     <StatusBadge isActive={product.is_active} />
                   </td>
-                  {isSA && (
+                  {canEditProducts && (
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         <Button
@@ -1340,7 +1358,7 @@ function ProductsTab({
                         >
                           Modifier
                         </Button>
-                        {product.is_active ? (
+                        {isSA && product.is_active && (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -1349,7 +1367,8 @@ function ProductsTab({
                           >
                             Désactiver
                           </Button>
-                        ) : (
+                        )}
+                        {isSA && !product.is_active && (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -1415,7 +1434,10 @@ export default function CataloguePage() {
     }
   }, [sessionLoading, sessionUser, router]);
 
-  const isSA = !sessionLoading && sessionUser?.roleName === ROLE_SA;
+  const isSA             = !sessionLoading && sessionUser?.roleName === ROLE_SA;
+  const canEditProducts  = !sessionLoading && (
+    sessionUser?.roleName === ROLE_SA || sessionUser?.roleName === ROLE_ADMIN
+  );
 
   // Onglet actif — Produits par défaut
   const [activeTab, setActiveTab] = useState<ActiveTab>('products');
@@ -1565,6 +1587,7 @@ export default function CataloguePage() {
             isLoading={prodsLoading}
             fetchError={prodsError}
             isSA={isSA}
+            canEditProducts={canEditProducts}
             onReload={loadProducts}
           />
         )}
