@@ -47,7 +47,21 @@ type AuditAction =
   | 'PRODUCT_CREATED'
   | 'PRODUCT_UPDATED'
   | 'PRODUCT_DEACTIVATED'
-  | 'PRODUCT_REACTIVATED';
+  | 'PRODUCT_REACTIVATED'
+  | 'SUPPLIER_PRODUCT_CREATED'
+  | 'SUPPLIER_PRODUCT_UPDATED'
+  | 'SUPPLIER_PRODUCT_DELETED'
+  | 'PURCHASE_ORDER_CREATED'
+  | 'PURCHASE_ORDER_UPDATED'
+  | 'PURCHASE_ORDER_SENT'
+  | 'PURCHASE_ORDER_CANCELLED'
+  | 'RECEPTION_CREATED'
+  | 'RECEPTION_CONFIRMED'
+  | 'RECEPTION_CANCELLED'
+  | 'INVOICE_CREATED'
+  | 'INVOICE_UPDATED'
+  | 'INVOICE_PAID'
+  | 'INVOICE_DISPUTED';
 
 interface AuditLog {
   id: string;
@@ -105,6 +119,20 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   PRODUCT_UPDATED:     'Produit modifié',
   PRODUCT_DEACTIVATED: 'Produit désactivé',
   PRODUCT_REACTIVATED: 'Produit réactivé',
+  SUPPLIER_PRODUCT_CREATED: 'Entrée catalogue créée',
+  SUPPLIER_PRODUCT_UPDATED: 'Entrée catalogue modifiée',
+  SUPPLIER_PRODUCT_DELETED: 'Entrée catalogue désactivée',
+  PURCHASE_ORDER_CREATED:   'Commande créée',
+  PURCHASE_ORDER_UPDATED:   'Commande modifiée',
+  PURCHASE_ORDER_SENT:      'Commande envoyée',
+  PURCHASE_ORDER_CANCELLED: 'Commande annulée',
+  RECEPTION_CREATED:        'Réception créée',
+  RECEPTION_CONFIRMED:      'Réception confirmée',
+  RECEPTION_CANCELLED:      'Réception annulée',
+  INVOICE_CREATED:          'Facture créée',
+  INVOICE_UPDATED:          'Facture modifiée',
+  INVOICE_PAID:             'Facture payée',
+  INVOICE_DISPUTED:         'Facture contestée',
 };
 
 const ACTION_COLORS: Record<AuditAction, string> = {
@@ -131,6 +159,20 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   PRODUCT_UPDATED:      'bg-warning/20 text-warning border border-warning/30',
   PRODUCT_DEACTIVATED:  'bg-danger/10 text-danger border border-danger/20',
   PRODUCT_REACTIVATED:  'bg-success/10 text-success border border-success/20',
+  SUPPLIER_PRODUCT_CREATED: 'bg-primary/10 text-primary border border-primary/20',
+  SUPPLIER_PRODUCT_UPDATED: 'bg-warning/20 text-warning border border-warning/30',
+  SUPPLIER_PRODUCT_DELETED: 'bg-danger/10 text-danger border border-danger/20',
+  PURCHASE_ORDER_CREATED:   'bg-primary/10 text-primary border border-primary/20',
+  PURCHASE_ORDER_UPDATED:   'bg-warning/20 text-warning border border-warning/30',
+  PURCHASE_ORDER_SENT:      'bg-blue-50 text-blue-700 border border-blue-200',
+  PURCHASE_ORDER_CANCELLED: 'bg-danger/10 text-danger border border-danger/20',
+  RECEPTION_CREATED:        'bg-primary/10 text-primary border border-primary/20',
+  RECEPTION_CONFIRMED:      'bg-success/10 text-success border border-success/20',
+  RECEPTION_CANCELLED:      'bg-danger/10 text-danger border border-danger/20',
+  INVOICE_CREATED:          'bg-primary/10 text-primary border border-primary/20',
+  INVOICE_UPDATED:          'bg-warning/20 text-warning border border-warning/30',
+  INVOICE_PAID:             'bg-success/10 text-success border border-success/20',
+  INVOICE_DISPUTED:         'bg-orange-50 text-orange-700 border border-orange-200',
 };
 
 // ---------------------------------------------------------------------------
@@ -166,6 +208,22 @@ const ACTION_GROUPS: ActionGroup[] = [
   {
     label: 'Catalogue — Produits',
     actions: ['PRODUCT_CREATED', 'PRODUCT_UPDATED', 'PRODUCT_DEACTIVATED', 'PRODUCT_REACTIVATED'],
+  },
+  {
+    label: 'Catalogue fournisseur',
+    actions: ['SUPPLIER_PRODUCT_CREATED', 'SUPPLIER_PRODUCT_UPDATED', 'SUPPLIER_PRODUCT_DELETED'],
+  },
+  {
+    label: 'Commandes fournisseurs',
+    actions: ['PURCHASE_ORDER_CREATED', 'PURCHASE_ORDER_UPDATED', 'PURCHASE_ORDER_SENT', 'PURCHASE_ORDER_CANCELLED'],
+  },
+  {
+    label: 'Réceptions',
+    actions: ['RECEPTION_CREATED', 'RECEPTION_CONFIRMED', 'RECEPTION_CANCELLED'],
+  },
+  {
+    label: 'Factures fournisseurs',
+    actions: ['INVOICE_CREATED', 'INVOICE_UPDATED', 'INVOICE_PAID', 'INVOICE_DISPUTED'],
   },
 ];
 
@@ -479,11 +537,20 @@ function AuditDetailModal({
     : [];
 
   const labelsMeta: Record<string, string> = {
-    reason:             'Raison',
-    role:               'Rôle attribué',
-    magasins:           'Magasins associés',
-    attempted_username: 'Identifiant tenté',
-    store_id:           'Magasin tenté (ID)',
+    // Auth
+    reason:                    'Raison',
+    attempted_username:        'Identifiant tenté',
+    store_id:                  'Magasin tenté (ID)',
+    // Utilisateurs
+    role:                      'Rôle attribué',
+    magasins:                  'Magasins associés',
+    // Commandes fournisseurs
+    updated_fields:            'Champs modifiés',
+    new_destination_store_id:  'Nouvel établissement (ID)',
+    items_count:               'Nombre de lignes',
+    // Réceptions
+    order_reference:           'Référence commande',
+    received_items:            'Articles reçus',
   };
 
   return (
