@@ -51,21 +51,22 @@ interface ReportLine {
 }
 
 interface InventoryReport {
-  id:               string;
-  reference:        string;
-  store_id:         string;
-  status:           ReportStatus;
-  period_start:     string;
-  period_end:       string;
-  notes:            string | null;
-  rejection_reason: string | null;
-  created_at:       string;
-  submitted_at:     string | null;
-  validated_at:     string | null;
-  store:            { id: string; name: string; color: string };
-  created_by:       { id: string; username: string };
-  validated_by:     { id: string; username: string } | null;
-  lines:            ReportLine[];
+  id:                     string;
+  reference:              string;
+  store_id:               string;
+  status:                 ReportStatus;
+  period_start:           string;
+  period_end:             string;
+  notes:                  string | null;
+  rejection_reason:       string | null;
+  created_at:             string;
+  submitted_at:           string | null;
+  validated_at:           string | null;
+  adjustments_applied_at: string | null;
+  store:                  { id: string; name: string; color: string };
+  created_by:             { id: string; username: string };
+  validated_by:           { id: string; username: string } | null;
+  lines:                  ReportLine[];
 }
 
 interface StoreOption { id: string; name: string; color: string }
@@ -177,8 +178,9 @@ function CreateReportModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md mx-4">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" role="dialog" aria-modal="true">
+      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
           <h2 className="text-base font-semibold text-textMain">Nouveau rapport d'inventaire</h2>
           <button onClick={onClose} className="text-textMuted hover:text-textMain" aria-label="Fermer">✕</button>
@@ -212,6 +214,7 @@ function CreateReportModal({
           </div>
         </form>
       </div>
+      </div>
     </div>
   );
 }
@@ -241,10 +244,11 @@ function ReportDetailModal({
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [error,          setError]          = useState<string | null>(null);
 
-  const isDraft     = report.status === 'DRAFT';
-  const isSubmitted = report.status === 'SUBMITTED';
-  const isValidated = report.status === 'VALIDATED';
-  const isRejected  = report.status === 'REJECTED';
+  const isDraft              = report.status === 'DRAFT';
+  const isSubmitted          = report.status === 'SUBMITTED';
+  const isValidated          = report.status === 'VALIDATED';
+  const isRejected           = report.status === 'REJECTED';
+  const adjustmentsApplied   = report.adjustments_applied_at !== null;
 
   function updateLine(productId: string, field: 'stock_counted' | 'note', value: string) {
     setLines((prev) =>
@@ -316,7 +320,8 @@ function ReportDetailModal({
   const hasVariances = lines.some((l) => l.variance !== 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" role="dialog" aria-modal="true">
+      <div className="flex min-h-full items-center justify-center p-4">
       <div className="bg-surface rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         {/* En-tête */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
@@ -336,10 +341,12 @@ function ReportDetailModal({
           <button onClick={onClose} className="text-textMuted hover:text-textMain" aria-label="Fermer">✕</button>
         </div>
 
-        {/* Motif de rejet */}
-        {isRejected && report.rejection_reason && (
-          <div className="mx-6 mt-4 px-4 py-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-            <span className="font-medium">Motif de rejet :</span> {report.rejection_reason}
+        {/* Motif de rejet — état terminal */}
+        {isRejected && (
+          <div className="mx-6 mt-4 px-4 py-3 bg-red-50 border border-red-200 rounded text-sm text-red-700 space-y-1">
+            <p className="font-medium">Ce rapport a été rejeté (état terminal).</p>
+            {report.rejection_reason && <p><span className="font-medium">Motif :</span> {report.rejection_reason}</p>}
+            <p className="text-xs text-red-500">Veuillez créer un nouveau rapport pour cette période.</p>
           </div>
         )}
 
@@ -453,15 +460,15 @@ function ReportDetailModal({
             </Button>
 
             <div className="flex gap-2 flex-wrap justify-end">
-              {/* Sauvegarder les lignes */}
-              {(isDraft || isRejected) && (
+              {/* Sauvegarder les lignes — uniquement en DRAFT */}
+              {isDraft && (
                 <Button variant="secondary" size="sm" onClick={saveLines} disabled={savingLines}>
                   {savingLines ? 'Sauvegarde…' : 'Sauvegarder'}
                 </Button>
               )}
 
-              {/* Soumettre */}
-              {(isDraft || isRejected) && (
+              {/* Soumettre — uniquement depuis DRAFT (REJECTED est terminal) */}
+              {isDraft && (
                 <Button
                   size="sm"
                   onClick={() => doAction('submit')}
@@ -493,20 +500,28 @@ function ReportDetailModal({
                 </Button>
               )}
 
-              {/* Appliquer les ajustements (SA uniquement, rapport validé, écarts existants) */}
-              {isValidated && isSA && hasVariances && (
+              {/* Appliquer les ajustements — SA, rapport validé, écarts présents, non encore appliqués */}
+              {isValidated && isSA && hasVariances && !adjustmentsApplied && (
                 <Button
                   size="sm"
                   onClick={handleApplyAdjustments}
                   disabled={actionLoading === 'apply-adjustments'}
-                  title="Crée des mouvements de stock pour corriger les écarts"
+                  title="Crée des mouvements de stock pour corriger les écarts (opération unique)"
                 >
                   {actionLoading === 'apply-adjustments' ? 'Application…' : 'Appliquer les ajustements'}
                 </Button>
               )}
+
+              {/* Confirmation que les ajustements ont été appliqués */}
+              {isValidated && adjustmentsApplied && (
+                <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-1.5">
+                  Ajustements appliqués le {formatDate(report.adjustments_applied_at)}
+                </span>
+              )}
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

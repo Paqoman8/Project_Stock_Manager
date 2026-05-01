@@ -9,7 +9,7 @@
 import { AuditAction, ReportStatus } from '@prisma/client';
 import { logAction } from './audit.service';
 import { prisma } from '../config/database';
-import * as reportRepo from '../repositories/inventory_report.repository';
+import * as reportRepo  from '../repositories/inventory_report.repository';
 import * as movementRepo from '../repositories/stock_movement.repository';
 import type {
   InventoryReportRow,
@@ -19,24 +19,7 @@ import type {
 
 export type { InventoryReportRow };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Retourne le numéro de semaine ISO d'une date. */
-function isoWeek(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-}
-
-/** Génère la référence INV-YYYY-WXX à partir de la date de début. */
-function buildReference(periodStart: Date): string {
-  const year = periodStart.getFullYear();
-  const week = String(isoWeek(periodStart)).padStart(2, '0');
-  return `INV-${year}-W${week}`;
-}
+// (Référence générée via séquence atomique dans le repository)
 
 // ---------------------------------------------------------------------------
 // Fonctions
@@ -80,13 +63,8 @@ export async function createReport(
   });
   if (!store) throw new Error('STORE_NOT_FOUND');
 
-  const reference = buildReference(data.period_start);
-
-  // Vérification unicité par établissement + semaine
-  const existing = await prisma.inventoryReport.findFirst({
-    where: { store_id: data.store_id, reference },
-  });
-  if (existing) throw new Error('REPORT_ALREADY_EXISTS');
+  // Référence unique via séquence atomique (pas de risque de doublon)
+  const reference = await reportRepo.generateReference();
 
   // Snapshot du stock actuel
   const inventoryEntries = await prisma.inventory.findMany({
@@ -161,13 +139,11 @@ export async function submitReport(
 ): Promise<InventoryReportRow> {
   const report = await reportRepo.findById(reportId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
-  if (report.status !== 'DRAFT' && report.status !== 'REJECTED') {
-    throw new Error('REPORT_NOT_SUBMITTABLE');
-  }
+  // REJECTED est un état terminal — il faut créer un nouveau rapport
+  if (report.status !== 'DRAFT') throw new Error('REPORT_NOT_SUBMITTABLE');
 
   const updated = await reportRepo.updateStatus(reportId, 'SUBMITTED', {
     submitted_at: new Date(),
-    rejection_reason: '', // efface le motif de rejet précédent si re-soumission
   });
 
   try {
@@ -296,6 +272,8 @@ export async function applyAdjustments(
   const report = await reportRepo.findById(reportId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   if (report.status !== 'VALIDATED') throw new Error('REPORT_NOT_VALIDATED');
+  // Opération irréversible — ne peut être faite qu'une seule fois
+  if (report.adjustments_applied_at !== null) throw new Error('ADJUSTMENTS_ALREADY_APPLIED');
 
   const linesWithVariance = report.lines.filter((l) => l.variance !== 0);
   let count = 0;
@@ -315,6 +293,9 @@ export async function applyAdjustments(
 
     count++;
   }
+
+  // Verrouille l'opération — plus possible de rejouer
+  await reportRepo.setAdjustmentsApplied(reportId);
 
   try {
     await logAction({

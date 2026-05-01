@@ -21,24 +21,25 @@ export interface ReportLineRow {
 }
 
 export interface InventoryReportRow {
-  id:               string;
-  reference:        string;
-  store_id:         string;
-  status:           ReportStatus;
-  period_start:     Date;
-  period_end:       Date;
-  notes:            string | null;
-  rejection_reason: string | null;
-  created_by_id:    string;
-  submitted_at:     Date | null;
-  validated_at:     Date | null;
-  validated_by_id:  string | null;
-  created_at:       Date;
-  updated_at:       Date;
-  store:            { id: string; name: string; color: string };
-  created_by:       { id: string; username: string };
-  validated_by:     { id: string; username: string } | null;
-  lines:            ReportLineRow[];
+  id:                     string;
+  reference:              string;
+  store_id:               string;
+  status:                 ReportStatus;
+  period_start:           Date;
+  period_end:             Date;
+  notes:                  string | null;
+  rejection_reason:       string | null;
+  created_by_id:          string;
+  submitted_at:           Date | null;
+  validated_at:           Date | null;
+  validated_by_id:        string | null;
+  adjustments_applied_at: Date | null;
+  created_at:             Date;
+  updated_at:             Date;
+  store:                  { id: string; name: string; color: string };
+  created_by:             { id: string; username: string };
+  validated_by:           { id: string; username: string } | null;
+  lines:                  ReportLineRow[];
 }
 
 export interface ReportFilters {
@@ -170,10 +171,10 @@ export async function updateStatus(
   id: string,
   status: ReportStatus,
   opts?: {
-    submitted_at?:     Date;
-    validated_at?:     Date;
-    validated_by_id?:  string;
-    rejection_reason?: string;
+    submitted_at?:          Date;
+    validated_at?:          Date;
+    validated_by_id?:       string;
+    rejection_reason?:      string;
   },
 ): Promise<InventoryReportRow> {
   return prisma.inventoryReport.update({
@@ -187,4 +188,31 @@ export async function updateStatus(
     },
     include: REPORT_INCLUDE,
   }) as unknown as InventoryReportRow;
+}
+
+/**
+ * Marque le rapport comme ayant ses ajustements appliqués (opération irréversible).
+ */
+export async function setAdjustmentsApplied(id: string): Promise<InventoryReportRow> {
+  return prisma.inventoryReport.update({
+    where: { id },
+    data:  { adjustments_applied_at: new Date() },
+    include: REPORT_INCLUDE,
+  }) as unknown as InventoryReportRow;
+}
+
+/**
+ * Génère une référence INV-YYYY-XXXX via séquence atomique PostgreSQL.
+ */
+export async function generateReference(): Promise<string> {
+  const year = new Date().getFullYear();
+  const result = await prisma.$queryRaw<[{ last_seq: bigint }]>`
+    INSERT INTO inventory_report_sequences (year, last_seq)
+    VALUES (${year}, 1)
+    ON CONFLICT (year) DO UPDATE
+    SET last_seq = inventory_report_sequences.last_seq + 1
+    RETURNING last_seq
+  `;
+  const seq = Number(result[0].last_seq);
+  return `INV-${year}-${String(seq).padStart(4, '0')}`;
 }

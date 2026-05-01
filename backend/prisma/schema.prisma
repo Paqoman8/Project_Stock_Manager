@@ -543,27 +543,35 @@ enum ReportStatus {
   REJECTED   // Rejeté — retour pour correction
 }
 
-model InventoryReport {
-  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reference        String               // Format : INV-YYYY-WXX — unique par établissement
-  store_id         String               @db.Uuid
-  status           ReportStatus         @default(DRAFT)
-  period_start     DateTime
-  period_end       DateTime
-  notes            String?
-  rejection_reason String?
-  created_by_id    String               @db.Uuid
-  submitted_at     DateTime?
-  validated_at     DateTime?
-  validated_by_id  String?              @db.Uuid
-  created_at       DateTime             @default(now())
-  updated_at       DateTime             @updatedAt
-  store            Store                @relation(fields: [store_id], references: [id])
-  created_by       User                 @relation("ReportsCreatedBy", fields: [created_by_id], references: [id])
-  validated_by     User?                @relation("ReportsValidatedBy", fields: [validated_by_id], references: [id])
-  lines            InventoryReportLine[]
+// Séquence atomique pour la génération de références INV-YYYY-XXXX.
+model InventoryReportSequence {
+  year     Int @id
+  last_seq Int @default(0)
 
-  @@unique([store_id, reference])
+  @@map("inventory_report_sequences")
+}
+
+model InventoryReport {
+  id                      String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reference               String               @unique // Format : INV-YYYY-XXXX (séquence globale)
+  store_id                String               @db.Uuid
+  status                  ReportStatus         @default(DRAFT)
+  period_start            DateTime
+  period_end              DateTime
+  notes                   String?
+  rejection_reason        String?
+  created_by_id           String               @db.Uuid
+  submitted_at            DateTime?
+  validated_at            DateTime?
+  validated_by_id         String?              @db.Uuid
+  adjustments_applied_at  DateTime?            // Non null = ajustements déjà appliqués (irréversible)
+  created_at              DateTime             @default(now())
+  updated_at              DateTime             @updatedAt
+  store                   Store                @relation(fields: [store_id], references: [id])
+  created_by              User                 @relation("ReportsCreatedBy", fields: [created_by_id], references: [id])
+  validated_by            User?                @relation("ReportsValidatedBy", fields: [validated_by_id], references: [id])
+  lines                   InventoryReportLine[]
+
   @@map("inventory_reports")
 }
 

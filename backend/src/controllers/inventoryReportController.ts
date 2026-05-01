@@ -117,8 +117,6 @@ export async function createReport(req: AuthenticatedRequest, res: Response): Pr
     if (error instanceof Error) {
       if (error.message === 'STORE_NOT_FOUND')
         return void res.status(404).json({ success: false, message: 'Établissement introuvable.' });
-      if (error.message === 'REPORT_ALREADY_EXISTS')
-        return void res.status(409).json({ success: false, message: 'Un rapport existe déjà pour cet établissement et cette semaine.' });
       if (error.message === 'NO_INVENTORY_ENTRIES')
         return void res.status(422).json({ success: false, message: 'Cet établissement n\'a aucune entrée d\'inventaire.' });
     }
@@ -257,6 +255,8 @@ export async function applyAdjustments(req: AuthenticatedRequest, res: Response)
         return void res.status(404).json({ success: false, message: 'Rapport introuvable.' });
       if (error.message === 'REPORT_NOT_VALIDATED')
         return void res.status(409).json({ success: false, message: 'Les ajustements ne peuvent être appliqués que sur un rapport validé.' });
+      if (error.message === 'ADJUSTMENTS_ALREADY_APPLIED')
+        return void res.status(409).json({ success: false, message: 'Les ajustements ont déjà été appliqués pour ce rapport.' });
     }
     console.error('Erreur application ajustements :', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });

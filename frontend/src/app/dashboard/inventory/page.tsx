@@ -148,12 +148,13 @@ function EditThresholdsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-thresholds-title"
     >
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md mx-4">
+      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md">
         {/* En-tête */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
           <h2 id="modal-thresholds-title" className="text-base font-semibold text-textMain">
@@ -248,6 +249,7 @@ function EditThresholdsModal({
           </div>
         </form>
       </div>
+      </div>
     </div>
   );
 }
@@ -315,8 +317,9 @@ function StockMovementModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md mx-4">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40" role="dialog" aria-modal="true">
+      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
           <h2 className="text-base font-semibold text-textMain">Mouvement de stock</h2>
           <button onClick={onClose} className="text-textMuted hover:text-textMain transition-colors" aria-label="Fermer">✕</button>
@@ -374,6 +377,7 @@ function StockMovementModal({
             <Button type="submit" disabled={saving}>{saving ? 'Enregistrement…' : 'Enregistrer'}</Button>
           </div>
         </form>
+      </div>
       </div>
     </div>
   );
