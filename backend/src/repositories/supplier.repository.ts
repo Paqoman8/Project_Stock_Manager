@@ -25,6 +25,7 @@ export interface SupplierRow {
   phone: string | null;
   address: string | null;
   payment_terms: PaymentTerms;
+  is_international: boolean;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -40,6 +41,7 @@ export interface CreateSupplierData {
   phone?: string;
   address?: string;
   payment_terms?: PaymentTerms;
+  is_international?: boolean;
 }
 
 /**
@@ -52,6 +54,7 @@ export interface UpdateSupplierData {
   phone?: string;
   address?: string;
   payment_terms?: PaymentTerms;
+  is_international?: boolean;
 }
 
 /**
@@ -68,16 +71,17 @@ export interface SupplierFilters {
 // ---------------------------------------------------------------------------
 
 const SUPPLIER_SELECT = {
-  id:            true,
-  name:          true,
-  contact_name:  true,
-  email:         true,
-  phone:         true,
-  address:       true,
-  payment_terms: true,
-  is_active:     true,
-  created_at:    true,
-  updated_at:    true,
+  id:               true,
+  name:             true,
+  contact_name:     true,
+  email:            true,
+  phone:            true,
+  address:          true,
+  payment_terms:    true,
+  is_international: true,
+  is_active:        true,
+  created_at:       true,
+  updated_at:       true,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -149,12 +153,13 @@ export async function findByEmail(email: string): Promise<SupplierRow | null> {
 export async function create(data: CreateSupplierData): Promise<SupplierRow> {
   return prisma.supplier.create({
     data: {
-      name:          data.name,
-      contact_name:  data.contact_name  ?? null,
-      email:         data.email         ?? null,
-      phone:         data.phone         ?? null,
-      address:       data.address       ?? null,
-      payment_terms: data.payment_terms ?? 'NET30',
+      name:             data.name,
+      contact_name:     data.contact_name     ?? null,
+      email:            data.email            ?? null,
+      phone:            data.phone            ?? null,
+      address:          data.address          ?? null,
+      payment_terms:    data.payment_terms    ?? 'NET30',
+      is_international: data.is_international ?? false,
     },
     select: SUPPLIER_SELECT,
   });
@@ -171,12 +176,13 @@ export async function create(data: CreateSupplierData): Promise<SupplierRow> {
  */
 export async function update(id: string, data: UpdateSupplierData): Promise<SupplierRow> {
   const updateData: Record<string, unknown> = {};
-  if (data.name          !== undefined) updateData.name          = data.name;
-  if (data.contact_name  !== undefined) updateData.contact_name  = data.contact_name;
-  if (data.email         !== undefined) updateData.email         = data.email;
-  if (data.phone         !== undefined) updateData.phone         = data.phone;
-  if (data.address       !== undefined) updateData.address       = data.address;
-  if (data.payment_terms !== undefined) updateData.payment_terms = data.payment_terms;
+  if (data.name             !== undefined) updateData.name             = data.name;
+  if (data.contact_name     !== undefined) updateData.contact_name     = data.contact_name;
+  if (data.email            !== undefined) updateData.email            = data.email;
+  if (data.phone            !== undefined) updateData.phone            = data.phone;
+  if (data.address          !== undefined) updateData.address          = data.address;
+  if (data.payment_terms    !== undefined) updateData.payment_terms    = data.payment_terms;
+  if (data.is_international !== undefined) updateData.is_international = data.is_international;
 
   return prisma.supplier.update({
     where:  { id },

@@ -16,17 +16,19 @@ model Role {
 }
 
 model User {
-  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  username     String            @unique
-  email        String?           @unique
-  pwd_hash     String
-  role_id      String            @db.Uuid
-  is_active    Boolean           @default(true)
-  role         Role              @relation(fields: [role_id], references: [id])
-  store_access UserStoreAccess[]
-  sessions     SessionLog[]
-  transactions Transaction[]
-  acted_audits AuditLog[]
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username       String            @unique
+  email          String?           @unique
+  pwd_hash       String
+  role_id        String            @db.Uuid
+  is_active      Boolean           @default(true)
+  role           Role              @relation(fields: [role_id], references: [id])
+  store_access   UserStoreAccess[]
+  sessions       SessionLog[]
+  transactions   Transaction[]
+  acted_audits   AuditLog[]
+  purchase_orders PurchaseOrder[]
+  receptions     StockReception[]
 
   @@map("users")
 }
@@ -49,6 +51,7 @@ model Store {
   transfers_to     Transfer[]        @relation("TransfersTo")
   transactions     Transaction[]
   audit_logs       AuditLog[]        @relation("AuditStore")
+  purchase_orders  PurchaseOrder[]   @relation("PurchaseOrderDestination")
 
   @@map("stores")
 }
@@ -85,12 +88,29 @@ model Category {
   @@map("categories")
 }
 
+// ---------------------------------------------------------------------------
+// Unité de mesure — stock et vente au client final
+// ---------------------------------------------------------------------------
+
+enum ProductUnit {
+  PIECE
+  KG
+  G
+  L
+  CL
+  ML
+  BOUTEILLE
+  SACHET
+  BOITE
+}
+
 model Product {
   id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   sku               String            @unique
   name              String
   description       String?
   price             Decimal           @db.Decimal(10, 2)
+  unit              ProductUnit       @default(PIECE)
   is_active         Boolean           @default(true)
   created_at        DateTime          @default(now())
   updated_at        DateTime          @updatedAt
@@ -99,6 +119,8 @@ model Product {
   inventories       Inventory[]
   transfer_items    TransferItem[]
   transaction_items TransactionItem[]
+  supplier_products SupplierProduct[]
+  reception_items   ReceptionItem[]
 
   @@map("products")
 }
@@ -222,6 +244,11 @@ enum AuditAction {
   SUPPLIER_DEACTIVATED
   SUPPLIER_REACTIVATED
 
+  // Catalogue fournisseur (liaison produit-fournisseur)
+  SUPPLIER_PRODUCT_CREATED
+  SUPPLIER_PRODUCT_UPDATED
+  SUPPLIER_PRODUCT_DELETED
+
   // Gestion du catalogue
   CATEGORY_CREATED
   CATEGORY_UPDATED
@@ -230,6 +257,23 @@ enum AuditAction {
   PRODUCT_UPDATED
   PRODUCT_DEACTIVATED
   PRODUCT_REACTIVATED
+
+  // Commandes fournisseurs
+  PURCHASE_ORDER_CREATED
+  PURCHASE_ORDER_UPDATED
+  PURCHASE_ORDER_SENT
+  PURCHASE_ORDER_CANCELLED
+
+  // Réceptions de stock
+  RECEPTION_CREATED
+  RECEPTION_CONFIRMED
+  RECEPTION_CANCELLED
+
+  // Factures fournisseurs
+  INVOICE_CREATED
+  INVOICE_UPDATED
+  INVOICE_PAID
+  INVOICE_DISPUTED
 }
 
 // ---------------------------------------------------------------------------
@@ -244,19 +288,161 @@ enum PaymentTerms {
 }
 
 model Supplier {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name          String
-  contact_name  String?
-  email         String?      @unique
-  phone         String?      @db.VarChar(20)
-  address       String?
-  payment_terms PaymentTerms @default(NET30)
-  is_active     Boolean      @default(true)
-  created_at    DateTime     @default(now())
-  updated_at    DateTime     @updatedAt
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  contact_name     String?
+  email            String?           @unique
+  phone            String?           @db.VarChar(20)
+  address          String?
+  payment_terms    PaymentTerms      @default(NET30)
+  is_international Boolean           @default(false)
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+  supplier_products SupplierProduct[]
+  purchase_orders  PurchaseOrder[]
 
   @@map("suppliers")
 }
+
+// ---------------------------------------------------------------------------
+// Catalogue fournisseur — conditions d'achat par couple (fournisseur, produit)
+// ---------------------------------------------------------------------------
+
+model SupplierProduct {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supplier_id     String          @db.Uuid
+  product_id      String          @db.Uuid
+  supplier_ref    String?         // Référence interne du fournisseur pour ce produit
+  purchase_price  Decimal         @db.Decimal(10, 2)
+  order_unit      String          // Unité de commande : Carton, Pack, Palette…
+  units_per_order Int             @default(1)
+  min_order_qty   Int             @default(1)
+  is_preferred    Boolean         @default(false)
+  is_active       Boolean         @default(true)
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+  supplier        Supplier        @relation(fields: [supplier_id], references: [id])
+  product         Product         @relation(fields: [product_id], references: [id])
+  order_items     PurchaseOrderItem[]
+
+  @@unique([supplier_id, product_id])
+  @@map("supplier_products")
+}
+
+// ---------------------------------------------------------------------------
+// Commandes fournisseurs
+// ---------------------------------------------------------------------------
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reference            String              @unique // Format : BC-YYYY-XXXX
+  supplier_id          String              @db.Uuid
+  destination_store_id String              @db.Uuid
+  ordered_by_id        String              @db.Uuid
+  status               PurchaseOrderStatus @default(DRAFT)
+  notes                String?
+  expected_at          DateTime?
+  sent_at              DateTime?
+  created_at           DateTime            @default(now())
+  updated_at           DateTime            @updatedAt
+  supplier             Supplier            @relation(fields: [supplier_id], references: [id])
+  destination_store    Store               @relation("PurchaseOrderDestination", fields: [destination_store_id], references: [id])
+  ordered_by           User                @relation(fields: [ordered_by_id], references: [id])
+  items                PurchaseOrderItem[]
+  receptions           StockReception[]
+  invoice              SupplierInvoice?
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id            String          @db.Uuid
+  supplier_product_id String          @db.Uuid
+  ordered_qty         Int
+  unit_price          Decimal         @db.Decimal(10, 2) // Dénormalisé au moment de la commande
+  order               PurchaseOrder   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  supplier_product    SupplierProduct @relation(fields: [supplier_product_id], references: [id])
+
+  @@unique([order_id, supplier_product_id])
+  @@map("purchase_order_items")
+}
+
+// ---------------------------------------------------------------------------
+// Réceptions de stock
+// ---------------------------------------------------------------------------
+
+enum ReceptionStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+model StockReception {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id        String          @db.Uuid
+  received_by_id  String          @db.Uuid
+  status          ReceptionStatus @default(PENDING)
+  notes           String?
+  received_at     DateTime        @default(now())
+  confirmed_at    DateTime?
+  order           PurchaseOrder   @relation(fields: [order_id], references: [id])
+  received_by     User            @relation(fields: [received_by_id], references: [id])
+  items           ReceptionItem[]
+
+  @@map("stock_receptions")
+}
+
+model ReceptionItem {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reception_id      String         @db.Uuid
+  product_id        String         @db.Uuid
+  received_qty      Int            // Quantité reçue en unités de commande
+  stock_units_added Int            // = received_qty × units_per_order (dénormalisé)
+  reception         StockReception @relation(fields: [reception_id], references: [id], onDelete: Cascade)
+  product           Product        @relation(fields: [product_id], references: [id])
+
+  @@map("reception_items")
+}
+
+// ---------------------------------------------------------------------------
+// Factures fournisseurs
+// ---------------------------------------------------------------------------
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  OVERDUE
+  DISPUTED
+}
+
+model SupplierInvoice {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id    String        @unique @db.Uuid
+  invoice_ref String?       // Référence de la facture fournisseur
+  amount      Decimal       @db.Decimal(10, 2)
+  status      InvoiceStatus @default(PENDING)
+  issued_at   DateTime      @default(now())
+  due_at      DateTime?
+  paid_at     DateTime?
+  notes       String?
+  order       PurchaseOrder @relation(fields: [order_id], references: [id])
+
+  @@map("supplier_invoices")
+}
+
+// ---------------------------------------------------------------------------
+// Journal d'audit
+// ---------------------------------------------------------------------------
 
 model AuditLog {
   id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

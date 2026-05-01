@@ -47,6 +47,7 @@ interface SupplierRow {
   phone: string | null;
   address: string | null;
   payment_terms: PaymentTerms;
+  is_international: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -59,6 +60,7 @@ interface SupplierFormData {
   phone: string;
   address: string;
   payment_terms: PaymentTerms;
+  is_international: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,12 +146,13 @@ function SupplierFormModal({
   const isEdit = supplier !== null;
 
   const emptyForm: SupplierFormData = {
-    name:          '',
-    contact_name:  '',
-    email:         '',
-    phone:         '',
-    address:       '',
-    payment_terms: 'IMMEDIATE',
+    name:             '',
+    contact_name:     '',
+    email:            '',
+    phone:            '',
+    address:          '',
+    payment_terms:    'IMMEDIATE',
+    is_international: false,
   };
 
   const [form, setForm]           = useState<SupplierFormData>(emptyForm);
@@ -163,12 +166,13 @@ function SupplierFormModal({
     if (!isOpen) return;
     if (isEdit && supplier) {
       setForm({
-        name:          supplier.name,
-        contact_name:  supplier.contact_name ?? '',
-        email:         supplier.email ?? '',
-        phone:         supplier.phone ?? '',
-        address:       supplier.address ?? '',
-        payment_terms: supplier.payment_terms,
+        name:             supplier.name,
+        contact_name:     supplier.contact_name ?? '',
+        email:            supplier.email ?? '',
+        phone:            supplier.phone ?? '',
+        address:          supplier.address ?? '',
+        payment_terms:    supplier.payment_terms,
+        is_international: supplier.is_international,
       });
     } else {
       setForm(emptyForm);
@@ -207,9 +211,10 @@ function SupplierFormModal({
     setIsSubmitting(true);
     setApiError(null);
 
-    const payload: Record<string, string> = {
-      name:          form.name.trim(),
-      payment_terms: form.payment_terms,
+    const payload: Record<string, unknown> = {
+      name:             form.name.trim(),
+      payment_terms:    form.payment_terms,
+      is_international: form.is_international,
     };
     if (form.contact_name.trim()) payload.contact_name = form.contact_name.trim();
     if (form.email.trim())        payload.email        = form.email.trim();
@@ -391,6 +396,35 @@ function SupplierFormModal({
                 <option value="NET60">60 jours net</option>
                 <option value="NET90">90 jours net</option>
               </select>
+            </div>
+
+            {/* Type : local / international */}
+            <div className="flex items-center justify-between py-2 px-3 bg-background border border-borderLight rounded">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium text-textSecondary">
+                  Fournisseur international
+                </span>
+                <span className="text-xs text-textMuted">
+                  Cocher si ce fournisseur est basé à l&apos;étranger
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.is_international}
+                onClick={() => setForm((f) => ({ ...f, is_international: !f.is_international }))}
+                className={
+                  'relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 ' +
+                  (form.is_international ? 'bg-primary' : 'bg-borderLight')
+                }
+              >
+                <span
+                  className={
+                    'inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform duration-200 ' +
+                    (form.is_international ? 'translate-x-4' : 'translate-x-0.5')
+                  }
+                />
+              </button>
             </div>
 
             {/* Erreur API générique */}
@@ -649,6 +683,7 @@ export default function SuppliersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus]   = useState<'ACTIVE' | 'INACTIVE' | ''>('');
   const [filterPayment, setFilterPayment] = useState<PaymentTerms | ''>('');
+  const [filterType, setFilterType]       = useState<'LOCAL' | 'INTERNATIONAL' | ''>('');
 
   // Debounce 300ms sur la recherche
   useEffect(() => {
@@ -709,16 +744,19 @@ export default function SuppliersPage() {
       if (filterStatus === 'ACTIVE'   && !s.is_active) return false;
       if (filterStatus === 'INACTIVE' &&  s.is_active) return false;
       if (filterPayment && s.payment_terms !== filterPayment) return false;
+      if (filterType === 'LOCAL'         &&  s.is_international) return false;
+      if (filterType === 'INTERNATIONAL' && !s.is_international) return false;
       return true;
     });
-  }, [suppliers, debouncedSearch, filterStatus, filterPayment]);
+  }, [suppliers, debouncedSearch, filterStatus, filterPayment, filterType]);
 
-  const hasActiveFilters = search !== '' || filterStatus !== '' || filterPayment !== '';
+  const hasActiveFilters = search !== '' || filterStatus !== '' || filterPayment !== '' || filterType !== '';
 
   function handleReset() {
     setSearch('');
     setFilterStatus('');
     setFilterPayment('');
+    setFilterType('');
   }
 
   // ---------------------------------------------------------------------------
@@ -811,6 +849,23 @@ export default function SuppliersPage() {
           </select>
         </div>
 
+        {/* Filtre par type local / international */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="filter-type" className="text-xs font-medium text-textSecondary">
+            Type
+          </label>
+          <select
+            id="filter-type"
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value as 'LOCAL' | 'INTERNATIONAL' | '')}
+            className={inputCls}
+          >
+            <option value="">Tous</option>
+            <option value="LOCAL">Local</option>
+            <option value="INTERNATIONAL">International</option>
+          </select>
+        </div>
+
         {/* Bouton réinitialiser */}
         {hasActiveFilters && (
           <Button
@@ -851,7 +906,7 @@ export default function SuppliersPage() {
         >
           <thead>
             <tr className="bg-background border-b border-borderLight">
-              {['Nom', 'Contact', 'Email', 'Téléphone', 'Adresse', 'Conditions de paiement', 'Actions'].map((col) => (
+              {['Nom', 'Contact', 'Email', 'Téléphone', 'Adresse', 'Conditions de paiement', 'Type', 'Actions'].map((col) => (
                 <th
                   key={col}
                   scope="col"
@@ -868,7 +923,7 @@ export default function SuppliersPage() {
               <SkeletonRows />
             ) : filteredSuppliers.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-textMuted">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-textMuted">
                   {suppliers.length === 0
                     ? 'Aucun fournisseur trouvé.'
                     : 'Aucun fournisseur ne correspond aux filtres.'}
@@ -918,6 +973,19 @@ export default function SuppliersPage() {
                   {/* Conditions de paiement */}
                   <td className="px-4 py-3 text-textMuted whitespace-nowrap">
                     {PAYMENT_TERMS_LABELS[supplier.payment_terms]}
+                  </td>
+
+                  {/* Type local / international */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {supplier.is_international ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                        International
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-background text-textMuted border border-borderLight">
+                        Local
+                      </span>
+                    )}
                   </td>
 
                   {/* Actions */}

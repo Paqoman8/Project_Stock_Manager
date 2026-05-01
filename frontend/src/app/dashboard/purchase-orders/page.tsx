@@ -1,0 +1,1618 @@
+// src/app/dashboard/purchase-orders/page.tsx
+// Page de gestion des commandes fournisseurs (PurchaseOrder).
+//
+// Architecture :
+//   - Client Component (interactions, état local, appels API)
+//   - Chargement initial : GET /api/purchase-orders, /api/suppliers, /api/stores
+//   - Chargement dynamique des produits fournisseur : GET /api/supplier-products?isActive=true&supplier_id=XXX
+//   - Filtrage 100% client-side via useMemo (statut, fournisseur, établissement)
+//   - Cinq modales inline : création, édition, envoi, annulation, détail
+//
+// Accès :
+//   - Liste + création : tous les utilisateurs authentifiés
+//   - Annulation : SA uniquement (bouton masqué côté UI si non-SA)
+
+'use client';
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import axios from 'axios';
+import { Button } from '@/components/ui/Button';
+import { useSession } from '@/contexts/SessionContext';
+import apiClient from '@/lib/apiClient';
+
+// ---------------------------------------------------------------------------
+// Constantes
+// ---------------------------------------------------------------------------
+
+const ROLE_SA = 'Super Administrateur';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type PurchaseOrderStatus =
+  | 'DRAFT'
+  | 'SENT'
+  | 'PARTIALLY_RECEIVED'
+  | 'RECEIVED'
+  | 'CANCELLED';
+
+interface PurchaseOrderItemRow {
+  id: string;
+  order_id: string;
+  supplier_product_id: string;
+  ordered_qty: number;
+  unit_price: string; // Decimal sérialisé
+  supplier_product: {
+    id: string;
+    order_unit: string;
+    units_per_order: number;
+    product: { id: string; name: string; sku: string; unit: string };
+  };
+}
+
+interface PurchaseOrderRow {
+  id: string;
+  reference: string;
+  supplier_id: string;
+  destination_store_id: string;
+  ordered_by_id: string;
+  status: PurchaseOrderStatus;
+  notes: string | null;
+  expected_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+  supplier: { id: string; name: string };
+  destination_store: { id: string; name: string };
+  ordered_by: { id: string; username: string };
+  items: PurchaseOrderItemRow[];
+}
+
+interface SupplierOption {
+  id: string;
+  name: string;
+  is_international: boolean;
+}
+
+interface StoreOption {
+  id: string;
+  name: string;
+  status: 'ACTIVE' | 'CLOSED';
+}
+
+interface SupplierProductOption {
+  id: string;
+  purchase_price: string;
+  order_unit: string;
+  units_per_order: number;
+  min_order_qty: number;
+  product: { id: string; name: string; sku: string; unit: string };
+}
+
+// ---------------------------------------------------------------------------
+// Labels de statut
+// ---------------------------------------------------------------------------
+
+const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
+  DRAFT:              'Brouillon',
+  SENT:               'Envoyé',
+  PARTIALLY_RECEIVED: 'Partiellement reçu',
+  RECEIVED:           'Reçu',
+  CANCELLED:          'Annulé',
+};
+
+// ---------------------------------------------------------------------------
+// Helpers visuels
+// ---------------------------------------------------------------------------
+
+function StatusBadge({ status }: { status: PurchaseOrderStatus }) {
+  const variants: Record<PurchaseOrderStatus, string> = {
+    DRAFT:              'bg-[#F1F3F5] text-textMuted border-borderLight',
+    SENT:               'bg-blue-50 text-blue-700 border-blue-200',
+    PARTIALLY_RECEIVED: 'bg-orange-50 text-orange-700 border-orange-200',
+    RECEIVED:           'bg-green-50 text-green-700 border-green-200',
+    CANCELLED:          'bg-red-50 text-red-700 border-red-200',
+  };
+  return (
+    <span
+      className={[
+        'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border',
+        variants[status],
+      ].join(' ')}
+    >
+      {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function IconReset() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lignes skeleton
+// ---------------------------------------------------------------------------
+
+function SkeletonRows({ cols }: { cols: number }) {
+  return (
+    <>
+      {[1, 2, 3].map((n) => (
+        <tr key={n} aria-hidden="true">
+          {Array.from({ length: cols }).map((_, c) => (
+            <td key={c} className="px-4 py-3">
+              <div className="h-4 bg-borderLight rounded animate-pulse" />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Classes communes aux inputs/selects
+// ---------------------------------------------------------------------------
+
+const inputCls =
+  'px-3 py-2 text-sm bg-background border border-borderLight rounded text-textMain ' +
+  'focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary w-full';
+
+// ---------------------------------------------------------------------------
+// Utilitaires de formatage
+// ---------------------------------------------------------------------------
+
+function formatDate(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function calcTotal(items: PurchaseOrderItemRow[]): string {
+  const total = items.reduce(
+    (acc, item) => acc + item.ordered_qty * parseFloat(item.unit_price),
+    0
+  );
+  return total.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+}
+
+// Extrait le message d'erreur API de façon cohérente
+function extractApiError(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    return err.response?.data?.message ?? fallback;
+  }
+  return fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Modale : Création de commande
+// ---------------------------------------------------------------------------
+
+interface CreateOrderItem {
+  supplier_product_id: string;
+  ordered_qty: number;
+  unit_price: number;
+  min_order_qty: number;
+  product_name: string;
+  product_sku: string;
+  order_unit: string;
+  units_per_order: number;
+}
+
+interface CreateOrderFormData {
+  supplier_id: string;
+  destination_store_id: string;
+  expected_at: string;
+  notes: string;
+}
+
+function CreateOrderModal({
+  isOpen,
+  suppliers,
+  stores,
+  onClose,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  suppliers: SupplierOption[];
+  stores: StoreOption[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const emptyForm: CreateOrderFormData = {
+    supplier_id:          '',
+    destination_store_id: '',
+    expected_at:          '',
+    notes:                '',
+  };
+
+  const [form, setForm]               = useState<CreateOrderFormData>(emptyForm);
+  const [supplierProducts, setSupplierProducts] = useState<SupplierProductOption[]>([]);
+  const [loadingProducts, setLoadingProducts]   = useState(false);
+  // selectedItems : map de supplier_product_id → CreateOrderItem
+  const [selectedItems, setSelectedItems] = useState<Map<string, CreateOrderItem>>(new Map());
+  const [apiError, setApiError]           = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting]   = useState(false);
+  const firstInputRef = useRef<HTMLSelectElement>(null);
+
+  // Réinitialiser au montage de la modale
+  useEffect(() => {
+    if (!isOpen) return;
+    setForm(emptyForm);
+    setSupplierProducts([]);
+    setSelectedItems(new Map());
+    setApiError(null);
+    setTimeout(() => firstInputRef.current?.focus(), 50);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Fermeture par Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isOpen, onClose]);
+
+  // Charger les produits fournisseur quand le fournisseur change
+  useEffect(() => {
+    if (!form.supplier_id) {
+      setSupplierProducts([]);
+      setSelectedItems(new Map());
+      return;
+    }
+    let cancelled = false;
+    setLoadingProducts(true);
+    apiClient
+      .get<{ success: boolean; supplierProducts: SupplierProductOption[] }>(
+        `/api/supplier-products?isActive=true&supplier_id=${form.supplier_id}`
+      )
+      .then((res) => {
+        if (!cancelled) {
+          setSupplierProducts(res.data.supplierProducts ?? []);
+          // Réinitialiser les lignes sélectionnées si le fournisseur change
+          setSelectedItems(new Map());
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSupplierProducts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProducts(false);
+      });
+    return () => { cancelled = true; };
+  }, [form.supplier_id]);
+
+  function handleToggleProduct(sp: SupplierProductOption, checked: boolean) {
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      if (checked) {
+        next.set(sp.id, {
+          supplier_product_id: sp.id,
+          ordered_qty:         sp.min_order_qty,
+          unit_price:          parseFloat(sp.purchase_price),
+          min_order_qty:       sp.min_order_qty,
+          product_name:        sp.product.name,
+          product_sku:         sp.product.sku,
+          order_unit:          sp.order_unit,
+          units_per_order:     sp.units_per_order,
+        });
+      } else {
+        next.delete(sp.id);
+      }
+      return next;
+    });
+  }
+
+  function handleItemChange(
+    spId: string,
+    field: 'ordered_qty' | 'unit_price',
+    value: number
+  ) {
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      const item = next.get(spId);
+      if (item) next.set(spId, { ...item, [field]: value });
+      return next;
+    });
+  }
+
+  // Validation
+  function validate(): string | null {
+    if (!form.supplier_id)          return 'Veuillez sélectionner un fournisseur.';
+    if (!form.destination_store_id) return 'Veuillez sélectionner un établissement de destination.';
+    if (selectedItems.size === 0)   return 'Ajoutez au moins une ligne de commande.';
+    for (const item of selectedItems.values()) {
+      if (item.ordered_qty < item.min_order_qty) {
+        return `La quantité de "${item.product_name}" doit être ≥ ${item.min_order_qty}.`;
+      }
+      if (item.ordered_qty <= 0) {
+        return `La quantité de "${item.product_name}" doit être positive.`;
+      }
+      if (item.unit_price <= 0) {
+        return `Le prix unitaire de "${item.product_name}" doit être positif.`;
+      }
+    }
+    return null;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const validationError = validate();
+    if (validationError) {
+      setApiError(validationError);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setApiError(null);
+
+    const payload: {
+      supplier_id: string;
+      destination_store_id: string;
+      notes?: string;
+      expected_at?: string;
+      items: Array<{ supplier_product_id: string; ordered_qty: number; unit_price: number }>;
+    } = {
+      supplier_id:          form.supplier_id,
+      destination_store_id: form.destination_store_id,
+      items: Array.from(selectedItems.values()).map((item) => ({
+        supplier_product_id: item.supplier_product_id,
+        ordered_qty:         item.ordered_qty,
+        unit_price:          item.unit_price,
+      })),
+    };
+    if (form.notes.trim())     payload.notes       = form.notes.trim();
+    if (form.expected_at)      payload.expected_at = new Date(form.expected_at).toISOString();
+
+    try {
+      await apiClient.post('/api/purchase-orders', payload);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setApiError(extractApiError(err, 'Une erreur est survenue lors de la création.'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  const itemsArray = Array.from(selectedItems.values());
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-order-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div
+        className="absolute inset-0 bg-black/40"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 w-full max-w-2xl mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <h2 id="create-order-title" className="text-base font-medium text-textMain">
+            Créer une commande fournisseur
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Corps */}
+        <form onSubmit={handleSubmit} noValidate className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 flex flex-col gap-5 overflow-y-auto flex-1">
+
+            {/* --- Section 1 : En-tête de commande --- */}
+            <div className="flex flex-col gap-4">
+              <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+                Informations générales
+              </h3>
+
+              {/* Fournisseur */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="order-supplier" className="text-xs font-medium text-textSecondary">
+                  Fournisseur <span className="text-danger" aria-hidden="true">*</span>
+                </label>
+                <select
+                  ref={firstInputRef}
+                  id="order-supplier"
+                  value={form.supplier_id}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, supplier_id: e.target.value }))
+                  }
+                  className={inputCls}
+                  aria-required="true"
+                >
+                  <option value="">Sélectionner un fournisseur…</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.is_international ? ' (International)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Établissement de destination */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="order-store" className="text-xs font-medium text-textSecondary">
+                  Établissement de destination <span className="text-danger" aria-hidden="true">*</span>
+                </label>
+                <select
+                  id="order-store"
+                  value={form.destination_store_id}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, destination_store_id: e.target.value }))
+                  }
+                  className={inputCls}
+                  aria-required="true"
+                >
+                  <option value="">Sélectionner un établissement…</option>
+                  {stores.filter((s) => s.status === 'ACTIVE').map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date attendue */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="order-expected-at" className="text-xs font-medium text-textSecondary">
+                  Date attendue
+                </label>
+                <input
+                  id="order-expected-at"
+                  type="date"
+                  value={form.expected_at}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, expected_at: e.target.value }))
+                  }
+                  className={inputCls}
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="order-notes" className="text-xs font-medium text-textSecondary">
+                  Notes
+                </label>
+                <textarea
+                  id="order-notes"
+                  value={form.notes}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, notes: e.target.value }))
+                  }
+                  rows={3}
+                  placeholder="Instructions de livraison, conditions particulières…"
+                  className={inputCls + ' resize-none'}
+                />
+              </div>
+            </div>
+
+            {/* --- Section 2 : Lignes de commande --- */}
+            {form.supplier_id && (
+              <div className="flex flex-col gap-3">
+                <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+                  Produits disponibles
+                </h3>
+
+                {loadingProducts ? (
+                  <p className="text-sm text-textMuted animate-pulse">
+                    Chargement des produits…
+                  </p>
+                ) : supplierProducts.length === 0 ? (
+                  <p className="text-sm text-textMuted">
+                    Aucun produit actif trouvé pour ce fournisseur.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {supplierProducts.map((sp) => {
+                      const isChecked = selectedItems.has(sp.id);
+                      const item      = selectedItems.get(sp.id);
+                      return (
+                        <div
+                          key={sp.id}
+                          className={[
+                            'border rounded p-3 flex flex-col gap-3 transition-colors',
+                            isChecked
+                              ? 'border-primary bg-primary/5'
+                              : 'border-borderLight bg-background',
+                          ].join(' ')}
+                        >
+                          {/* Ligne principale : checkbox + nom produit */}
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => handleToggleProduct(sp, e.target.checked)}
+                              className="mt-0.5 accent-primary"
+                              aria-label={`Ajouter ${sp.product.name} à la commande`}
+                            />
+                            <div className="flex flex-col gap-0.5 flex-1">
+                              <span className="text-sm font-medium text-textMain">
+                                {sp.product.name}
+                              </span>
+                              <span className="text-xs text-textMuted">
+                                SKU: {sp.product.sku} &bull; Unité cmd: {sp.order_unit} &bull;{' '}
+                                {sp.units_per_order} {sp.product.unit}/commande &bull;{' '}
+                                Min. {sp.min_order_qty}
+                              </span>
+                            </div>
+                          </label>
+
+                          {/* Champs qté + prix — visibles si coché */}
+                          {isChecked && item && (
+                            <div className="flex items-end gap-3 pl-7">
+                              <div className="flex flex-col gap-1 flex-1">
+                                <label
+                                  htmlFor={`qty-${sp.id}`}
+                                  className="text-xs font-medium text-textSecondary"
+                                >
+                                  Quantité <span className="text-textMuted">(min. {sp.min_order_qty})</span>
+                                </label>
+                                <input
+                                  id={`qty-${sp.id}`}
+                                  type="number"
+                                  min={sp.min_order_qty}
+                                  step={1}
+                                  value={item.ordered_qty}
+                                  onChange={(e) =>
+                                    handleItemChange(sp.id, 'ordered_qty', parseInt(e.target.value, 10) || sp.min_order_qty)
+                                  }
+                                  className={inputCls}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1 flex-1">
+                                <label
+                                  htmlFor={`price-${sp.id}`}
+                                  className="text-xs font-medium text-textSecondary"
+                                >
+                                  Prix unitaire (€)
+                                </label>
+                                <input
+                                  id={`price-${sp.id}`}
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  value={item.unit_price}
+                                  onChange={(e) =>
+                                    handleItemChange(sp.id, 'unit_price', parseFloat(e.target.value) || 0)
+                                  }
+                                  className={inputCls}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Récapitulatif des lignes sélectionnées */}
+                {itemsArray.length > 0 && (
+                  <p className="text-xs text-textMuted">
+                    {itemsArray.length} ligne{itemsArray.length > 1 ? 's' : ''} sélectionnée{itemsArray.length > 1 ? 's' : ''} &bull;{' '}
+                    Total estimé :{' '}
+                    <strong className="text-textMain">
+                      {itemsArray
+                        .reduce((acc, i) => acc + i.ordered_qty * i.unit_price, 0)
+                        .toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                    </strong>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Erreur */}
+            {apiError && (
+              <p role="alert" className="text-sm text-danger">{apiError}</p>
+            )}
+          </div>
+
+          {/* Pied */}
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2 flex-shrink-0">
+            <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+              Annuler
+            </Button>
+            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
+              Créer la commande
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modale : Modification (DRAFT uniquement — notes et expected_at)
+// ---------------------------------------------------------------------------
+
+function EditOrderModal({
+  order,
+  onClose,
+  onSuccess,
+}: {
+  order: PurchaseOrderRow | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [notes, setNotes]           = useState('');
+  const [expectedAt, setExpectedAt] = useState('');
+  const [apiError, setApiError]     = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const firstInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!order) return;
+    setNotes(order.notes ?? '');
+    // Convertir ISO en format YYYY-MM-DD pour l'input date
+    setExpectedAt(order.expected_at ? order.expected_at.slice(0, 10) : '');
+    setApiError(null);
+    setTimeout(() => firstInputRef.current?.focus(), 50);
+  }, [order]);
+
+  useEffect(() => {
+    if (!order) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [order, onClose]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!order) return;
+
+    if (!notes.trim() && !expectedAt) {
+      setApiError('Veuillez renseigner au moins la date attendue ou les notes.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setApiError(null);
+
+    const payload: { notes?: string; expected_at?: string } = {};
+    if (notes.trim()) payload.notes = notes.trim();
+    if (expectedAt)   payload.expected_at = new Date(expectedAt).toISOString();
+
+    try {
+      await apiClient.put(`/api/purchase-orders/${order.id}`, payload);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setApiError(extractApiError(err, 'Une erreur est survenue lors de la mise à jour.'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!order) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-order-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg">
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="edit-order-title" className="text-base font-medium text-textMain">
+            Modifier la commande{' '}
+            <span className="text-textMuted font-normal">{order.reference}</span>
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="px-6 py-5 flex flex-col gap-4">
+            <p className="text-xs text-textMuted bg-background border border-borderLight rounded px-3 py-2">
+              Seuls les champs <strong>date attendue</strong> et <strong>notes</strong> sont
+              modifiables sur une commande en brouillon.
+            </p>
+
+            {/* Date attendue */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="edit-expected-at" className="text-xs font-medium text-textSecondary">
+                Date attendue
+              </label>
+              <input
+                ref={firstInputRef}
+                id="edit-expected-at"
+                type="date"
+                value={expectedAt}
+                onChange={(e) => setExpectedAt(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+
+            {/* Notes */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="edit-notes" className="text-xs font-medium text-textSecondary">
+                Notes
+              </label>
+              <textarea
+                id="edit-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={4}
+                placeholder="Instructions de livraison, conditions particulières…"
+                className={inputCls + ' resize-none'}
+              />
+            </div>
+
+            {apiError && (
+              <p role="alert" className="text-sm text-danger">{apiError}</p>
+            )}
+          </div>
+
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+              Annuler
+            </Button>
+            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
+              Enregistrer
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modale : Confirmation d'envoi
+// ---------------------------------------------------------------------------
+
+function SendOrderModal({
+  order,
+  onClose,
+  onSuccess,
+}: {
+  order: PurchaseOrderRow | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [apiError, setApiError]         = useState<string | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!order) return;
+    setApiError(null);
+    setTimeout(() => confirmBtnRef.current?.focus(), 50);
+  }, [order]);
+
+  useEffect(() => {
+    if (!order) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [order, onClose]);
+
+  async function handleConfirm() {
+    if (!order) return;
+    setIsSubmitting(true);
+    setApiError(null);
+    try {
+      await apiClient.patch(`/api/purchase-orders/${order.id}/send`);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 422) {
+        setApiError(
+          'Cette commande ne peut pas être envoyée dans son état actuel. Veuillez rafraîchir la page.'
+        );
+      } else {
+        setApiError(extractApiError(err, 'Une erreur est survenue lors de l\'envoi.'));
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!order) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="send-order-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-sm mx-4 bg-surface border border-borderLight rounded shadow-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="send-order-title" className="text-base font-medium text-textMain">
+            Envoyer la commande
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <div className="px-6 py-5 flex flex-col gap-2">
+          <p className="text-sm text-textMuted">
+            Voulez-vous envoyer la commande{' '}
+            <strong className="text-textMain">{order.reference}</strong> au fournisseur{' '}
+            <strong className="text-textMain">{order.supplier.name}</strong> ?
+          </p>
+          <p className="text-sm text-textMuted">
+            Cette action est <strong>irréversible</strong>. La commande passera à l&apos;état
+            &quot;Envoyé&quot; et ne pourra plus être modifiée.
+          </p>
+          {apiError && (
+            <p role="alert" className="mt-1 text-sm text-danger">{apiError}</p>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button
+            ref={confirmBtnRef}
+            type="button"
+            variant="primary"
+            size="sm"
+            isLoading={isSubmitting}
+            onClick={handleConfirm}
+          >
+            Envoyer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modale : Confirmation d'annulation (SA uniquement)
+// ---------------------------------------------------------------------------
+
+function CancelOrderModal({
+  order,
+  onClose,
+  onSuccess,
+}: {
+  order: PurchaseOrderRow | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [apiError, setApiError]         = useState<string | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!order) return;
+    setApiError(null);
+    setTimeout(() => confirmBtnRef.current?.focus(), 50);
+  }, [order]);
+
+  useEffect(() => {
+    if (!order) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [order, onClose]);
+
+  async function handleConfirm() {
+    if (!order) return;
+    setIsSubmitting(true);
+    setApiError(null);
+    try {
+      await apiClient.patch(`/api/purchase-orders/${order.id}/cancel`);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 422) {
+        setApiError(
+          'Cette commande ne peut pas être annulée dans son état actuel (transition de statut invalide).'
+        );
+      } else {
+        setApiError(extractApiError(err, 'Une erreur est survenue lors de l\'annulation.'));
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!order) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cancel-order-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-sm mx-4 bg-surface border border-borderLight rounded shadow-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="cancel-order-title" className="text-base font-medium text-textMain">
+            Annuler la commande
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <div className="px-6 py-5 flex flex-col gap-2">
+          <p className="text-sm text-textMuted">
+            Voulez-vous annuler la commande{' '}
+            <strong className="text-textMain">{order.reference}</strong> ?
+          </p>
+          <p className="text-sm text-textMuted">
+            Cette action est <strong>irréversible</strong>.
+          </p>
+          {apiError && (
+            <p role="alert" className="mt-1 text-sm text-danger">{apiError}</p>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Retour
+          </Button>
+          <Button
+            ref={confirmBtnRef}
+            type="button"
+            variant="danger"
+            size="sm"
+            isLoading={isSubmitting}
+            onClick={handleConfirm}
+          >
+            Confirmer l&apos;annulation
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modale : Détail de commande (pleine largeur)
+// ---------------------------------------------------------------------------
+
+function OrderDetailModal({
+  order,
+  onClose,
+}: {
+  order: PurchaseOrderRow | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!order) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [order, onClose]);
+
+  if (!order) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="detail-order-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-3xl mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <h2 id="detail-order-title" className="text-base font-medium text-textMain">
+              {order.reference}
+            </h2>
+            <StatusBadge status={order.status} />
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Corps scrollable */}
+        <div className="px-6 py-5 flex flex-col gap-6 overflow-y-auto flex-1">
+
+          {/* Informations générales */}
+          <section aria-labelledby="detail-info-title">
+            <h3
+              id="detail-info-title"
+              className="text-xs font-semibold text-textMuted uppercase tracking-wide mb-3"
+            >
+              Informations générales
+            </h3>
+            <dl className="grid grid-cols-2 gap-x-8 gap-y-3">
+              <div>
+                <dt className="text-xs text-textMuted mb-0.5">Fournisseur</dt>
+                <dd className="text-sm font-medium text-textMain">{order.supplier.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-textMuted mb-0.5">Établissement de destination</dt>
+                <dd className="text-sm font-medium text-textMain">{order.destination_store.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-textMuted mb-0.5">Commandé par</dt>
+                <dd className="text-sm font-medium text-textMain">{order.ordered_by.username}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-textMuted mb-0.5">Date de création</dt>
+                <dd className="text-sm text-textMain">{formatDate(order.created_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-textMuted mb-0.5">Date attendue</dt>
+                <dd className="text-sm text-textMain">{formatDate(order.expected_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-textMuted mb-0.5">Date d&apos;envoi</dt>
+                <dd className="text-sm text-textMain">{formatDate(order.sent_at)}</dd>
+              </div>
+              {order.notes && (
+                <div className="col-span-2">
+                  <dt className="text-xs text-textMuted mb-0.5">Notes</dt>
+                  <dd className="text-sm text-textMain whitespace-pre-wrap">{order.notes}</dd>
+                </div>
+              )}
+            </dl>
+          </section>
+
+          {/* Lignes de commande */}
+          <section aria-labelledby="detail-items-title">
+            <h3
+              id="detail-items-title"
+              className="text-xs font-semibold text-textMuted uppercase tracking-wide mb-3"
+            >
+              Lignes de commande
+            </h3>
+            <div className="border border-borderLight rounded overflow-x-auto">
+              <table
+                className="w-full text-sm"
+                role="table"
+                aria-label="Lignes de la commande"
+              >
+                <thead>
+                  <tr className="bg-background border-b border-borderLight">
+                    {['Produit', 'SKU', 'Qté commandée', 'Unité cmd', 'Unités/cmd', 'Prix unitaire', 'Sous-total'].map((col) => (
+                      <th
+                        key={col}
+                        scope="col"
+                        className="px-4 py-2.5 text-left text-xs font-medium text-textMuted uppercase tracking-wide whitespace-nowrap"
+                      >
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.items.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-6 text-center text-sm text-textMuted">
+                        Aucune ligne de commande.
+                      </td>
+                    </tr>
+                  ) : (
+                    order.items.map((item) => {
+                      const subTotal = item.ordered_qty * parseFloat(item.unit_price);
+                      return (
+                        <tr key={item.id} className="border-b border-borderLight last:border-b-0">
+                          <td className="px-4 py-3 font-medium text-textMain whitespace-nowrap">
+                            {item.supplier_product.product.name}
+                          </td>
+                          <td className="px-4 py-3 text-textMuted whitespace-nowrap font-mono text-xs">
+                            {item.supplier_product.product.sku}
+                          </td>
+                          <td className="px-4 py-3 text-textMain tabular-nums">
+                            {item.ordered_qty}
+                          </td>
+                          <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                            {item.supplier_product.order_unit}
+                          </td>
+                          <td className="px-4 py-3 text-textMuted tabular-nums">
+                            {item.supplier_product.units_per_order}
+                          </td>
+                          <td className="px-4 py-3 text-textMain tabular-nums whitespace-nowrap">
+                            {parseFloat(item.unit_price).toLocaleString('fr-FR', {
+                              style: 'currency',
+                              currency: 'EUR',
+                            })}
+                          </td>
+                          <td className="px-4 py-3 font-medium text-textMain tabular-nums whitespace-nowrap">
+                            {subTotal.toLocaleString('fr-FR', {
+                              style: 'currency',
+                              currency: 'EUR',
+                            })}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Total */}
+            {order.items.length > 0 && (
+              <div className="flex justify-end mt-3 pr-1">
+                <p className="text-sm text-textMuted">
+                  Total commande :{' '}
+                  <strong className="text-textMain text-base">{calcTotal(order.items)}</strong>
+                </p>
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Pied */}
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end flex-shrink-0">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Fermer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Composant principal
+// ---------------------------------------------------------------------------
+
+export default function PurchaseOrdersPage() {
+  const { user: sessionUser, isLoading: sessionLoading } = useSession();
+
+  const isSA = !sessionLoading && sessionUser !== null && sessionUser.roleName === ROLE_SA;
+
+  // --- Données ---
+  const [orders, setOrders]     = useState<PurchaseOrderRow[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+  const [stores, setStores]       = useState<StoreOption[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // --- Filtres ---
+  const [filterStatus, setFilterStatus]     = useState<PurchaseOrderStatus | ''>('');
+  const [filterSupplier, setFilterSupplier] = useState<string>('');
+  const [filterStore, setFilterStore]       = useState<string>('');
+
+  // --- État des modales ---
+  const [modalCreate, setModalCreate]       = useState(false);
+  const [orderToEdit, setOrderToEdit]       = useState<PurchaseOrderRow | null>(null);
+  const [orderToSend, setOrderToSend]       = useState<PurchaseOrderRow | null>(null);
+  const [orderToCancel, setOrderToCancel]   = useState<PurchaseOrderRow | null>(null);
+  const [orderToView, setOrderToView]       = useState<PurchaseOrderRow | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Chargement initial
+  // ---------------------------------------------------------------------------
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const [ordersRes, suppliersRes, storesRes] = await Promise.all([
+        apiClient.get<{ success: boolean; orders: PurchaseOrderRow[] }>(
+          '/api/purchase-orders'
+        ),
+        apiClient.get<{ success: boolean; suppliers: SupplierOption[] }>(
+          '/api/suppliers?isActive=true'
+        ),
+        apiClient.get<{ success: boolean; stores: StoreOption[] }>('/api/stores'),
+      ]);
+      setOrders(ordersRes.data.orders ?? []);
+      setSuppliers(suppliersRes.data.suppliers ?? []);
+      setStores(storesRes.data.stores ?? []);
+    } catch (err) {
+      setFetchError(extractApiError(err, 'Impossible de charger les commandes fournisseurs.'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sessionLoading) return;
+    if (!sessionUser) return;
+    loadData();
+  }, [loadData, sessionLoading, sessionUser]);
+
+  // ---------------------------------------------------------------------------
+  // Filtrage client-side
+  // ---------------------------------------------------------------------------
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      if (filterStatus && o.status !== filterStatus) return false;
+      if (filterSupplier && o.supplier_id !== filterSupplier) return false;
+      if (filterStore && o.destination_store_id !== filterStore) return false;
+      return true;
+    });
+  }, [orders, filterStatus, filterSupplier, filterStore]);
+
+  const hasActiveFilters = filterStatus !== '' || filterSupplier !== '' || filterStore !== '';
+
+  function handleReset() {
+    setFilterStatus('');
+    setFilterSupplier('');
+    setFilterStore('');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Garde de rendu — pendant le chargement de session
+  // ---------------------------------------------------------------------------
+
+  if (sessionLoading || !sessionUser) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="h-8 w-72 bg-borderLight rounded animate-pulse" aria-hidden="true" />
+        <div className="bg-surface border border-borderLight rounded overflow-x-auto">
+          <table className="w-full text-sm" aria-hidden="true">
+            <tbody>
+              <SkeletonRows cols={8} />
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendu principal
+  // ---------------------------------------------------------------------------
+
+  return (
+    <div className="flex flex-col gap-6">
+
+      {/* En-tête */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-textMain">Commandes fournisseurs</h1>
+        <Button variant="primary" size="md" onClick={() => setModalCreate(true)}>
+          Créer une commande
+        </Button>
+      </div>
+
+      {/* Filtres */}
+      <div className="flex flex-wrap items-end gap-3 p-4 bg-surface border border-borderLight rounded">
+
+        {/* Filtre statut */}
+        <div className="flex flex-col gap-1 min-w-[160px]">
+          <label htmlFor="filter-status" className="text-xs font-medium text-textSecondary">
+            Statut
+          </label>
+          <select
+            id="filter-status"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as PurchaseOrderStatus | '')}
+            className={inputCls}
+          >
+            <option value="">Tous les statuts</option>
+            <option value="DRAFT">Brouillon</option>
+            <option value="SENT">Envoyé</option>
+            <option value="PARTIALLY_RECEIVED">Partiellement reçu</option>
+            <option value="RECEIVED">Reçu</option>
+            <option value="CANCELLED">Annulé</option>
+          </select>
+        </div>
+
+        {/* Filtre fournisseur */}
+        <div className="flex flex-col gap-1 min-w-[180px]">
+          <label htmlFor="filter-supplier" className="text-xs font-medium text-textSecondary">
+            Fournisseur
+          </label>
+          <select
+            id="filter-supplier"
+            value={filterSupplier}
+            onChange={(e) => setFilterSupplier(e.target.value)}
+            className={inputCls}
+          >
+            <option value="">Tous les fournisseurs</option>
+            {suppliers.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Filtre établissement */}
+        <div className="flex flex-col gap-1 min-w-[180px]">
+          <label htmlFor="filter-store" className="text-xs font-medium text-textSecondary">
+            Établissement de destination
+          </label>
+          <select
+            id="filter-store"
+            value={filterStore}
+            onChange={(e) => setFilterStore(e.target.value)}
+            className={inputCls}
+          >
+            <option value="">Tous les établissements</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Bouton réinitialiser */}
+        {hasActiveFilters && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={handleReset}
+            className="flex items-center gap-1.5 self-end"
+          >
+            <IconReset />
+            Réinitialiser
+          </Button>
+        )}
+      </div>
+
+      {/* Compteur */}
+      {!isLoading && !fetchError && (
+        <p className="text-xs text-textMuted -mt-3">
+          {filteredOrders.length === 0
+            ? 'Aucune commande ne correspond aux filtres.'
+            : filteredOrders.length === orders.length
+              ? `${orders.length} commande${orders.length > 1 ? 's' : ''}`
+              : `${filteredOrders.length} commande${filteredOrders.length > 1 ? 's' : ''} affichée${filteredOrders.length > 1 ? 's' : ''} sur ${orders.length}`}
+        </p>
+      )}
+
+      {/* Erreur de chargement */}
+      {fetchError && (
+        <p role="alert" className="text-sm text-danger">{fetchError}</p>
+      )}
+
+      {/* Tableau */}
+      <div className="bg-surface border border-borderLight rounded overflow-x-auto">
+        <table
+          className="w-full text-sm"
+          role="table"
+          aria-label="Liste des commandes fournisseurs"
+        >
+          <thead>
+            <tr className="bg-background border-b border-borderLight">
+              {[
+                'Référence',
+                'Fournisseur',
+                'Destination',
+                'Commandé par',
+                'Statut',
+                'Date attendue',
+                'Nb lignes',
+                'Actions',
+              ].map((col) => (
+                <th
+                  key={col}
+                  scope="col"
+                  className="px-4 py-3 text-left text-xs font-medium text-textMuted uppercase tracking-wide whitespace-nowrap"
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody>
+            {isLoading ? (
+              <SkeletonRows cols={8} />
+            ) : filteredOrders.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-textMuted">
+                  {orders.length === 0
+                    ? 'Aucune commande trouvée.'
+                    : 'Aucune commande ne correspond aux filtres.'}
+                </td>
+              </tr>
+            ) : (
+              filteredOrders.map((order) => (
+                <tr
+                  key={order.id}
+                  className="border-b border-borderLight hover:bg-background/50 transition-colors"
+                >
+                  {/* Référence */}
+                  <td className="px-4 py-3 font-mono text-xs font-medium text-textMain whitespace-nowrap">
+                    {order.reference}
+                  </td>
+
+                  {/* Fournisseur */}
+                  <td className="px-4 py-3 text-textMain whitespace-nowrap">
+                    {order.supplier.name}
+                  </td>
+
+                  {/* Destination */}
+                  <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                    {order.destination_store.name}
+                  </td>
+
+                  {/* Commandé par */}
+                  <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                    {order.ordered_by.username}
+                  </td>
+
+                  {/* Statut */}
+                  <td className="px-4 py-3">
+                    <StatusBadge status={order.status} />
+                  </td>
+
+                  {/* Date attendue */}
+                  <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                    {formatDate(order.expected_at)}
+                  </td>
+
+                  {/* Nb lignes */}
+                  <td className="px-4 py-3 text-textMuted tabular-nums text-center">
+                    {order.items.length}
+                  </td>
+
+                  {/* Actions */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      {/* DRAFT : Modifier + Envoyer + Annuler(SA) */}
+                      {order.status === 'DRAFT' && (
+                        <>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setOrderToEdit(order)}
+                            aria-label={`Modifier la commande ${order.reference}`}
+                          >
+                            Modifier
+                          </Button>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => setOrderToSend(order)}
+                            aria-label={`Envoyer la commande ${order.reference}`}
+                          >
+                            Envoyer
+                          </Button>
+                          {isSA && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => setOrderToCancel(order)}
+                              aria-label={`Annuler la commande ${order.reference}`}
+                            >
+                              Annuler
+                            </Button>
+                          )}
+                        </>
+                      )}
+
+                      {/* SENT : Voir + Annuler(SA) */}
+                      {order.status === 'SENT' && (
+                        <>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setOrderToView(order)}
+                            aria-label={`Voir la commande ${order.reference}`}
+                          >
+                            Voir
+                          </Button>
+                          {isSA && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => setOrderToCancel(order)}
+                              aria-label={`Annuler la commande ${order.reference}`}
+                            >
+                              Annuler
+                            </Button>
+                          )}
+                        </>
+                      )}
+
+                      {/* PARTIALLY_RECEIVED / RECEIVED / CANCELLED : Voir uniquement */}
+                      {(order.status === 'PARTIALLY_RECEIVED' ||
+                        order.status === 'RECEIVED' ||
+                        order.status === 'CANCELLED') && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setOrderToView(order)}
+                          aria-label={`Voir la commande ${order.reference}`}
+                        >
+                          Voir
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modales */}
+      <CreateOrderModal
+        isOpen={modalCreate}
+        suppliers={suppliers}
+        stores={stores}
+        onClose={() => setModalCreate(false)}
+        onSuccess={loadData}
+      />
+
+      <EditOrderModal
+        order={orderToEdit}
+        onClose={() => setOrderToEdit(null)}
+        onSuccess={loadData}
+      />
+
+      <SendOrderModal
+        order={orderToSend}
+        onClose={() => setOrderToSend(null)}
+        onSuccess={loadData}
+      />
+
+      <CancelOrderModal
+        order={orderToCancel}
+        onClose={() => setOrderToCancel(null)}
+        onSuccess={loadData}
+      />
+
+      <OrderDetailModal
+        order={orderToView}
+        onClose={() => setOrderToView(null)}
+      />
+    </div>
+  );
+}

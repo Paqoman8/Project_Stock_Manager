@@ -134,6 +134,61 @@ function IconCatalogue({ className }: { className?: string }) {
   );
 }
 
+// Icône "Catalogue fournisseur" : liste à puces (rectangle + lignes horizontales).
+function IconSupplierProducts({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Contour du document */}
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      {/* Ligne 1 */}
+      <line x1="7" y1="8" x2="17" y2="8" />
+      {/* Ligne 2 */}
+      <line x1="7" y1="12" x2="17" y2="12" />
+      {/* Ligne 3 (courte) */}
+      <line x1="7" y1="16" x2="13" y2="16" />
+    </svg>
+  );
+}
+
+// Icône "Commandes fournisseurs" : presse-papier avec coche de validation.
+function IconPurchaseOrders({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* Corps du document / presse-papier */}
+      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      {/* Coche de validation */}
+      <polyline points="9 12 11 14 15 10" />
+    </svg>
+  );
+}
+
 // Icône "Journal d'audit" : presse-papier avec lignes de texte.
 function IconAudit({ className }: { className?: string }) {
   return (
@@ -244,6 +299,12 @@ export function Sidebar() {
                 icon={<IconCatalogue className="flex-shrink-0" />}
                 currentPath={pathname}
               />
+              <NavItem
+                href="/dashboard/purchase-orders"
+                label="Commandes fournisseurs"
+                icon={<IconPurchaseOrders className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
             </>
           )}
           {estSA && (
@@ -258,6 +319,12 @@ export function Sidebar() {
                 href="/dashboard/suppliers"
                 label="Fournisseurs"
                 icon={<IconSuppliers className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
+              <NavItem
+                href="/dashboard/supplier-products"
+                label="Catalogue fournisseur"
+                icon={<IconSupplierProducts className="flex-shrink-0" />}
                 currentPath={pathname}
               />
             </>

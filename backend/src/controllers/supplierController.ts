@@ -42,12 +42,13 @@ function formatZodErrors(err: ZodError): string[] {
  * Utilisé tel quel pour la création ; rendu entièrement optionnel pour la mise à jour.
  */
 const supplierSchema = z.object({
-  name:          z.string().min(1, 'Le nom est obligatoire'),
-  contact_name:  z.string().optional(),
-  email:         z.string().email('Email invalide').optional(),
-  phone:         z.string().max(20, 'Le téléphone ne peut pas dépasser 20 caractères').optional(),
-  address:       z.string().optional(),
-  payment_terms: z.enum(['IMMEDIATE', 'NET30', 'NET60', 'NET90']).optional(),
+  name:             z.string().min(1, 'Le nom est obligatoire'),
+  contact_name:     z.string().optional(),
+  email:            z.string().email('Email invalide').optional(),
+  phone:            z.string().max(20, 'Le téléphone ne peut pas dépasser 20 caractères').optional(),
+  address:          z.string().optional(),
+  payment_terms:    z.enum(['IMMEDIATE', 'NET30', 'NET60', 'NET90']).optional(),
+  is_international: z.boolean().optional(),
 });
 
 /** Type inféré depuis le schéma Zod — utilisé pour créer un fournisseur. */
