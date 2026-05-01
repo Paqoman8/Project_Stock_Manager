@@ -195,7 +195,7 @@ function calcTotal(items: PurchaseOrderItemRow[]): string {
     (acc, item) => acc + item.ordered_qty * parseFloat(item.unit_price),
     0
   );
-  return total.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  return total.toLocaleString('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0 });
 }
 
 // Extrait le message d'erreur API de façon cohérente
@@ -586,7 +586,6 @@ function CreateOrderModal({
                                 <input
                                   id={`qty-${sp.id}`}
                                   type="number"
-                                  min={sp.min_order_qty}
                                   step={1}
                                   value={item.ordered_qty}
                                   onChange={(e) =>
@@ -600,12 +599,11 @@ function CreateOrderModal({
                                   htmlFor={`price-${sp.id}`}
                                   className="text-xs font-medium text-textSecondary"
                                 >
-                                  Prix unitaire (€)
+                                  Prix unitaire (XOF)
                                 </label>
                                 <input
                                   id={`price-${sp.id}`}
                                   type="number"
-                                  min={0}
                                   step={0.01}
                                   value={item.unit_price}
                                   onChange={(e) =>
@@ -630,7 +628,7 @@ function CreateOrderModal({
                     <strong className="text-textMain">
                       {itemsArray
                         .reduce((acc, i) => acc + i.ordered_qty * i.unit_price, 0)
-                        .toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                        .toLocaleString('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0 })}
                     </strong>
                   </p>
                 )}
@@ -659,33 +657,89 @@ function CreateOrderModal({
 }
 
 // ---------------------------------------------------------------------------
-// Modale : Modification (DRAFT uniquement — notes et expected_at)
+// Modale : Modification (DRAFT uniquement — tous les champs sauf fournisseur)
 // ---------------------------------------------------------------------------
 
 function EditOrderModal({
   order,
+  stores,
   onClose,
   onSuccess,
 }: {
   order: PurchaseOrderRow | null;
+  stores: StoreOption[];
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [notes, setNotes]           = useState('');
-  const [expectedAt, setExpectedAt] = useState('');
-  const [apiError, setApiError]     = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [notes, setNotes]                                   = useState('');
+  const [expectedAt, setExpectedAt]                         = useState('');
+  const [destinationStoreId, setDestinationStoreId]         = useState('');
+  const [supplierProducts, setSupplierProducts]             = useState<SupplierProductOption[]>([]);
+  const [loadingProducts, setLoadingProducts]               = useState(false);
+  const [selectedItems, setSelectedItems]                   = useState<Map<string, CreateOrderItem>>(new Map());
+  const [apiError, setApiError]                             = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting]                     = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
+  // Initialiser l'état depuis la commande à l'ouverture
   useEffect(() => {
     if (!order) return;
     setNotes(order.notes ?? '');
-    // Convertir ISO en format YYYY-MM-DD pour l'input date
     setExpectedAt(order.expected_at ? order.expected_at.slice(0, 10) : '');
+    setDestinationStoreId(order.destination_store_id);
     setApiError(null);
+
+    // Pré-remplir les lignes depuis les items existants
+    const initialItems = new Map<string, CreateOrderItem>();
+    for (const item of order.items) {
+      initialItems.set(item.supplier_product_id, {
+        supplier_product_id: item.supplier_product_id,
+        ordered_qty:         item.ordered_qty,
+        unit_price:          parseFloat(item.unit_price),
+        min_order_qty:       1, // Mis à jour après chargement du catalogue fournisseur
+        product_name:        item.supplier_product.product.name,
+        product_sku:         item.supplier_product.product.sku,
+        order_unit:          item.supplier_product.order_unit,
+        units_per_order:     item.supplier_product.units_per_order,
+      });
+    }
+    setSelectedItems(initialItems);
+
     setTimeout(() => firstInputRef.current?.focus(), 50);
   }, [order]);
 
+  // Charger les produits du fournisseur et mettre à jour min_order_qty
+  useEffect(() => {
+    if (!order?.supplier_id) return;
+    let cancelled = false;
+    setLoadingProducts(true);
+    apiClient
+      .get<{ success: boolean; supplierProducts: SupplierProductOption[] }>(
+        `/api/supplier-products?isActive=true&supplier_id=${order.supplier_id}`
+      )
+      .then((res) => {
+        if (!cancelled) {
+          const sps = res.data.supplierProducts ?? [];
+          setSupplierProducts(sps);
+          // Mettre à jour min_order_qty dans les items déjà sélectionnés
+          setSelectedItems((prev) => {
+            const next = new Map(prev);
+            for (const sp of sps) {
+              const existing = next.get(sp.id);
+              if (existing) {
+                next.set(sp.id, { ...existing, min_order_qty: sp.min_order_qty });
+              }
+            }
+            return next;
+          });
+        }
+      })
+      .catch(() => { if (!cancelled) setSupplierProducts([]); })
+      .finally(() => { if (!cancelled) setLoadingProducts(false); });
+    return () => { cancelled = true; };
+  }, [order?.supplier_id]);
+
+  // Fermeture par Escape
   useEffect(() => {
     if (!order) return;
     function handleKey(e: KeyboardEvent) {
@@ -695,19 +749,83 @@ function EditOrderModal({
     return () => document.removeEventListener('keydown', handleKey);
   }, [order, onClose]);
 
+  function handleToggleProduct(sp: SupplierProductOption, checked: boolean) {
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      if (checked) {
+        next.set(sp.id, {
+          supplier_product_id: sp.id,
+          ordered_qty:         sp.min_order_qty,
+          unit_price:          parseFloat(sp.purchase_price),
+          min_order_qty:       sp.min_order_qty,
+          product_name:        sp.product.name,
+          product_sku:         sp.product.sku,
+          order_unit:          sp.order_unit,
+          units_per_order:     sp.units_per_order,
+        });
+      } else {
+        next.delete(sp.id);
+      }
+      return next;
+    });
+  }
+
+  function handleItemChange(
+    spId: string,
+    field: 'ordered_qty' | 'unit_price',
+    value: number
+  ) {
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      const item = next.get(spId);
+      if (item) next.set(spId, { ...item, [field]: value });
+      return next;
+    });
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!order) return;
 
-    if (!notes.trim() && !expectedAt) {
-      setApiError('Veuillez renseigner au moins la date attendue ou les notes.');
+    // Validation
+    if (!destinationStoreId) {
+      setApiError('Veuillez sélectionner un établissement de destination.');
       return;
+    }
+    if (selectedItems.size === 0) {
+      setApiError('La commande doit contenir au moins une ligne.');
+      return;
+    }
+    for (const item of selectedItems.values()) {
+      if (item.ordered_qty <= 0) {
+        setApiError(`La quantité de "${item.product_name}" doit être positive.`);
+        return;
+      }
+      if (item.unit_price <= 0) {
+        setApiError(`Le prix unitaire de "${item.product_name}" doit être positif.`);
+        return;
+      }
     }
 
     setIsSubmitting(true);
     setApiError(null);
 
-    const payload: { notes?: string; expected_at?: string } = {};
+    const payload: {
+      destination_store_id?: string;
+      notes?: string;
+      expected_at?: string;
+      items: Array<{ supplier_product_id: string; ordered_qty: number; unit_price: number }>;
+    } = {
+      items: Array.from(selectedItems.values()).map((item) => ({
+        supplier_product_id: item.supplier_product_id,
+        ordered_qty:         item.ordered_qty,
+        unit_price:          item.unit_price,
+      })),
+    };
+
+    if (destinationStoreId !== order.destination_store_id) {
+      payload.destination_store_id = destinationStoreId;
+    }
     if (notes.trim()) payload.notes = notes.trim();
     if (expectedAt)   payload.expected_at = new Date(expectedAt).toISOString();
 
@@ -724,6 +842,8 @@ function EditOrderModal({
 
   if (!order) return null;
 
+  const itemsArray = Array.from(selectedItems.values());
+
   return (
     <div
       role="dialog"
@@ -731,10 +851,14 @@ function EditOrderModal({
       aria-labelledby="edit-order-title"
       className="fixed inset-0 z-50 flex items-center justify-center"
     >
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg">
+      <div
+        className="absolute inset-0 bg-black/40"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 w-full max-w-2xl mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
         {/* En-tête */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
           <h2 id="edit-order-title" className="text-base font-medium text-textMain">
             Modifier la commande{' '}
             <span className="text-textMuted font-normal">{order.reference}</span>
@@ -748,49 +872,195 @@ function EditOrderModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="px-6 py-5 flex flex-col gap-4">
-            <p className="text-xs text-textMuted bg-background border border-borderLight rounded px-3 py-2">
-              Seuls les champs <strong>date attendue</strong> et <strong>notes</strong> sont
-              modifiables sur une commande en brouillon.
-            </p>
+        {/* Corps */}
+        <form onSubmit={handleSubmit} noValidate className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 flex flex-col gap-5 overflow-y-auto flex-1">
 
-            {/* Date attendue */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="edit-expected-at" className="text-xs font-medium text-textSecondary">
-                Date attendue
-              </label>
-              <input
-                ref={firstInputRef}
-                id="edit-expected-at"
-                type="date"
-                value={expectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
-                className={inputCls}
-              />
+            {/* --- Section 1 : Informations générales --- */}
+            <div className="flex flex-col gap-4">
+              <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+                Informations générales
+              </h3>
+
+              {/* Fournisseur (lecture seule) */}
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-textSecondary">Fournisseur</span>
+                <div className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textMuted">
+                  {order.supplier.name}
+                </div>
+              </div>
+
+              {/* Établissement de destination */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="edit-order-store" className="text-xs font-medium text-textSecondary">
+                  Établissement de destination <span className="text-danger" aria-hidden="true">*</span>
+                </label>
+                <select
+                  id="edit-order-store"
+                  value={destinationStoreId}
+                  onChange={(e) => setDestinationStoreId(e.target.value)}
+                  className={inputCls}
+                  aria-required="true"
+                >
+                  <option value="">Sélectionner un établissement…</option>
+                  {stores.filter((s) => s.status === 'ACTIVE').map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date attendue */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="edit-expected-at" className="text-xs font-medium text-textSecondary">
+                  Date attendue
+                </label>
+                <input
+                  ref={firstInputRef}
+                  id="edit-expected-at"
+                  type="date"
+                  value={expectedAt}
+                  onChange={(e) => setExpectedAt(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="flex flex-col gap-1">
+                <label htmlFor="edit-notes" className="text-xs font-medium text-textSecondary">
+                  Notes
+                </label>
+                <textarea
+                  id="edit-notes"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Instructions de livraison, conditions particulières…"
+                  className={inputCls + ' resize-none'}
+                />
+              </div>
             </div>
 
-            {/* Notes */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="edit-notes" className="text-xs font-medium text-textSecondary">
-                Notes
-              </label>
-              <textarea
-                id="edit-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={4}
-                placeholder="Instructions de livraison, conditions particulières…"
-                className={inputCls + ' resize-none'}
-              />
+            {/* --- Section 2 : Lignes de commande --- */}
+            <div className="flex flex-col gap-3">
+              <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+                Lignes de commande
+              </h3>
+
+              {loadingProducts ? (
+                <p className="text-sm text-textMuted animate-pulse">
+                  Chargement des produits…
+                </p>
+              ) : supplierProducts.length === 0 ? (
+                <p className="text-sm text-textMuted">
+                  Aucun produit actif trouvé pour ce fournisseur.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {supplierProducts.map((sp) => {
+                    const isChecked = selectedItems.has(sp.id);
+                    const item      = selectedItems.get(sp.id);
+                    return (
+                      <div
+                        key={sp.id}
+                        className={[
+                          'border rounded p-3 flex flex-col gap-3 transition-colors',
+                          isChecked
+                            ? 'border-primary bg-primary/5'
+                            : 'border-borderLight bg-background',
+                        ].join(' ')}
+                      >
+                        {/* Ligne principale : checkbox + nom produit */}
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => handleToggleProduct(sp, e.target.checked)}
+                            className="mt-0.5 accent-primary"
+                            aria-label={`Ajouter ${sp.product.name} à la commande`}
+                          />
+                          <div className="flex flex-col gap-0.5 flex-1">
+                            <span className="text-sm font-medium text-textMain">
+                              {sp.product.name}
+                            </span>
+                            <span className="text-xs text-textMuted">
+                              SKU: {sp.product.sku} &bull; Unité cmd: {sp.order_unit} &bull;{' '}
+                              {sp.units_per_order} {sp.product.unit}/commande &bull;{' '}
+                              Min. {sp.min_order_qty}
+                            </span>
+                          </div>
+                        </label>
+
+                        {/* Champs qté + prix — visibles si coché */}
+                        {isChecked && item && (
+                          <div className="flex items-end gap-3 pl-7">
+                            <div className="flex flex-col gap-1 flex-1">
+                              <label
+                                htmlFor={`edit-qty-${sp.id}`}
+                                className="text-xs font-medium text-textSecondary"
+                              >
+                                Quantité <span className="text-textMuted">(min. {sp.min_order_qty})</span>
+                              </label>
+                              <input
+                                id={`edit-qty-${sp.id}`}
+                                type="number"
+                                step={1}
+                                value={item.ordered_qty}
+                                onChange={(e) =>
+                                  handleItemChange(sp.id, 'ordered_qty', parseInt(e.target.value, 10) || sp.min_order_qty)
+                                }
+                                className={inputCls}
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1 flex-1">
+                              <label
+                                htmlFor={`edit-price-${sp.id}`}
+                                className="text-xs font-medium text-textSecondary"
+                              >
+                                Prix unitaire (XOF)
+                              </label>
+                              <input
+                                id={`edit-price-${sp.id}`}
+                                type="number"
+                                step={0.01}
+                                value={item.unit_price}
+                                onChange={(e) =>
+                                  handleItemChange(sp.id, 'unit_price', parseFloat(e.target.value) || 0)
+                                }
+                                className={inputCls}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Récapitulatif des lignes sélectionnées */}
+              {itemsArray.length > 0 && (
+                <p className="text-xs text-textMuted">
+                  {itemsArray.length} ligne{itemsArray.length > 1 ? 's' : ''} sélectionnée{itemsArray.length > 1 ? 's' : ''} &bull;{' '}
+                  Total estimé :{' '}
+                  <strong className="text-textMain">
+                    {itemsArray
+                      .reduce((acc, i) => acc + i.ordered_qty * i.unit_price, 0)
+                      .toLocaleString('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0 })}
+                  </strong>
+                </p>
+              )}
             </div>
 
+            {/* Erreur */}
             {apiError && (
               <p role="alert" className="text-sm text-danger">{apiError}</p>
             )}
           </div>
 
-          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+          {/* Pied */}
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2 flex-shrink-0">
             <Button type="button" variant="secondary" size="sm" onClick={onClose}>
               Annuler
             </Button>
@@ -1173,13 +1443,15 @@ function OrderDetailModal({
                           <td className="px-4 py-3 text-textMain tabular-nums whitespace-nowrap">
                             {parseFloat(item.unit_price).toLocaleString('fr-FR', {
                               style: 'currency',
-                              currency: 'EUR',
+                              currency: 'XOF',
+                              minimumFractionDigits: 0,
                             })}
                           </td>
                           <td className="px-4 py-3 font-medium text-textMain tabular-nums whitespace-nowrap">
                             {subTotal.toLocaleString('fr-FR', {
                               style: 'currency',
-                              currency: 'EUR',
+                              currency: 'XOF',
+                              minimumFractionDigits: 0,
                             })}
                           </td>
                         </tr>
@@ -1593,6 +1865,7 @@ export default function PurchaseOrdersPage() {
 
       <EditOrderModal
         order={orderToEdit}
+        stores={stores}
         onClose={() => setOrderToEdit(null)}
         onSuccess={loadData}
       />

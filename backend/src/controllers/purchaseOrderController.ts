@@ -64,9 +64,20 @@ const createPurchaseOrderSchema = z.object({
 /** Schéma de validation pour la mise à jour partielle d'une commande DRAFT. */
 const updatePurchaseOrderSchema = z.object({
   /** Notes libres à modifier. */
-  notes:       z.string().optional(),
+  notes:                z.string().optional(),
   /** Date de livraison prévue à modifier — ISO 8601. */
-  expected_at: z.string().datetime({ message: 'expected_at doit être une date ISO 8601 valide' }).optional(),
+  expected_at:          z.string().datetime({ message: 'expected_at doit être une date ISO 8601 valide' }).optional(),
+  /** UUID du nouveau magasin de destination. */
+  destination_store_id: z.string().uuid('destination_store_id doit être un UUID valide').optional(),
+  /** Remplacement complet des lignes de la commande — au moins une ligne si fourni. */
+  items: z.array(z.object({
+    /** UUID du supplier_product (couple fournisseur-produit). */
+    supplier_product_id: z.string().uuid('supplier_product_id doit être un UUID valide'),
+    /** Quantité commandée — entier strictement positif. */
+    ordered_qty:         z.number().int().positive('ordered_qty doit être un entier positif'),
+    /** Prix unitaire au moment de la commande — nombre strictement positif. */
+    unit_price:          z.number().positive('unit_price doit être un nombre positif'),
+  })).min(1, 'La commande doit contenir au moins une ligne.').optional(),
 });
 
 /** Types inférés depuis les schémas Zod. */
@@ -219,12 +230,14 @@ export async function createPurchaseOrder(req: AuthenticatedRequest, res: Respon
  * PUT /api/purchase-orders/:id
  *
  * Met à jour les champs modifiables d'une commande DRAFT.
+ * Le supplier_id est immuable et ne peut pas être modifié.
  *
  * Params  : id — UUID de la commande
- * Body    : { notes?, expected_at? }
+ * Body    : { notes?, expected_at?, destination_store_id?, items? }
+ *   - items : si fourni, remplace l'intégralité des lignes existantes (min 1 ligne).
  * Réponse 200 : { success: true, message, order: PurchaseOrderRow }
  * Réponse 400 : { success: false, message, errors: string[] }
- * Réponse 404 : { success: false, message } si introuvable
+ * Réponse 404 : { success: false, message } si commande, magasin ou produit introuvable
  * Réponse 422 : { success: false, message } si statut invalide
  */
 export async function updatePurchaseOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -282,6 +295,17 @@ export async function updatePurchaseOrder(req: AuthenticatedRequest, res: Respon
       res.status(422).json({
         success: false,
         message: 'Seule une commande en statut DRAFT peut être modifiée.',
+      });
+      return;
+    }
+    if (error instanceof Error && error.message === 'STORE_NOT_FOUND') {
+      res.status(404).json({ success: false, message: 'Magasin de destination introuvable.' });
+      return;
+    }
+    if (error instanceof Error && error.message === 'SUPPLIER_PRODUCT_NOT_FOUND') {
+      res.status(404).json({
+        success: false,
+        message: 'Un ou plusieurs produits fournisseur sont introuvables ou n\'appartiennent pas à ce fournisseur.',
       });
       return;
     }

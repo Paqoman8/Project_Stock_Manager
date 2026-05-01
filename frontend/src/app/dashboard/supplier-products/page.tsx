@@ -231,6 +231,10 @@ function SupplierProductFormModal({
   const firstSelectRef = useRef<HTMLSelectElement>(null);
   const firstInputRef  = useRef<HTMLInputElement>(null);
 
+  const [productSearch, setProductSearch]             = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const productComboRef = useRef<HTMLDivElement>(null);
+
   // Remplir le formulaire en édition
   useEffect(() => {
     if (!isOpen) return;
@@ -247,6 +251,8 @@ function SupplierProductFormModal({
       });
     } else {
       setForm(emptyForm);
+      setProductSearch('');
+      setShowProductDropdown(false);
     }
     setErrors({});
     // Focus initial — création sur le select fournisseur, édition sur le premier input modifiable
@@ -269,6 +275,17 @@ function SupplierProductFormModal({
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
+
+  // Close product dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (productComboRef.current && !productComboRef.current.contains(e.target as Node)) {
+        setShowProductDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   function validate(): boolean {
     const next: FormErrors = {};
@@ -342,6 +359,33 @@ function SupplierProductFormModal({
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  const filteredProductsForCombo = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return products.slice(0, 10);
+    return products.filter((p) =>
+      p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
+    ).slice(0, 10);
+  }, [products, productSearch]);
+
+  function handleProductSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setProductSearch(e.target.value);
+    setForm((f) => ({ ...f, product_id: '' }));
+    setShowProductDropdown(true);
+  }
+
+  function handleSelectProduct(p: ProductOption) {
+    setForm((f) => ({ ...f, product_id: p.id }));
+    setProductSearch(`${p.name} (${p.sku})`);
+    setShowProductDropdown(false);
+    if (errors.product_id) setErrors((prev) => ({ ...prev, product_id: undefined }));
+  }
+
+  function handleClearProduct() {
+    setForm((f) => ({ ...f, product_id: '' }));
+    setProductSearch('');
+    setShowProductDropdown(false);
   }
 
   if (!isOpen) return null;
@@ -420,7 +464,7 @@ function SupplierProductFormModal({
 
             {/* Produit — désactivé en édition */}
             <div className="flex flex-col gap-1">
-              <label htmlFor="sp-product" className="text-xs font-medium text-textSecondary">
+              <label htmlFor="sp-product-search" className="text-xs font-medium text-textSecondary">
                 Produit{!isEdit && <span className="text-danger ml-0.5" aria-hidden="true">*</span>}
               </label>
               {isEdit ? (
@@ -430,22 +474,81 @@ function SupplierProductFormModal({
                 </div>
               ) : (
                 <>
-                  <select
-                    id="sp-product"
-                    value={form.product_id}
-                    onChange={(e) => {
-                      setForm((f) => ({ ...f, product_id: e.target.value }));
-                      if (errors.product_id) setErrors((p) => ({ ...p, product_id: undefined }));
-                    }}
-                    className={inputCls + (errors.product_id ? ' border-danger' : '')}
-                    aria-required="true"
-                    aria-describedby={errors.product_id ? 'sp-product-err' : undefined}
-                  >
-                    <option value="">— Sélectionner un produit —</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} — {p.sku}</option>
-                    ))}
-                  </select>
+                  <div className="relative" ref={productComboRef}>
+                    <input
+                      id="sp-product-search"
+                      type="text"
+                      autoComplete="off"
+                      value={productSearch}
+                      onFocus={() => setShowProductDropdown(true)}
+                      onChange={handleProductSearchChange}
+                      placeholder="Rechercher un produit par nom ou SKU…"
+                      className={inputCls + (errors.product_id ? ' border-danger' : '') + ' pr-8'}
+                      aria-required="true"
+                      aria-autocomplete="list"
+                      aria-expanded={showProductDropdown}
+                      aria-controls={showProductDropdown ? 'sp-product-listbox' : undefined}
+                      aria-describedby={errors.product_id ? 'sp-product-err' : undefined}
+                    />
+                    {/* Bouton effacer */}
+                    {(form.product_id || productSearch) && (
+                      <button
+                        type="button"
+                        onClick={handleClearProduct}
+                        aria-label="Effacer la sélection"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-textMuted hover:text-textMain transition-colors"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                    {/* Dropdown */}
+                    {showProductDropdown && (
+                      <ul
+                        id="sp-product-listbox"
+                        role="listbox"
+                        aria-label="Résultats de recherche produit"
+                        className="absolute z-20 w-full mt-1 bg-surface border border-borderLight rounded shadow-lg max-h-52 overflow-y-auto"
+                      >
+                        {filteredProductsForCombo.length === 0 ? (
+                          <li className="px-3 py-3 text-sm text-textMuted">
+                            Aucun produit trouvé{productSearch ? ` pour "${productSearch}"` : ''}.
+                          </li>
+                        ) : (
+                          filteredProductsForCombo.map((p) => (
+                            <li
+                              key={p.id}
+                              role="option"
+                              aria-selected={form.product_id === p.id}
+                              onMouseDown={(e) => {
+                                e.preventDefault(); // Prevent input blur before click fires
+                                handleSelectProduct(p);
+                              }}
+                              className={[
+                                'px-3 py-2 cursor-pointer text-sm flex items-center justify-between gap-2 transition-colors',
+                                form.product_id === p.id
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'hover:bg-background text-textMain',
+                              ].join(' ')}
+                            >
+                              <span className="font-medium">{p.name}</span>
+                              <span className="text-xs text-textMuted shrink-0 font-mono">{p.sku}</span>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  {/* Confirmation du produit sélectionné */}
+                  {form.product_id && (
+                    <p className="text-xs text-green-600 flex items-center gap-1">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      Produit sélectionné
+                    </p>
+                  )}
                   {errors.product_id && (
                     <p id="sp-product-err" role="alert" className="text-xs text-danger">
                       {errors.product_id}
@@ -474,7 +577,7 @@ function SupplierProductFormModal({
             {/* Prix d'achat */}
             <div className="flex flex-col gap-1">
               <label htmlFor="sp-price" className="text-xs font-medium text-textSecondary">
-                Prix d&apos;achat (€) <span className="text-danger" aria-hidden="true">*</span>
+                Prix d&apos;achat (XOF) <span className="text-danger" aria-hidden="true">*</span>
               </label>
               <input
                 id="sp-price"
@@ -873,7 +976,7 @@ export default function SupplierProductsPage() {
           '/api/supplier-products'
         ),
         apiClient.get<{ success: boolean; suppliers: SupplierOption[] }>(
-          '/api/suppliers'
+          '/api/suppliers?isActive=true'
         ),
         apiClient.get<{ success: boolean; products: ProductOption[] }>(
           '/api/products'
@@ -1146,7 +1249,7 @@ export default function SupplierProductsPage() {
 
                   {/* Prix d'achat */}
                   <td className="px-4 py-3 text-textMain whitespace-nowrap tabular-nums">
-                    {parseFloat(row.purchase_price).toFixed(2)} €
+                    {parseFloat(row.purchase_price).toLocaleString('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0 })}
                   </td>
 
                   {/* Unité de commande */}

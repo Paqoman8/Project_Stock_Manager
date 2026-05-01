@@ -364,6 +364,15 @@ model PurchaseOrder {
   @@map("purchase_orders")
 }
 
+// Séquence atomique pour la génération de références BC-YYYY-XXXXXX.
+// Un enregistrement par année civile, incrémenté via upsert PostgreSQL natif.
+model PurchaseOrderSequence {
+  year     Int @id
+  last_seq Int @default(0)
+
+  @@map("purchase_order_sequences")
+}
+
 model PurchaseOrderItem {
   id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   order_id            String          @db.Uuid

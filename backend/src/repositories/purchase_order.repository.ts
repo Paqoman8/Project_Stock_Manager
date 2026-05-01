@@ -75,6 +75,12 @@ export interface CreatePurchaseOrderData {
 export interface UpdatePurchaseOrderData {
   notes?: string;
   expected_at?: string;
+  destination_store_id?: string;
+  items?: Array<{
+    supplier_product_id: string;
+    ordered_qty: number;
+    unit_price: number;
+  }>;
 }
 
 /** Données pour ajouter ou mettre à jour une ligne de commande. */
@@ -142,24 +148,27 @@ export async function findById(id: string): Promise<PurchaseOrderRow | null> {
 }
 
 /**
- * Génère la prochaine référence séquentielle au format BC-YYYY-XXXX.
- * Compte le nombre de commandes créées sur l'année civile donnée.
+ * Génère la prochaine référence séquentielle au format BC-YYYY-XXXXXX.
+ *
+ * Utilise un upsert atomique PostgreSQL sur la table `purchase_order_sequences`
+ * pour garantir qu'aucun doublon ne peut être produit même sous charge concurrente.
+ * L'opération INSERT ... ON CONFLICT DO UPDATE ... RETURNING est atomique nativement
+ * par PostgreSQL — aucun verrou applicatif n'est nécessaire.
  *
  * @param year - Année sur 4 chiffres (ex : 2026)
- * @returns Référence formatée, ex : "BC-2026-0001"
+ * @returns Référence formatée, ex : "BC-2026-000001"
  */
 export async function getNextReference(year: number): Promise<string> {
-  const start = new Date(`${year}-01-01T00:00:00.000Z`);
-  const end   = new Date(`${year + 1}-01-01T00:00:00.000Z`);
+  const rows = await prisma.$queryRaw<{ last_seq: bigint }[]>`
+    INSERT INTO "purchase_order_sequences" ("year", "last_seq")
+    VALUES (${year}, 1)
+    ON CONFLICT ("year") DO UPDATE
+      SET "last_seq" = "purchase_order_sequences"."last_seq" + 1
+    RETURNING "last_seq"
+  `;
 
-  const count = await prisma.purchaseOrder.count({
-    where: {
-      created_at: { gte: start, lt: end },
-    },
-  });
-
-  const seq = String(count + 1).padStart(4, '0');
-  return `BC-${year}-${seq}`;
+  const seq = Number(rows[0].last_seq);
+  return `BC-${year}-${String(seq).padStart(6, '0')}`;
 }
 
 /**
@@ -193,17 +202,38 @@ export async function create(data: CreatePurchaseOrderData): Promise<PurchaseOrd
 }
 
 /**
- * Met à jour les champs notes et/ou expected_at d'une commande.
+ * Met à jour les champs modifiables d'une commande (notes, expected_at,
+ * destination_store_id, items). Quand items est fourni, les lignes existantes
+ * sont supprimées et remplacées atomiquement par le nouveau jeu.
  * À appeler uniquement sur une commande en statut DRAFT (vérifié côté service).
  *
  * @param id   - UUID de la commande
- * @param data - Champs à modifier
- * @returns La commande mise à jour
+ * @param data - Champs à modifier (tous optionnels)
+ * @returns La commande mise à jour avec ses relations
  */
 export async function update(id: string, data: UpdatePurchaseOrderData): Promise<PurchaseOrderRow> {
   const updateData: Record<string, unknown> = {};
-  if (data.notes      !== undefined) updateData.notes      = data.notes;
-  if (data.expected_at !== undefined) updateData.expected_at = new Date(data.expected_at);
+  if (data.notes                !== undefined) updateData.notes                = data.notes;
+  if (data.expected_at          !== undefined) updateData.expected_at          = data.expected_at ? new Date(data.expected_at) : null;
+  if (data.destination_store_id !== undefined) updateData.destination_store_id = data.destination_store_id;
+
+  if (data.items !== undefined) {
+    return prisma.purchaseOrder.update({
+      where: { id },
+      data:  {
+        ...updateData,
+        items: {
+          deleteMany: {},
+          create: data.items.map((item) => ({
+            supplier_product_id: item.supplier_product_id,
+            ordered_qty:         item.ordered_qty,
+            unit_price:          item.unit_price,
+          })),
+        },
+      },
+      include: PURCHASE_ORDER_INCLUDE,
+    }) as unknown as PurchaseOrderRow;
+  }
 
   return prisma.purchaseOrder.update({
     where:   { id },

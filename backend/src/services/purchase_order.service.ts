@@ -159,12 +159,18 @@ export async function createPurchaseOrder(
 }
 
 /**
- * Met à jour les champs modifiables (notes, expected_at) d'une commande DRAFT.
+ * Met à jour les champs modifiables d'une commande DRAFT :
+ * notes, expected_at, destination_store_id, items (remplacement complet).
+ * Le supplier_id est immuable et ne peut pas être modifié.
  *
- * Règle métier : seule une commande en statut DRAFT peut être modifiée.
+ * Règles métier vérifiées :
+ *   - La commande doit exister et être en statut DRAFT.
+ *   - Si destination_store_id est fourni, le magasin doit exister.
+ *   - Si items est fourni, chaque supplier_product doit exister, être actif
+ *     et appartenir au même fournisseur que la commande.
  *
  * @param id         - UUID de la commande à modifier
- * @param data       - Champs à modifier
+ * @param data       - Champs à modifier (notes?, expected_at?, destination_store_id?, items?)
  * @param actorId    - UUID de l'utilisateur connecté
  * @param actorName  - Nom de l'acteur
  * @param storeId    - UUID du magasin de l'acteur
@@ -173,6 +179,8 @@ export async function createPurchaseOrder(
  * @returns La commande mise à jour
  * @throws Error('ORDER_NOT_FOUND')            si la commande n'existe pas
  * @throws Error('INVALID_STATUS_TRANSITION')  si la commande n'est pas en DRAFT
+ * @throws Error('STORE_NOT_FOUND')            si le magasin de destination n'existe pas
+ * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND') si un supplier_product est invalide
  */
 export async function updatePurchaseOrder(
   id: string,
@@ -191,6 +199,22 @@ export async function updatePurchaseOrder(
     throw new Error('INVALID_STATUS_TRANSITION');
   }
 
+  // Validate destination store if provided
+  if (data.destination_store_id) {
+    const store = await prisma.store.findUnique({ where: { id: data.destination_store_id } });
+    if (!store) throw new Error('STORE_NOT_FOUND');
+  }
+
+  // Validate supplier products if items are provided
+  if (data.items) {
+    for (const item of data.items) {
+      const sp = await prisma.supplierProduct.findUnique({ where: { id: item.supplier_product_id } });
+      if (!sp || !sp.is_active || sp.supplier_id !== existing.supplier_id) {
+        throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
+      }
+    }
+  }
+
   const order = await orderRepo.update(id, data);
 
   // Audit — non-bloquant
@@ -205,7 +229,11 @@ export async function updatePurchaseOrder(
       storeId,
       storeName,
       ipAddress,
-      metadata:   { updated_fields: Object.keys(data) },
+      metadata: {
+        updated_fields: Object.keys(data),
+        ...(data.destination_store_id ? { new_destination_store_id: data.destination_store_id } : {}),
+        ...(data.items !== undefined ? { items_count: data.items.length } : {}),
+      },
     });
   } catch (err) {
     console.error('[audit] Échec du log PURCHASE_ORDER_UPDATED :', err);
