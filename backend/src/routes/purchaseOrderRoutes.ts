@@ -2,7 +2,11 @@
 //
 // Routes de gestion des commandes fournisseurs (PurchaseOrder).
 //
-// Accès : toutes les routes réservées Super Administrateur uniquement.
+// Accès :
+//   - Lecture (GET)     : SA, Administrateur, Manager Magasin
+//     → nécessaire pour le module Réceptions (Admin + Manager doivent voir les
+//       commandes SENT / PARTIALLY_RECEIVED pour créer des réceptions)
+//   - Écriture (POST / PUT / PATCH) : Super Administrateur uniquement
 
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
@@ -18,13 +22,14 @@ import {
 
 const purchaseOrderRouter = Router();
 
-const superAdminOnly = [requireAuth, requireRole('Super Administrateur')];
+const superAdminOnly   = [requireAuth, requireRole('Super Administrateur')];
+const receptionReaders = [requireAuth, requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin')];
 
 // GET /api/purchase-orders — liste les commandes (filtres : supplier_id, destination_store_id, status)
-purchaseOrderRouter.get('/', superAdminOnly, getPurchaseOrders);
+purchaseOrderRouter.get('/', receptionReaders, getPurchaseOrders);
 
 // GET /api/purchase-orders/:id — récupère une commande par son UUID
-purchaseOrderRouter.get('/:id', superAdminOnly, getPurchaseOrderById);
+purchaseOrderRouter.get('/:id', receptionReaders, getPurchaseOrderById);
 
 // POST /api/purchase-orders — crée une nouvelle commande
 purchaseOrderRouter.post('/', superAdminOnly, createPurchaseOrder);
