@@ -38,6 +38,8 @@ export async function getReportById(id: string): Promise<InventoryReportRow> {
 /**
  * Crée un rapport d'inventaire pour un établissement.
  * Capture automatiquement le stock théorique actuel de chaque produit en inventaire.
+ * Si des InventoryBreakdown existent (stock par format), les snapshots par format
+ * sont également inclus dans les lignes du rapport.
  *
  * @throws Error('STORE_NOT_FOUND')         si l'établissement est introuvable
  * @throws Error('REPORT_ALREADY_EXISTS')   si un rapport existe déjà pour ce magasin/semaine
@@ -73,6 +75,24 @@ export async function createReport(
   });
   if (inventoryEntries.length === 0) throw new Error('NO_INVENTORY_ENTRIES');
 
+  // Snapshot des ventilations par format (optionnel — peut être vide pour certains produits)
+  const breakdownEntries = await prisma.inventoryBreakdown.findMany({
+    where:  { store_id: data.store_id },
+    select: { product_id: true, packaging_format_id: true, quantity: true },
+  });
+
+  // Regrouper les breakdowns par product_id
+  const breakdownsByProduct = new Map<string, { packaging_format_id: string; quantity: number }[]>();
+  for (const b of breakdownEntries) {
+    if (!breakdownsByProduct.has(b.product_id)) {
+      breakdownsByProduct.set(b.product_id, []);
+    }
+    breakdownsByProduct.get(b.product_id)!.push({
+      packaging_format_id: b.packaging_format_id,
+      quantity:            b.quantity,
+    });
+  }
+
   const report = await reportRepo.create({
     reference,
     store_id:      data.store_id,
@@ -80,10 +100,19 @@ export async function createReport(
     period_end:    data.period_end,
     notes:         data.notes,
     created_by_id: data.created_by_id,
-    lines: inventoryEntries.map((e) => ({
-      product_id:        e.product_id,
-      stock_theoretical: e.stock_physical,
-    })),
+    lines: inventoryEntries.map((e) => {
+      const productBreakdowns = breakdownsByProduct.get(e.product_id) ?? [];
+      return {
+        product_id:        e.product_id,
+        stock_theoretical: e.stock_physical,
+        ...(productBreakdowns.length > 0 ? {
+          breakdowns: productBreakdowns.map((b) => ({
+            packaging_format_id:  b.packaging_format_id,
+            packages_theoretical: b.quantity,
+          })),
+        } : {}),
+      };
+    }),
   });
 
   try {
@@ -109,6 +138,10 @@ export async function createReport(
 /**
  * Met à jour les quantités comptées des lignes d'un rapport (DRAFT uniquement).
  *
+ * Si une ligne comporte des breakdowns, le stock_counted est recalculé à partir
+ * des packages_counted × units_per_package de chaque format — le stock_counted
+ * fourni dans le payload est ignoré pour ces lignes.
+ *
  * @throws Error('REPORT_NOT_FOUND')
  * @throws Error('REPORT_NOT_EDITABLE') si statut != DRAFT
  */
@@ -120,7 +153,28 @@ export async function updateLines(
   if (!report) throw new Error('REPORT_NOT_FOUND');
   if (report.status !== 'DRAFT') throw new Error('REPORT_NOT_EDITABLE');
 
-  return reportRepo.updateLines(reportId, data);
+  // Pour les lignes avec breakdowns : recalculer stock_counted depuis les formats
+  const processedLines = await Promise.all(
+    data.lines.map(async (line) => {
+      if (line.breakdowns && line.breakdowns.length > 0) {
+        // Récupérer units_per_package pour chaque format concerné
+        const formats = await prisma.packagingFormat.findMany({
+          where:  { id: { in: line.breakdowns.map((b) => b.packaging_format_id) } },
+          select: { id: true, units_per_package: true },
+        });
+        const formatMap = new Map(formats.map((f) => [f.id, f.units_per_package]));
+
+        const computedStockCounted = line.breakdowns.reduce((sum, b) => {
+          return sum + b.packages_counted * (formatMap.get(b.packaging_format_id) ?? 1);
+        }, 0);
+
+        return { ...line, stock_counted: computedStockCounted };
+      }
+      return line;
+    }),
+  );
+
+  return reportRepo.updateLines(reportId, { lines: processedLines });
 }
 
 /**
@@ -256,7 +310,12 @@ export async function rejectReport(
 
 /**
  * Applique les ajustements de stock issus d'un rapport validé (SA uniquement).
- * Crée un mouvement ADJUSTMENT_IN ou ADJUSTMENT_OUT pour chaque ligne avec variance != 0.
+ *
+ * - Pour les lignes avec breakdowns par format :
+ *     → Crée un mouvement ADJUSTMENT_IN/OUT par format avec packages_variance != 0,
+ *       en précisant packaging_format_id pour mettre à jour InventoryBreakdown.
+ * - Pour les lignes sans breakdowns (variance != 0) :
+ *     → Comportement historique : un seul mouvement sans format.
  *
  * @throws Error('REPORT_NOT_FOUND')
  * @throws Error('REPORT_NOT_VALIDATED') si statut != VALIDATED
@@ -275,23 +334,49 @@ export async function applyAdjustments(
   // Opération irréversible — ne peut être faite qu'une seule fois
   if (report.adjustments_applied_at !== null) throw new Error('ADJUSTMENTS_ALREADY_APPLIED');
 
-  const linesWithVariance = report.lines.filter((l) => l.variance !== 0);
   let count = 0;
 
-  for (const line of linesWithVariance) {
-    const type = line.variance > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT';
-    const qty  = Math.abs(line.variance);
+  for (const line of report.lines) {
+    const hasBreakdowns = line.breakdowns && line.breakdowns.length > 0;
 
-    await movementRepo.create({
-      store_id:        report.store_id,
-      product_id:      line.product_id,
-      type,
-      qty,
-      reason:          `Ajustement rapport ${report.reference}`,
-      performed_by_id: actorId,
-    });
+    if (hasBreakdowns) {
+      // Créer un mouvement par format avec packages_variance != 0
+      for (const bd of line.breakdowns) {
+        if (bd.packages_variance === 0) continue;
 
-    count++;
+        const type           = bd.packages_variance > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT';
+        const absPackages    = Math.abs(bd.packages_variance);
+        const qty            = absPackages * bd.packaging_format.units_per_package;
+
+        await movementRepo.create({
+          store_id:            report.store_id,
+          product_id:          line.product_id,
+          type,
+          qty,
+          reason:              `Ajustement rapport ${report.reference} — ${bd.packaging_format.label}`,
+          performed_by_id:     actorId,
+          packaging_format_id: bd.packaging_format_id,
+          packages_count:      absPackages,
+        });
+
+        count++;
+      }
+    } else if (line.variance !== 0) {
+      // Comportement historique : mouvement sans format
+      const type = line.variance > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT';
+      const qty  = Math.abs(line.variance);
+
+      await movementRepo.create({
+        store_id:        report.store_id,
+        product_id:      line.product_id,
+        type,
+        qty,
+        reason:          `Ajustement rapport ${report.reference}`,
+        performed_by_id: actorId,
+      });
+
+      count++;
+    }
   }
 
   // Verrouille l'opération — plus possible de rejouer

@@ -152,10 +152,11 @@ model PackagingFormat {
   created_at        DateTime             @default(now())
   updated_at        DateTime             @updatedAt
   product           Product              @relation(fields: [product_id], references: [id], onDelete: Cascade)
-  stock_movements      StockMovement[]
-  inventory_breakdowns InventoryBreakdown[]
-  purchase_order_items PurchaseOrderItem[]
-  reception_items      ReceptionItem[]
+  stock_movements         StockMovement[]
+  inventory_breakdowns    InventoryBreakdown[]
+  purchase_order_items    PurchaseOrderItem[]
+  reception_items         ReceptionItem[]
+  report_line_breakdowns  InventoryReportLineBreakdown[]
 
   @@unique([product_id, label])
   @@map("packaging_formats")
@@ -645,7 +646,30 @@ model InventoryReportLine {
   note              String?         // Motif si écart significatif
   report            InventoryReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
   product           Product         @relation(fields: [product_id], references: [id])
+  breakdowns        InventoryReportLineBreakdown[]
 
   @@unique([report_id, product_id])
   @@map("inventory_report_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Ventilation du comptage par format de conditionnement dans un rapport
+//
+// Créé automatiquement lors de la création du rapport si des InventoryBreakdown
+// existent pour le couple (établissement, produit).
+// Mis à jour lors de la saisie du comptage (PUT /lines).
+// ---------------------------------------------------------------------------
+
+model InventoryReportLineBreakdown {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  line_id              String              @db.Uuid
+  packaging_format_id  String              @db.Uuid
+  packages_theoretical Int                 // Snapshot de InventoryBreakdown.quantity au moment de la création
+  packages_counted     Int                 @default(0)
+  packages_variance    Int                 @default(0) // packages_counted − packages_theoretical
+  line                 InventoryReportLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
+  packaging_format     PackagingFormat     @relation(fields: [packaging_format_id], references: [id])
+
+  @@unique([line_id, packaging_format_id])
+  @@map("inventory_report_line_breakdowns")
 }

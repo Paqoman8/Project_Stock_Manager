@@ -34,8 +34,15 @@ const updateLinesSchema = z.object({
   lines: z.array(
     z.object({
       product_id:    z.string().uuid(),
-      stock_counted: z.number().int().min(0, 'La quantité comptée doit être ≥ 0.'),
+      // Optionnel quand des breakdowns sont fournis (recalculé côté service)
+      stock_counted: z.number().int().min(0, 'La quantité comptée doit être ≥ 0.').optional().default(0),
       note:          z.string().optional(),
+      breakdowns: z.array(
+        z.object({
+          packaging_format_id: z.string().uuid(),
+          packages_counted:    z.number().int().min(0, 'Le nombre de colis doit être ≥ 0.'),
+        }),
+      ).optional(),
     }),
   ).min(1, 'Au moins une ligne est requise.'),
 });

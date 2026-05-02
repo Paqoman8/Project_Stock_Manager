@@ -40,6 +40,16 @@ const UNIT_LABELS: Record<string, string> = {
 
 type ReportStatus = 'DRAFT' | 'SUBMITTED' | 'VALIDATED' | 'REJECTED';
 
+interface ReportLineBreakdown {
+  id:                   string;
+  line_id:              string;
+  packaging_format_id:  string;
+  packages_theoretical: number;
+  packages_counted:     number;
+  packages_variance:    number;
+  packaging_format:     { id: string; label: string; units_per_package: number };
+}
+
 interface ReportLine {
   id:                string;
   product_id:        string;
@@ -48,6 +58,7 @@ interface ReportLine {
   variance:          number;
   note:              string | null;
   product:           { id: string; name: string; sku: string; unit: string };
+  breakdowns:        ReportLineBreakdown[];
 }
 
 interface InventoryReport {
@@ -270,20 +281,41 @@ function ReportDetailModal({
   const isValidated          = report.status === 'VALIDATED';
   const isRejected           = report.status === 'REJECTED';
   const adjustmentsApplied   = report.adjustments_applied_at !== null;
+  const isEditable           = isDraft;
 
+  // Mise à jour d'un champ direct (stock_counted / note) sur les lignes sans breakdown
   function updateLine(productId: string, field: 'stock_counted' | 'note', value: string) {
     setLines((prev) =>
-      prev.map((l) =>
-        l.product_id === productId
-          ? {
-              ...l,
-              [field]: field === 'stock_counted' ? parseInt(value, 10) || 0 : value,
-              variance: field === 'stock_counted'
-                ? (parseInt(value, 10) || 0) - l.stock_theoretical
-                : l.variance,
-            }
-          : l,
-      ),
+      prev.map((l) => {
+        if (l.product_id !== productId) return l;
+        if (field === 'note') return { ...l, note: value };
+        const counted = parseInt(value, 10) || 0;
+        return { ...l, stock_counted: counted, variance: counted - l.stock_theoretical };
+      }),
+    );
+  }
+
+  // Mise à jour du comptage d'un format dans un breakdown
+  function updateBreakdown(productId: string, formatId: string, packagesCounted: number) {
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.product_id !== productId) return l;
+        const newBreakdowns = l.breakdowns.map((b) =>
+          b.packaging_format_id === formatId
+            ? { ...b, packages_counted: packagesCounted, packages_variance: packagesCounted - b.packages_theoretical }
+            : b,
+        );
+        // Recalculer le total en unités depuis les breakdowns
+        const computedCounted = newBreakdowns.reduce(
+          (sum, b) => sum + b.packages_counted * b.packaging_format.units_per_package, 0,
+        );
+        return {
+          ...l,
+          breakdowns:    newBreakdowns,
+          stock_counted: computedCounted,
+          variance:      computedCounted - l.stock_theoretical,
+        };
+      }),
     );
   }
 
@@ -296,6 +328,12 @@ function ReportDetailModal({
           product_id:    l.product_id,
           stock_counted: l.stock_counted,
           note:          l.note || undefined,
+          ...(l.breakdowns.length > 0 ? {
+            breakdowns: l.breakdowns.map((b) => ({
+              packaging_format_id: b.packaging_format_id,
+              packages_counted:    b.packages_counted,
+            })),
+          } : {}),
         })),
       });
       onUpdated(data.report as InventoryReport);
@@ -313,9 +351,6 @@ function ReportDetailModal({
     try {
       const { data } = await apiClient.patch(`/api/inventory-reports/${report.id}/${action}`, body ?? {});
       onUpdated(data.report as InventoryReport);
-      if (action === 'apply-adjustments') {
-        // Pas de mise à jour du rapport, juste un message
-      }
     } catch (err) {
       setError(extractApiError(err, `Échec de l'action "${action}".`));
     } finally {
@@ -328,7 +363,6 @@ function ReportDetailModal({
     setError(null);
     try {
       await apiClient.patch(`/api/inventory-reports/${report.id}/apply-adjustments`);
-      // Recharge le rapport
       const { data } = await apiClient.get(`/api/inventory-reports/${report.id}`);
       onUpdated(data.report as InventoryReport);
     } catch (err) {
@@ -338,7 +372,12 @@ function ReportDetailModal({
     }
   }
 
-  const hasVariances = lines.some((l) => l.variance !== 0);
+  // Détecte s'il existe des écarts à corriger (lignes directes OU breakdowns)
+  const hasVariances = lines.some((l) =>
+    l.breakdowns.length > 0
+      ? l.breakdowns.some((b) => b.packages_variance !== 0)
+      : l.variance !== 0,
+  );
 
   return (
     <div
@@ -394,7 +433,7 @@ function ReportDetailModal({
           <table className="w-full text-sm border border-borderLight rounded overflow-hidden">
             <thead className="bg-background border-b border-borderLight">
               <tr>
-                <th className="px-4 py-2 text-left font-medium text-textMuted">Produit</th>
+                <th className="px-4 py-2 text-left font-medium text-textMuted">Produit / Format</th>
                 <th className="px-4 py-2 text-left font-medium text-textMuted">SKU</th>
                 <th className="px-4 py-2 text-right font-medium text-textMuted">Théorique</th>
                 <th className="px-4 py-2 text-right font-medium text-textMuted">Compté</th>
@@ -404,48 +443,106 @@ function ReportDetailModal({
             </thead>
             <tbody className="divide-y divide-borderLight">
               {lines.map((line) => {
-                const unit  = UNIT_LABELS[line.product.unit] ?? line.product.unit;
-                const isPos = line.variance > 0;
-                const isNeg = line.variance < 0;
+                const unit       = UNIT_LABELS[line.product.unit] ?? line.product.unit;
+                const isPos      = line.variance > 0;
+                const isNeg      = line.variance < 0;
+                const hasBreaks  = line.breakdowns.length > 0;
+
                 return (
-                  <tr key={line.product_id} className="hover:bg-background/60">
-                    <td className="px-4 py-2 text-textMain font-medium">{line.product.name}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-textMuted">{line.product.sku}</td>
-                    <td className="px-4 py-2 text-right text-textMuted">
-                      {line.stock_theoretical} <span className="text-xs">{unit}</span>
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {isDraft || isRejected ? (
-                        <input
-                          type="number"
-                          min={0}
-                          value={line.stock_counted}
-                          onChange={(e) => updateLine(line.product_id, 'stock_counted', e.target.value)}
-                          className="w-20 px-2 py-1 text-sm text-right border border-borderLight rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary"
-                        />
-                      ) : (
-                        <span className="text-textMain">{line.stock_counted} <span className="text-xs text-textMuted">{unit}</span></span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-right font-medium">
-                      <span className={isPos ? 'text-green-600' : isNeg ? 'text-red-600' : 'text-textMuted'}>
-                        {isPos ? '+' : ''}{line.variance}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2">
-                      {isDraft || isRejected ? (
-                        <input
-                          type="text"
-                          value={line.note ?? ''}
-                          onChange={(e) => updateLine(line.product_id, 'note', e.target.value)}
-                          className="w-full px-2 py-1 text-sm border border-borderLight rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary"
-                          placeholder="Motif si écart…"
-                        />
-                      ) : (
-                        <span className="text-textMuted text-xs">{line.note ?? '—'}</span>
-                      )}
-                    </td>
-                  </tr>
+                  <React.Fragment key={line.product_id}>
+                    {/* Ligne produit principale */}
+                    <tr className={hasBreaks ? 'bg-background/40' : 'hover:bg-background/60'}>
+                      <td className="px-4 py-2 text-textMain font-medium">
+                        {line.product.name}
+                        {hasBreaks && (
+                          <span className="ml-2 text-xs text-textMuted font-normal">
+                            ({line.breakdowns.length} format{line.breakdowns.length > 1 ? 's' : ''})
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-textMuted">{line.product.sku}</td>
+                      <td className="px-4 py-2 text-right text-textMuted">
+                        {line.stock_theoretical} <span className="text-xs">{unit}</span>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {/* Éditable directement seulement si pas de breakdowns */}
+                        {isEditable && !hasBreaks ? (
+                          <input
+                            type="number"
+                            min={0}
+                            value={line.stock_counted}
+                            onChange={(e) => updateLine(line.product_id, 'stock_counted', e.target.value)}
+                            className="w-20 px-2 py-1 text-sm text-right border border-borderLight rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                          />
+                        ) : (
+                          <span className={hasBreaks ? 'text-textMuted text-xs italic' : 'text-textMain'}>
+                            {line.stock_counted} <span className="text-xs text-textMuted">{unit}</span>
+                            {hasBreaks && <span className="ml-1">(calculé)</span>}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right font-medium">
+                        <span className={isPos ? 'text-green-600' : isNeg ? 'text-red-600' : 'text-textMuted'}>
+                          {isPos ? '+' : ''}{line.variance}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2">
+                        {isEditable ? (
+                          <input
+                            type="text"
+                            value={line.note ?? ''}
+                            onChange={(e) => updateLine(line.product_id, 'note', e.target.value)}
+                            className="w-full px-2 py-1 text-sm border border-borderLight rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                            placeholder="Motif si écart…"
+                          />
+                        ) : (
+                          <span className="text-textMuted text-xs">{line.note ?? '—'}</span>
+                        )}
+                      </td>
+                    </tr>
+
+                    {/* Sous-lignes par format de conditionnement */}
+                    {hasBreaks && line.breakdowns.map((bd) => {
+                      const bdIsPos = bd.packages_variance > 0;
+                      const bdIsNeg = bd.packages_variance < 0;
+                      return (
+                        <tr key={bd.packaging_format_id} className="bg-[#F8F9FA] hover:bg-[#F1F3F5]">
+                          <td className="pl-10 pr-4 py-1.5 text-xs text-textMuted" colSpan={1}>
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-px h-3 bg-borderLight flex-shrink-0" aria-hidden="true" />
+                              {bd.packaging_format.label}
+                              <span className="text-textMuted/60">× {bd.packaging_format.units_per_package} {unit}</span>
+                            </span>
+                          </td>
+                          <td className="px-4 py-1.5 text-xs text-textMuted" />
+                          <td className="px-4 py-1.5 text-right text-xs text-textMuted">
+                            {bd.packages_theoretical} colis
+                          </td>
+                          <td className="px-4 py-1.5 text-right text-xs">
+                            {isEditable ? (
+                              <input
+                                type="number"
+                                min={0}
+                                value={bd.packages_counted}
+                                onChange={(e) =>
+                                  updateBreakdown(line.product_id, bd.packaging_format_id, parseInt(e.target.value, 10) || 0)
+                                }
+                                className="w-20 px-2 py-0.5 text-xs text-right border border-borderLight rounded bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                              />
+                            ) : (
+                              <span className="text-textMain">{bd.packages_counted} colis</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-1.5 text-right text-xs font-medium">
+                            <span className={bdIsPos ? 'text-green-600' : bdIsNeg ? 'text-red-600' : 'text-textMuted'}>
+                              {bdIsPos ? '+' : ''}{bd.packages_variance}
+                            </span>
+                          </td>
+                          <td className="px-4 py-1.5 text-xs text-textMuted" />
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -603,7 +700,7 @@ export default function InventoryReportsPage() {
   }, [filterStore, filterStatus]);
 
   useEffect(() => {
-    apiClient.get('/api/stores').then(({ data }) => {
+    apiClient.get('/api/auth/accessible-stores').then(({ data }) => {
       setStores(data.stores as StoreOption[]);
     }).catch(() => {});
   }, []);

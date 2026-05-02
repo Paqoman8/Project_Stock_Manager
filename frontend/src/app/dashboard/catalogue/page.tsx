@@ -1555,6 +1555,16 @@ function ProductsTab({
     return () => clearTimeout(timer);
   }, [search]);
 
+  // IDs valides pour le filtre catégorie :
+  // si une catégorie parente est sélectionnée, inclure aussi ses sous-catégories.
+  const validCategoryIds = useMemo(() => {
+    if (!filterCategory) return null;
+    const childIds = categories
+      .filter((c) => c.parent_id === filterCategory)
+      .map((c) => c.id);
+    return new Set([filterCategory, ...childIds]);
+  }, [filterCategory, categories]);
+
   // Filtrage client-side
   const filteredProducts = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
@@ -1564,12 +1574,12 @@ function ProductsTab({
         const matchSku  = p.sku.toLowerCase().includes(q);
         if (!matchName && !matchSku) return false;
       }
-      if (filterCategory && p.category_id !== filterCategory) return false;
+      if (validCategoryIds && !validCategoryIds.has(p.category_id)) return false;
       if (filterStatus === 'ACTIVE'   && !p.is_active) return false;
       if (filterStatus === 'INACTIVE' &&  p.is_active) return false;
       return true;
     });
-  }, [products, debouncedSearch, filterCategory, filterStatus]);
+  }, [products, debouncedSearch, validCategoryIds, filterStatus]);
 
   const hasActiveFilters = search !== '' || filterCategory !== '' || filterStatus !== '';
 

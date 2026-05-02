@@ -9,6 +9,16 @@ import { prisma } from '../config/database';
 // Types exposés
 // ---------------------------------------------------------------------------
 
+export interface ReportLineBreakdownRow {
+  id:                   string;
+  line_id:              string;
+  packaging_format_id:  string;
+  packages_theoretical: number;
+  packages_counted:     number;
+  packages_variance:    number;
+  packaging_format:     { id: string; label: string; units_per_package: number };
+}
+
 export interface ReportLineRow {
   id:                string;
   report_id:         string;
@@ -18,6 +28,7 @@ export interface ReportLineRow {
   variance:          number;
   note:              string | null;
   product:           { id: string; name: string; sku: string; unit: string };
+  breakdowns:        ReportLineBreakdownRow[];
 }
 
 export interface InventoryReportRow {
@@ -57,6 +68,10 @@ export interface CreateReportData {
   lines: {
     product_id:        string;
     stock_theoretical: number;
+    breakdowns?: {
+      packaging_format_id:  string;
+      packages_theoretical: number;
+    }[];
   }[];
 }
 
@@ -65,6 +80,10 @@ export interface UpdateLinesData {
     product_id:    string;
     stock_counted: number;
     note?:         string;
+    breakdowns?: {
+      packaging_format_id: string;
+      packages_counted:    number;
+    }[];
   }[];
 }
 
@@ -79,6 +98,12 @@ const REPORT_INCLUDE = {
   lines: {
     include: {
       product: { select: { id: true, name: true, sku: true, unit: true } },
+      breakdowns: {
+        include: {
+          packaging_format: { select: { id: true, label: true, units_per_package: true } },
+        },
+        orderBy: { packaging_format: { label: 'asc' as const } },
+      },
     },
     orderBy: { product: { name: 'asc' as const } },
   },
@@ -121,6 +146,16 @@ export async function create(data: CreateReportData): Promise<InventoryReportRow
           stock_theoretical: l.stock_theoretical,
           stock_counted:     0,
           variance:          -l.stock_theoretical, // sera mis à jour quand stock_counted saisi
+          ...(l.breakdowns && l.breakdowns.length > 0 ? {
+            breakdowns: {
+              create: l.breakdowns.map((b) => ({
+                packaging_format_id:  b.packaging_format_id,
+                packages_theoretical: b.packages_theoretical,
+                packages_counted:     0,
+                packages_variance:    -b.packages_theoretical,
+              })),
+            },
+          } : {}),
         })),
       },
     },
@@ -130,39 +165,62 @@ export async function create(data: CreateReportData): Promise<InventoryReportRow
 
 /**
  * Met à jour les quantités comptées de toutes les lignes du rapport.
- * Recalcule la variance à la volée.
+ * Si une ligne a des breakdowns, met aussi à jour chaque breakdown.
+ * Recalcule les variances à la volée.
  */
 export async function updateLines(
   reportId: string,
   data: UpdateLinesData,
 ): Promise<InventoryReportRow> {
-  // Mise à jour de chaque ligne en transaction
-  await prisma.$transaction(
-    data.lines.map((l) =>
-      prisma.inventoryReportLine.updateMany({
+  // Mise à jour de chaque ligne + ses breakdowns en transaction
+  await prisma.$transaction(async (tx) => {
+    for (const l of data.lines) {
+      // Mettre à jour la ligne principale
+      await tx.inventoryReportLine.updateMany({
         where: { report_id: reportId, product_id: l.product_id },
         data:  {
           stock_counted: l.stock_counted,
           note:          l.note ?? null,
-          // variance sera recalculé en récupérant stock_theoretical
         },
-      }),
-    ),
-  );
+      });
 
-  // Recalcul des variances via une requête séparée
-  const lines = await prisma.inventoryReportLine.findMany({
-    where: { report_id: reportId },
+      // Mettre à jour les breakdowns si fournis
+      if (l.breakdowns && l.breakdowns.length > 0) {
+        const line = await tx.inventoryReportLine.findFirst({
+          where: { report_id: reportId, product_id: l.product_id },
+        });
+        if (line) {
+          for (const bd of l.breakdowns) {
+            await tx.inventoryReportLineBreakdown.updateMany({
+              where: { line_id: line.id, packaging_format_id: bd.packaging_format_id },
+              data:  { packages_counted: bd.packages_counted },
+            });
+          }
+          // Recalculer les packages_variance
+          const breakdowns = await tx.inventoryReportLineBreakdown.findMany({
+            where: { line_id: line.id },
+          });
+          for (const bd of breakdowns) {
+            await tx.inventoryReportLineBreakdown.update({
+              where: { id: bd.id },
+              data:  { packages_variance: bd.packages_counted - bd.packages_theoretical },
+            });
+          }
+        }
+      }
+    }
+
+    // Recalcul des variances sur les lignes après mise à jour
+    const lines = await tx.inventoryReportLine.findMany({
+      where: { report_id: reportId },
+    });
+    for (const line of lines) {
+      await tx.inventoryReportLine.update({
+        where: { id: line.id },
+        data:  { variance: line.stock_counted - line.stock_theoretical },
+      });
+    }
   });
-
-  await prisma.$transaction(
-    lines.map((l) =>
-      prisma.inventoryReportLine.update({
-        where: { id: l.id },
-        data:  { variance: l.stock_counted - l.stock_theoretical },
-      }),
-    ),
-  );
 
   return findById(reportId) as Promise<InventoryReportRow>;
 }

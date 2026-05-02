@@ -11,7 +11,7 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
@@ -301,6 +301,11 @@ function StockMovementModal({
   // Produits disponibles quand row est absent
   const [products, setProducts] = useState<{ id: string; name: string; sku: string }[]>([]);
 
+  // Combobox de sélection produit (mode sans row)
+  const [productSearch,       setProductSearch]       = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const productComboRef = useRef<HTMLDivElement>(null);
+
   // Formats de conditionnement
   const [formats,         setFormats]         = useState<PackagingFormat[]>([]);
   const [selectedFormatId, setSelectedFormatId] = useState<string>('');
@@ -320,6 +325,44 @@ function StockMovementModal({
       .then(({ data }) => setProducts(data.products ?? []))
       .catch(() => {});
   }, [row]);
+
+  // Fermer le dropdown produit si clic en dehors
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (productComboRef.current && !productComboRef.current.contains(e.target as Node)) {
+        setShowProductDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Résultats filtrés pour le combobox (max 10)
+  const filteredProductsForCombo = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return products.slice(0, 10);
+    return products
+      .filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
+      .slice(0, 10);
+  }, [products, productSearch]);
+
+  function handleProductSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setProductSearch(e.target.value);
+    setProductId('');
+    setShowProductDropdown(true);
+  }
+
+  function handleSelectProduct(p: { id: string; name: string; sku: string }) {
+    setProductId(p.id);
+    setProductSearch(`${p.name} (${p.sku})`);
+    setShowProductDropdown(false);
+  }
+
+  function handleClearProduct() {
+    setProductId('');
+    setProductSearch('');
+    setShowProductDropdown(false);
+  }
 
   // Charger les formats dès qu'un produit est connu
   useEffect(() => {
@@ -442,20 +485,79 @@ function StockMovementModal({
                     ))}
                   </select>
                 </div>
-                {/* Sélecteur produit */}
+                {/* Sélecteur produit — combobox avec recherche */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-textSecondary">Produit <span className="text-red-500">*</span></label>
-                  <select
-                    value={productId}
-                    onChange={(e) => setProductId(e.target.value)}
-                    className={inputCls}
-                    required
-                  >
-                    <option value="">— Sélectionner un produit —</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
-                    ))}
-                  </select>
+                  <label htmlFor="mv-product-search" className="text-xs font-medium text-textSecondary">
+                    Produit <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative" ref={productComboRef}>
+                    <input
+                      id="mv-product-search"
+                      type="text"
+                      autoComplete="off"
+                      value={productSearch}
+                      onFocus={() => setShowProductDropdown(true)}
+                      onChange={handleProductSearchChange}
+                      placeholder="Rechercher un produit par nom ou SKU…"
+                      className={inputCls + ' pr-8'}
+                      aria-autocomplete="list"
+                      aria-expanded={showProductDropdown}
+                    />
+                    {/* Bouton effacer */}
+                    {(productId || productSearch) && (
+                      <button
+                        type="button"
+                        onClick={handleClearProduct}
+                        aria-label="Effacer la sélection"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-textMuted hover:text-textMain transition-colors"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                    {/* Dropdown */}
+                    {showProductDropdown && (
+                      <ul
+                        role="listbox"
+                        aria-label="Résultats de recherche produit"
+                        className="absolute z-20 w-full mt-1 bg-surface border border-borderLight rounded shadow-lg max-h-52 overflow-y-auto"
+                      >
+                        {filteredProductsForCombo.length === 0 ? (
+                          <li className="px-3 py-3 text-sm text-textMuted">
+                            Aucun produit trouvé{productSearch ? ` pour "${productSearch}"` : ''}.
+                          </li>
+                        ) : (
+                          filteredProductsForCombo.map((p) => (
+                            <li
+                              key={p.id}
+                              role="option"
+                              aria-selected={productId === p.id}
+                              onMouseDown={(e) => { e.preventDefault(); handleSelectProduct(p); }}
+                              className={[
+                                'px-3 py-2 cursor-pointer text-sm flex items-center justify-between gap-2 transition-colors',
+                                productId === p.id
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'hover:bg-background text-textMain',
+                              ].join(' ')}
+                            >
+                              <span className="font-medium">{p.name}</span>
+                              <span className="text-xs text-textMuted shrink-0 font-mono">{p.sku}</span>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  {/* Confirmation produit sélectionné */}
+                  {productId && (
+                    <p className="text-xs text-green-600 flex items-center gap-1">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      Produit sélectionné
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -624,9 +726,11 @@ export default function InventoryPage() {
     }
   }, [filterStore, filterLowStock]);
 
-  // Chargement des établissements pour le filtre
+  // Chargement des établissements accessibles à l'utilisateur courant
+  // On utilise /api/auth/accessible-stores pour respecter les droits (SA voit tout,
+  // Admin voit uniquement ses magasins assignés).
   useEffect(() => {
-    apiClient.get('/api/stores').then(({ data }) => {
+    apiClient.get('/api/auth/accessible-stores').then(({ data }) => {
       setStores(
         (data.stores as { id: string; name: string }[]).map((s) => ({ id: s.id, name: s.name })),
       );
