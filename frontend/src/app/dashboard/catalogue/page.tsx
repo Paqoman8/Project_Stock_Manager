@@ -1745,7 +1745,7 @@ function ProductsTab({
                         >
                           Modifier
                         </Button>
-                        {isSA && (
+                        {canEditProducts && (
                           <Button
                             variant="secondary"
                             size="sm"
