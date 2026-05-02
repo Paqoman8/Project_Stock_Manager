@@ -137,6 +137,7 @@ function IconAudit({ className }: { className?: string }) {
 const ROLES_ADMIN: readonly string[] = ['Super Administrateur', 'Administrateur'];
 const ROLE_SA = 'Super Administrateur';
 const ROLES_AGENT: readonly string[] = ['Manager Magasin', 'Opérateur'];
+const ROLES_RECEPTION: readonly string[] = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
 
 // ---------------------------------------------------------------------------
 // Composants de navigation
@@ -216,9 +217,10 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
   const pathname = usePathname();
   const { user, isLoading } = useSession();
 
-  const estAdmin = !isLoading && user !== null && ROLES_ADMIN.includes(user.roleName);
-  const estSA    = !isLoading && user !== null && user.roleName === ROLE_SA;
-  const estAgent = !isLoading && user !== null && ROLES_AGENT.includes(user.roleName);
+  const estAdmin      = !isLoading && user !== null && ROLES_ADMIN.includes(user.roleName);
+  const estSA         = !isLoading && user !== null && user.roleName === ROLE_SA;
+  const estAgent      = !isLoading && user !== null && ROLES_AGENT.includes(user.roleName);
+  const estReception  = !isLoading && user !== null && ROLES_RECEPTION.includes(user.roleName);
 
   if (!isOpen) return null;
 
@@ -300,18 +302,22 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
                 currentPath={pathname}
               />
               <NavSubItem
-                href="/dashboard/receptions"
-                label="Réceptions"
-                icon={<IconReceptions className="flex-shrink-0 opacity-75" />}
-                currentPath={pathname}
-              />
-              <NavSubItem
                 href="/dashboard/invoices"
                 label="Factures"
                 icon={<IconInvoices className="flex-shrink-0 opacity-75" />}
                 currentPath={pathname}
               />
             </>
+          )}
+
+          {/* ── Réceptions — SA + Admin + Manager ── */}
+          {estReception && (
+            <NavItem
+              href="/dashboard/receptions"
+              label="Réceptions"
+              icon={<IconReceptions className="flex-shrink-0" />}
+              currentPath={pathname}
+            />
           )}
 
           {/* ── Liens Agents (Manager / Opérateur) ── */}

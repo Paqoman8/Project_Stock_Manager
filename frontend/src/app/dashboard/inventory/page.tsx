@@ -281,10 +281,12 @@ const MOVEMENT_TYPE_LABELS: Record<MovementType, string> = {
 
 function StockMovementModal({
   row,
+  stores,
   onClose,
   onSaved,
 }: {
   row?:    InventoryRow | null; // si fourni, pré-sélectionne produit+magasin
+  stores:  StoreOption[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -295,6 +297,9 @@ function StockMovementModal({
   const [reason,    setReason]    = useState('');
   const [saving,    setSaving]    = useState(false);
   const [error,     setError]     = useState<string | null>(null);
+
+  // Produits disponibles quand row est absent
+  const [products, setProducts] = useState<{ id: string; name: string; sku: string }[]>([]);
 
   // Formats de conditionnement
   const [formats,         setFormats]         = useState<PackagingFormat[]>([]);
@@ -307,6 +312,14 @@ function StockMovementModal({
     : null;
 
   const needsReason = type === 'ADJUSTMENT_IN' || type === 'ADJUSTMENT_OUT';
+
+  // Charger la liste des produits si row est absent (mode sans pré-sélection)
+  useEffect(() => {
+    if (row) return;
+    apiClient.get('/api/products')
+      .then(({ data }) => setProducts(data.products ?? []))
+      .catch(() => {});
+  }, [row]);
 
   // Charger les formats dès qu'un produit est connu
   useEffect(() => {
@@ -326,6 +339,12 @@ function StockMovementModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // Validation store/product quand row est absent
+    if (!row && (!storeId || !productId)) {
+      setError('Veuillez sélectionner un établissement et un produit.');
+      return;
+    }
 
     if (selectedFormatId) {
       // Mode avec format : packages_count obligatoire
@@ -400,12 +419,45 @@ function StockMovementModal({
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
             {/* Contexte si pré-sélectionné */}
-            {row && (
+            {row ? (
               <div className="text-sm text-textMuted bg-background rounded px-3 py-2 space-y-0.5 border border-borderLight">
                 <p><span className="font-medium text-textMain">{row.product.name}</span> · <span className="font-mono text-xs">{row.product.sku}</span></p>
                 <p>Établissement : <span className="font-medium" style={{ color: row.store.color }}>{row.store.name}</span></p>
                 <p>Stock actuel : <span className="font-medium text-textMain">{row.stock_physical} {UNIT_LABELS[row.product.unit] ?? row.product.unit}</span></p>
               </div>
+            ) : (
+              <>
+                {/* Sélecteur magasin */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-textSecondary">Établissement <span className="text-red-500">*</span></label>
+                  <select
+                    value={storeId}
+                    onChange={(e) => setStoreId(e.target.value)}
+                    className={inputCls}
+                    required
+                  >
+                    <option value="">— Sélectionner un établissement —</option>
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Sélecteur produit */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-textSecondary">Produit <span className="text-red-500">*</span></label>
+                  <select
+                    value={productId}
+                    onChange={(e) => setProductId(e.target.value)}
+                    className={inputCls}
+                    required
+                  >
+                    <option value="">— Sélectionner un produit —</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
 
             {/* Type */}
@@ -893,6 +945,7 @@ export default function InventoryPage() {
       {movementRow !== undefined && (
         <StockMovementModal
           row={movementRow}
+          stores={stores}
           onClose={() => setMovementRow(undefined)}
           onSaved={handleMovementSaved}
         />
