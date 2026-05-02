@@ -457,6 +457,350 @@ function DeleteCategoryModal({
 }
 
 // ===========================================================================
+// MODALE — FORMATS DE CONDITIONNEMENT
+// ===========================================================================
+
+interface PackagingFormatRow {
+  id:                string;
+  product_id:        string;
+  label:             string;
+  units_per_package: number;
+  is_base_unit:      boolean;
+}
+
+function PackagingFormatsModal({
+  product,
+  onClose,
+}: {
+  product: ProductRow | null;
+  onClose: () => void;
+}) {
+  const [formats,       setFormats]       = useState<PackagingFormatRow[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [fetchError,    setFetchError]    = useState<string | null>(null);
+
+  // Formulaire ajout
+  const [addLabel,      setAddLabel]      = useState('');
+  const [addUnits,      setAddUnits]      = useState('1');
+  const [addIsBase,     setAddIsBase]     = useState(false);
+  const [addSaving,     setAddSaving]     = useState(false);
+  const [addError,      setAddError]      = useState<string | null>(null);
+
+  // Édition inline
+  const [editId,        setEditId]        = useState<string | null>(null);
+  const [editLabel,     setEditLabel]     = useState('');
+  const [editUnits,     setEditUnits]     = useState('');
+  const [editIsBase,    setEditIsBase]    = useState(false);
+  const [editSaving,    setEditSaving]    = useState(false);
+  const [editError,     setEditError]     = useState<string | null>(null);
+
+  // Suppression
+  const [deletingId,    setDeletingId]    = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!product) return;
+    setLoading(true);
+    setFetchError(null);
+    apiClient.get(`/api/products/${product.id}/packaging-formats`)
+      .then(({ data }) => setFormats(data.formats as PackagingFormatRow[]))
+      .catch(() => setFetchError('Impossible de charger les formats.'))
+      .finally(() => setLoading(false));
+  }, [product]);
+
+  useEffect(() => {
+    if (!product) return;
+    function handleKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [product, onClose]);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    setAddError(null);
+    const units = parseInt(addUnits, 10);
+    if (!addLabel.trim()) { setAddError('Le libellé est obligatoire.'); return; }
+    if (isNaN(units) || units < 1) { setAddError('Le coefficient doit être ≥ 1.'); return; }
+
+    setAddSaving(true);
+    try {
+      const { data } = await apiClient.post(`/api/products/${product!.id}/packaging-formats`, {
+        label:             addLabel.trim(),
+        units_per_package: units,
+        is_base_unit:      addIsBase,
+      });
+      setFormats((prev) => [...prev, data.format as PackagingFormatRow].sort(
+        (a, b) => a.units_per_package - b.units_per_package
+      ));
+      setAddLabel('');
+      setAddUnits('1');
+      setAddIsBase(false);
+    } catch (err) {
+      if (axios.isAxiosError(err)) setAddError(err.response?.data?.message ?? 'Erreur.');
+      else setAddError('Erreur inattendue.');
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
+  function startEdit(fmt: PackagingFormatRow) {
+    setEditId(fmt.id);
+    setEditLabel(fmt.label);
+    setEditUnits(String(fmt.units_per_package));
+    setEditIsBase(fmt.is_base_unit);
+    setEditError(null);
+  }
+
+  async function handleEditSave() {
+    if (!editId) return;
+    setEditError(null);
+    const units = parseInt(editUnits, 10);
+    if (!editLabel.trim()) { setEditError('Le libellé est obligatoire.'); return; }
+    if (isNaN(units) || units < 1) { setEditError('Le coefficient doit être ≥ 1.'); return; }
+
+    setEditSaving(true);
+    try {
+      const { data } = await apiClient.put(
+        `/api/products/${product!.id}/packaging-formats/${editId}`,
+        { label: editLabel.trim(), units_per_package: units, is_base_unit: editIsBase },
+      );
+      setFormats((prev) =>
+        prev.map((f) => {
+          if (f.id === editId) return data.format as PackagingFormatRow;
+          // Si ce format est devenu la nouvelle unité de base, désactiver les autres
+          if ((data.format as PackagingFormatRow).is_base_unit && f.is_base_unit) {
+            return { ...f, is_base_unit: false };
+          }
+          return f;
+        }).sort((a, b) => a.units_per_package - b.units_per_package)
+      );
+      setEditId(null);
+    } catch (err) {
+      if (axios.isAxiosError(err)) setEditError(err.response?.data?.message ?? 'Erreur.');
+      else setEditError('Erreur inattendue.');
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      await apiClient.delete(`/api/products/${product!.id}/packaging-formats/${id}`);
+      setFormats((prev) => prev.filter((f) => f.id !== id));
+      if (editId === id) setEditId(null);
+    } catch (err) {
+      if (axios.isAxiosError(err)) setFetchError(err.response?.data?.message ?? 'Erreur suppression.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  if (!product) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-formats-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-lg mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+        {/* En-tête */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <div>
+            <h2 id="modal-formats-title" className="text-base font-medium text-textMain">
+              Formats de conditionnement
+            </h2>
+            <p className="text-xs text-textMuted mt-0.5">
+              {product.name}{' '}
+              <span className="font-mono">{product.sku}</span>
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+            aria-label="Fermer"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Corps scrollable */}
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto px-6 py-5 gap-5">
+
+          {fetchError && (
+            <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+              {fetchError}
+            </p>
+          )}
+
+          {/* Liste des formats existants */}
+          <section>
+            <p className="text-xs font-medium text-textSecondary mb-2 uppercase tracking-wide">
+              Formats définis
+            </p>
+
+            {loading ? (
+              <div className="space-y-2">
+                {[1, 2].map((n) => (
+                  <div key={n} className="h-10 bg-borderLight rounded animate-pulse" />
+                ))}
+              </div>
+            ) : formats.length === 0 ? (
+              <p className="text-sm text-textMuted italic py-2">
+                Aucun format défini pour ce produit.
+              </p>
+            ) : (
+              <div className="divide-y divide-borderLight border border-borderLight rounded overflow-hidden">
+                {formats.map((fmt) => (
+                  <div key={fmt.id} className="bg-background">
+                    {editId === fmt.id ? (
+                      /* Ligne en mode édition */
+                      <div className="px-4 py-3 flex flex-col gap-2">
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={editLabel}
+                            onChange={(e) => setEditLabel(e.target.value)}
+                            className={inputCls + ' flex-1'}
+                            placeholder="Libellé…"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            value={editUnits}
+                            onChange={(e) => setEditUnits(e.target.value)}
+                            className={inputCls + ' w-24'}
+                            placeholder="Coeff."
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-textMuted cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editIsBase}
+                            onChange={(e) => setEditIsBase(e.target.checked)}
+                            className="rounded"
+                          />
+                          Unité de base (coefficient = 1)
+                        </label>
+                        {editError && (
+                          <p className="text-xs text-danger">{editError}</p>
+                        )}
+                        <div className="flex gap-2 justify-end">
+                          <Button variant="secondary" size="sm" onClick={() => setEditId(null)}>
+                            Annuler
+                          </Button>
+                          <Button size="sm" onClick={handleEditSave} disabled={editSaving}>
+                            {editSaving ? 'Enregistrement…' : 'Enregistrer'}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Ligne affichage */
+                      <div className="px-4 py-2.5 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-textMain">{fmt.label}</span>
+                          <span className="ml-2 text-xs text-textMuted">
+                            ×{fmt.units_per_package} unité{fmt.units_per_package > 1 ? 's' : ''}
+                          </span>
+                          {fmt.is_base_unit && (
+                            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+                              Base
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => startEdit(fmt)}
+                            aria-label={`Modifier ${fmt.label}`}
+                          >
+                            Modifier
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleDelete(fmt.id)}
+                            disabled={deletingId === fmt.id}
+                            aria-label={`Supprimer ${fmt.label}`}
+                          >
+                            {deletingId === fmt.id ? '…' : 'Supprimer'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Formulaire ajout */}
+          <section>
+            <p className="text-xs font-medium text-textSecondary mb-2 uppercase tracking-wide">
+              Ajouter un format
+            </p>
+            <form onSubmit={handleAdd} className="flex flex-col gap-3">
+              <div className="flex gap-2">
+                <div className="flex flex-col gap-1 flex-1">
+                  <label className="text-xs text-textSecondary">Libellé</label>
+                  <input
+                    type="text"
+                    value={addLabel}
+                    onChange={(e) => setAddLabel(e.target.value)}
+                    className={inputCls}
+                    placeholder="ex. Carton, Pack ×6, Palette…"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 w-28">
+                  <label className="text-xs text-textSecondary">Coefficient</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={addUnits}
+                    onChange={(e) => setAddUnits(e.target.value)}
+                    className={inputCls}
+                    placeholder="ex. 24"
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-textMuted cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={addIsBase}
+                  onChange={(e) => setAddIsBase(e.target.checked)}
+                  className="rounded"
+                />
+                Unité de base — coefficient obligatoirement 1
+              </label>
+              {addError && (
+                <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+                  {addError}
+                </p>
+              )}
+              <div className="flex justify-end">
+                <Button type="submit" size="sm" disabled={addSaving}>
+                  {addSaving ? 'Ajout…' : '+ Ajouter'}
+                </Button>
+              </div>
+            </form>
+          </section>
+        </div>
+
+        {/* Pied */}
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end flex-shrink-0">
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Fermer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
 // MODALES — PRODUITS
 // ===========================================================================
 
@@ -1203,6 +1547,7 @@ function ProductsTab({
   const [productToEdit, setProductToEdit]                 = useState<ProductRow | null>(null);
   const [productToDeactivate, setProductToDeactivate]     = useState<ProductRow | null>(null);
   const [productToReactivate, setProductToReactivate]     = useState<ProductRow | null>(null);
+  const [productForFormats, setProductForFormats]         = useState<ProductRow | null>(null);
 
   // Debounce 300ms
   useEffect(() => {
@@ -1235,6 +1580,7 @@ function ProductsTab({
   }
 
   const colCount = canEditProducts ? 7 : 6;  // SKU Nom Catégorie Unité Prix Statut [Actions]
+  // Note : isSA ajoute le bouton "Formats" dans la colonne Actions existante
 
   return (
     <div className="flex flex-col gap-6">
@@ -1399,6 +1745,16 @@ function ProductsTab({
                         >
                           Modifier
                         </Button>
+                        {isSA && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setProductForFormats(product)}
+                            aria-label={`Formats de conditionnement — ${product.name}`}
+                          >
+                            Formats
+                          </Button>
+                        )}
                         {isSA && product.is_active && (
                           <Button
                             variant="secondary"
@@ -1453,6 +1809,10 @@ function ProductsTab({
         product={productToReactivate}
         onClose={() => setProductToReactivate(null)}
         onSuccess={onReload}
+      />
+      <PackagingFormatsModal
+        product={productForFormats}
+        onClose={() => setProductForFormats(null)}
       />
     </div>
   );

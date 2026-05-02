@@ -586,7 +586,6 @@ function AuditDetailModal({
     // Mouvements de stock & rapports d'inventaire
     type:                      'Type',
     qty:                       'Quantité',
-    reason:                    'Motif',
     period_start:              'Début de période',
     period_end:                'Fin de période',
     adjustments_count:         'Ajustements appliqués',

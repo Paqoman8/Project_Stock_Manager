@@ -28,6 +28,8 @@ export interface CreateReceptionInput {
   items: Array<{
     product_id: string;
     received_qty: number;
+    /** Format de conditionnement reçu — si absent, hérité depuis la ligne de commande. */
+    packaging_format_id?: string;
   }>;
 }
 
@@ -92,7 +94,9 @@ export async function createReception(
     where:   { id: input.order_id },
     include: {
       items: {
-        include: { supplier_product: { select: { product_id: true, units_per_order: true } } },
+        include: {
+          supplier_product: { select: { product_id: true, units_per_order: true } },
+        },
       },
     },
   });
@@ -107,25 +111,29 @@ export async function createReception(
     throw new Error('INVALID_ORDER_STATUS');
   }
 
-  // Construire un index product_id → units_per_order depuis les lignes de commande
-  const unitsPerOrderByProduct = new Map<string, number>();
+  // Construire un index product_id → { units_per_order, packaging_format_id } depuis les lignes de commande
+  const orderInfoByProduct = new Map<string, { unitsPerOrder: number; packagingFormatId: string | null }>();
   for (const oi of order.items) {
-    unitsPerOrderByProduct.set(
-      oi.supplier_product.product_id,
-      oi.supplier_product.units_per_order,
-    );
+    orderInfoByProduct.set(oi.supplier_product.product_id, {
+      unitsPerOrder:      oi.supplier_product.units_per_order,
+      packagingFormatId:  (oi as unknown as { packaging_format_id: string | null }).packaging_format_id ?? null,
+    });
   }
 
-  // Calculer stock_units_added pour chaque ligne de réception
+  // Calculer stock_units_added + propager le format pour chaque ligne de réception
   const enrichedItems = input.items.map((item) => {
-    const unitsPerOrder = unitsPerOrderByProduct.get(item.product_id);
-    if (unitsPerOrder === undefined) {
+    const info = orderInfoByProduct.get(item.product_id);
+    if (!info) {
       throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
     }
+    const resolvedFormatId = item.packaging_format_id ?? info.packagingFormatId ?? undefined;
     return {
-      product_id:        item.product_id,
-      received_qty:      item.received_qty,
-      stock_units_added: item.received_qty * unitsPerOrder,
+      product_id:          item.product_id,
+      received_qty:        item.received_qty,
+      stock_units_added:   item.received_qty * info.unitsPerOrder,
+      packaging_format_id: resolvedFormatId,
+      // packages_received = received_qty (les unités de commande = les colis du format)
+      packages_received:   resolvedFormatId != null ? item.received_qty : undefined,
     };
   });
 

@@ -2,8 +2,8 @@
 //
 // Handlers HTTP pour les mouvements de stock.
 //
-// GET  /api/stock-movements         → requireAuth (tous rôles)
-// POST /api/stock-movements         → requireAuth + SA/Admin/Manager
+// GET  /api/stock-movements  → requireAuth (tous rôles)
+// POST /api/stock-movements  → requireAuth + SA/Admin/Manager
 
 import { Response } from 'express';
 import { z, ZodError } from 'zod';
@@ -28,13 +28,24 @@ function extractIp(req: AuthenticatedRequest): string {
 
 const MANUAL_TYPES = ['INITIAL', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT'] as const;
 
-const createMovementSchema = z.object({
-  store_id:   z.string().uuid('UUID établissement invalide'),
-  product_id: z.string().uuid('UUID produit invalide'),
-  type:       z.enum(MANUAL_TYPES, { message: 'Type de mouvement invalide.' }),
-  qty:        z.number().int().positive('La quantité doit être un entier positif.'),
-  reason:     z.string().optional(),
-});
+const createMovementSchema = z
+  .object({
+    store_id:            z.string().uuid('UUID établissement invalide'),
+    product_id:          z.string().uuid('UUID produit invalide'),
+    type:                z.enum(MANUAL_TYPES, { message: 'Type de mouvement invalide.' }),
+    // qty requis seulement si pas de format — validé ci-dessous via refine
+    qty:                 z.number().int().positive('La quantité doit être un entier positif.').optional(),
+    reason:              z.string().optional(),
+    // Conditionnement optionnel
+    packaging_format_id: z.string().uuid('UUID format invalide').optional(),
+    packages_count:      z.number().int().positive('Le nombre de colis doit être un entier positif.').optional(),
+  })
+  .refine(
+    (d) => d.packaging_format_id ? d.packages_count !== undefined : d.qty !== undefined,
+    {
+      message: 'Fournissez qty (sans format) ou packages_count + packaging_format_id (avec format).',
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -64,7 +75,7 @@ export async function getMovements(req: AuthenticatedRequest, res: Response): Pr
 
 /**
  * POST /api/stock-movements
- * Body : { store_id, product_id, type, qty, reason? }
+ * Body : { store_id, product_id, type, qty?, reason?, packaging_format_id?, packages_count? }
  */
 export async function createMovement(req: AuthenticatedRequest, res: Response): Promise<void> {
   const parseResult = createMovementSchema.safeParse(req.body);
@@ -77,6 +88,8 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
   const storeId = req.user!.storeId;
   const ip      = extractIp(req);
 
+  const { qty, packaging_format_id, packages_count, ...rest } = parseResult.data;
+
   try {
     const [actorName, storeName] = await Promise.all([
       resolveActorName(actorId),
@@ -84,7 +97,14 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const movement = await movementService.createMovement(
-      { ...parseResult.data, performed_by_id: actorId },
+      {
+        ...rest,
+        // qty sera recalculé si format fourni ; sinon on utilise celui envoyé
+        qty:                 qty ?? 0,
+        performed_by_id:     actorId,
+        packaging_format_id,
+        packages_count,
+      },
       actorId,
       actorName,
       storeId,
@@ -99,6 +119,10 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
         return void res.status(404).json({ success: false, message: 'Établissement introuvable.' });
       if (error.message === 'PRODUCT_NOT_FOUND')
         return void res.status(404).json({ success: false, message: 'Produit introuvable.' });
+      if (error.message === 'FORMAT_NOT_FOUND')
+        return void res.status(404).json({ success: false, message: 'Format de conditionnement introuvable ou non associé à ce produit.' });
+      if (error.message === 'PACKAGES_COUNT_REQUIRED')
+        return void res.status(400).json({ success: false, message: 'Le nombre de colis est obligatoire lorsqu\'un format est sélectionné.' });
       if (error.message === 'INITIAL_STOCK_ALREADY_EXISTS')
         return void res.status(409).json({ success: false, message: 'Un stock initial existe déjà pour ce produit dans cet établissement.' });
       if (error.message === 'REASON_REQUIRED')

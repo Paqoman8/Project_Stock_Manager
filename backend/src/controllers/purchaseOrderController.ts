@@ -45,6 +45,8 @@ const purchaseOrderItemSchema = z.object({
   ordered_qty:         z.number().int().positive('ordered_qty doit être un entier positif'),
   /** Prix unitaire au moment de la commande — nombre strictement positif. */
   unit_price:          z.number().positive('unit_price doit être un nombre positif'),
+  /** Format de conditionnement commandé (optionnel). */
+  packaging_format_id: z.string().uuid('packaging_format_id doit être un UUID valide').optional(),
 });
 
 /** Schéma de validation pour la création d'une commande. */
@@ -77,6 +79,8 @@ const updatePurchaseOrderSchema = z.object({
     ordered_qty:         z.number().int().positive('ordered_qty doit être un entier positif'),
     /** Prix unitaire au moment de la commande — nombre strictement positif. */
     unit_price:          z.number().positive('unit_price doit être un nombre positif'),
+    /** Format de conditionnement commandé (optionnel). */
+    packaging_format_id: z.string().uuid('packaging_format_id doit être un UUID valide').optional(),
   })).min(1, 'La commande doit contenir au moins une ligne.').optional(),
 });
 

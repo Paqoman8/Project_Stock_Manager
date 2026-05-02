@@ -22,12 +22,14 @@ export interface PurchaseOrderItemRow {
   supplier_product_id: string;
   ordered_qty: number;
   unit_price: string;    // Decimal Prisma — sérialisé en string par JSON.stringify
+  packaging_format_id: string | null;
   supplier_product: {
     id: string;
     order_unit: string;
     units_per_order: number;
     product: { id: string; name: string; sku: string; unit: string };
   };
+  packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
 
 /** Une commande fournisseur complète telle que retournée par toutes les fonctions. */
@@ -69,6 +71,7 @@ export interface CreatePurchaseOrderData {
     supplier_product_id: string;
     ordered_qty: number;
     unit_price: number;
+    packaging_format_id?: string;
   }>;
 }
 
@@ -81,6 +84,7 @@ export interface UpdatePurchaseOrderData {
     supplier_product_id: string;
     ordered_qty: number;
     unit_price: number;
+    packaging_format_id?: string;
   }>;
 }
 
@@ -89,6 +93,7 @@ export interface OrderItemInput {
   supplier_product_id: string;
   ordered_qty: number;
   unit_price: number;
+  packaging_format_id?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +114,7 @@ const PURCHASE_ORDER_INCLUDE = {
           product: { select: { id: true, name: true, sku: true, unit: true } },
         },
       },
+      packaging_format: { select: { id: true, label: true, units_per_package: true } },
     },
   },
   invoice: { select: { id: true, status: true } },
@@ -196,6 +202,7 @@ export async function create(data: CreatePurchaseOrderData): Promise<PurchaseOrd
           supplier_product_id: item.supplier_product_id,
           ordered_qty:         item.ordered_qty,
           unit_price:          item.unit_price,
+          packaging_format_id: item.packaging_format_id ?? null,
         })),
       },
     },
@@ -230,6 +237,7 @@ export async function update(id: string, data: UpdatePurchaseOrderData): Promise
             supplier_product_id: item.supplier_product_id,
             ordered_qty:         item.ordered_qty,
             unit_price:          item.unit_price,
+            packaging_format_id: item.packaging_format_id ?? null,
           })),
         },
       },
@@ -281,6 +289,7 @@ export async function addItem(orderId: string, item: OrderItemInput): Promise<Pu
       supplier_product_id: item.supplier_product_id,
       ordered_qty:         item.ordered_qty,
       unit_price:          item.unit_price,
+      packaging_format_id: item.packaging_format_id ?? null,
     },
   });
 

@@ -63,6 +63,20 @@ interface InventoryRow {
   product: { id: string; name: string; sku: string; unit: string };
 }
 
+interface BreakdownRow {
+  id:                  string;
+  packaging_format_id: string;
+  quantity:            number;
+  packaging_format:    { id: string; label: string; units_per_package: number; is_base_unit: boolean };
+}
+
+interface PackagingFormat {
+  id:                string;
+  label:             string;
+  units_per_package: number;
+  is_base_unit:      boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -282,17 +296,53 @@ function StockMovementModal({
   const [saving,    setSaving]    = useState(false);
   const [error,     setError]     = useState<string | null>(null);
 
+  // Formats de conditionnement
+  const [formats,         setFormats]         = useState<PackagingFormat[]>([]);
+  const [selectedFormatId, setSelectedFormatId] = useState<string>('');
+  const [packagesCount,   setPackagesCount]   = useState('');
+
+  const selectedFormat = formats.find((f) => f.id === selectedFormatId) ?? null;
+  const previewUnits   = selectedFormat && packagesCount
+    ? (parseInt(packagesCount, 10) || 0) * selectedFormat.units_per_package
+    : null;
+
   const needsReason = type === 'ADJUSTMENT_IN' || type === 'ADJUSTMENT_OUT';
+
+  // Charger les formats dès qu'un produit est connu
+  useEffect(() => {
+    const pid = row?.product_id ?? productId;
+    if (!pid) { setFormats([]); setSelectedFormatId(''); return; }
+    apiClient.get(`/api/products/${pid}/packaging-formats`)
+      .then(({ data }) => {
+        const fmts = data.formats as PackagingFormat[];
+        setFormats(fmts);
+        // Pré-sélectionner l'unité de base si disponible
+        const base = fmts.find((f) => f.is_base_unit);
+        setSelectedFormatId(base?.id ?? '');
+      })
+      .catch(() => setFormats([]));
+  }, [row?.product_id, productId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    const qtyNum = parseInt(qty, 10);
-    if (isNaN(qtyNum) || qtyNum <= 0) {
-      setError('La quantité doit être un entier positif.');
-      return;
+    if (selectedFormatId) {
+      // Mode avec format : packages_count obligatoire
+      const count = parseInt(packagesCount, 10);
+      if (isNaN(count) || count <= 0) {
+        setError('Le nombre de colis doit être un entier positif.');
+        return;
+      }
+    } else {
+      // Mode sans format : qty obligatoire
+      const qtyNum = parseInt(qty, 10);
+      if (isNaN(qtyNum) || qtyNum <= 0) {
+        setError('La quantité doit être un entier positif.');
+        return;
+      }
     }
+
     if (needsReason && !reason.trim()) {
       setError('Un motif est obligatoire pour les ajustements.');
       return;
@@ -300,13 +350,21 @@ function StockMovementModal({
 
     setSaving(true);
     try {
-      await apiClient.post('/api/stock-movements', {
+      const body: Record<string, unknown> = {
         store_id:   storeId   || undefined,
         product_id: productId || undefined,
         type,
-        qty:    qtyNum,
         reason: reason.trim() || undefined,
-      });
+      };
+
+      if (selectedFormatId) {
+        body.packaging_format_id = selectedFormatId;
+        body.packages_count      = parseInt(packagesCount, 10);
+      } else {
+        body.qty = parseInt(qty, 10);
+      }
+
+      await apiClient.post('/api/stock-movements', body);
       onSaved();
     } catch (err) {
       setError(extractApiError(err, 'Impossible d\'enregistrer le mouvement.'));
@@ -360,15 +418,53 @@ function StockMovementModal({
               </select>
             </div>
 
-            {/* Quantité */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-textSecondary">Quantité</label>
-              <input
-                type="number" min={1} value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                className={inputCls} placeholder="ex. 50"
-              />
-            </div>
+            {/* Format de conditionnement */}
+            {formats.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">Format de conditionnement</label>
+                <select
+                  value={selectedFormatId}
+                  onChange={(e) => { setSelectedFormatId(e.target.value); setQty(''); setPackagesCount(''); }}
+                  className={inputCls}
+                >
+                  <option value="">— Sans format (unités brutes) —</option>
+                  {formats.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label} (×{f.units_per_package}{f.is_base_unit ? ' — base' : ''})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Quantité — mode avec format */}
+            {selectedFormatId ? (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">
+                  Nombre de colis{selectedFormat ? ` (${selectedFormat.label})` : ''}
+                </label>
+                <input
+                  type="number" min={1} value={packagesCount}
+                  onChange={(e) => setPackagesCount(e.target.value)}
+                  className={inputCls} placeholder="ex. 2"
+                />
+                {previewUnits !== null && previewUnits > 0 && (
+                  <p className="text-xs text-textMuted">
+                    = <span className="font-medium text-textMain">{previewUnits}</span> unité{previewUnits > 1 ? 's' : ''} de base
+                  </p>
+                )}
+              </div>
+            ) : (
+              /* Quantité — mode sans format */
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">Quantité (unités de base)</label>
+                <input
+                  type="number" min={1} value={qty}
+                  onChange={(e) => setQty(e.target.value)}
+                  className={inputCls} placeholder="ex. 50"
+                />
+              </div>
+            )}
 
             {/* Motif (obligatoire pour ajustements) */}
             <div className="flex flex-col gap-1">
@@ -425,6 +521,35 @@ export default function InventoryPage() {
   // Modale mouvement de stock
   const [movementRow, setMovementRow] = useState<InventoryRow | null | undefined>(undefined);
   // undefined = fermé, null = ouvert sans pré-sélection, InventoryRow = ouvert avec ligne
+
+  // Ventilation par format — clé : "storeId-productId"
+  const [expandedKeys, setExpandedKeys]   = useState<Set<string>>(new Set());
+  const [breakdownData, setBreakdownData] = useState<Record<string, BreakdownRow[]>>({});
+  const [breakdownLoading, setBreakdownLoading] = useState<Set<string>>(new Set());
+
+  function toggleBreakdown(row: InventoryRow) {
+    const key = `${row.store_id}-${row.product_id}`;
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) { next.delete(key); return next; }
+      next.add(key);
+      return next;
+    });
+    // Charger les données seulement si pas encore chargées
+    if (!breakdownData[key]) {
+      setBreakdownLoading((prev) => new Set(prev).add(key));
+      apiClient.get(`/api/inventory/${row.store_id}/${row.product_id}/breakdown`)
+        .then(({ data }) => {
+          setBreakdownData((prev) => ({ ...prev, [key]: data.breakdown as BreakdownRow[] }));
+        })
+        .catch(() => {
+          setBreakdownData((prev) => ({ ...prev, [key]: [] }));
+        })
+        .finally(() => {
+          setBreakdownLoading((prev) => { const next = new Set(prev); next.delete(key); return next; });
+        });
+    }
+  }
 
   // -------------------------------------------------------------------
   // Chargement des données
@@ -593,6 +718,7 @@ export default function InventoryPage() {
                 <th className="px-4 py-3 font-medium text-textMuted text-right">Seuil min</th>
                 <th className="px-4 py-3 font-medium text-textMuted text-right">Réappro.</th>
                 <th className="px-4 py-3 font-medium text-textMuted">Alerte</th>
+                <th className="px-4 py-3 font-medium text-textMuted">Ventilation</th>
                 {(canEdit || canMove) && (
                   <th className="px-4 py-3 font-medium text-textMuted">Actions</th>
                 )}
@@ -600,11 +726,11 @@ export default function InventoryPage() {
             </thead>
             <tbody className="divide-y divide-borderLight">
               {loading ? (
-                <SkeletonRows cols={(canEdit || canMove) ? 9 : 8} />
+                <SkeletonRows cols={(canEdit || canMove) ? 10 : 9} />
               ) : inventory.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={(canEdit || canMove) ? 9 : 8}
+                    colSpan={(canEdit || canMove) ? 10 : 9}
                     className="px-4 py-8 text-center text-sm text-textMuted"
                   >
                     Aucune entrée d'inventaire.
@@ -612,13 +738,18 @@ export default function InventoryPage() {
                 </tr>
               ) : (
                 inventory.map((row) => {
-                  const available = row.stock_physical - row.stock_reserved;
-                  const isLow     = row.stock_min > 0 && row.stock_physical <= row.stock_min;
-                  const unit      = UNIT_LABELS[row.product.unit] ?? row.product.unit;
+                  const available  = row.stock_physical - row.stock_reserved;
+                  const isLow      = row.stock_min > 0 && row.stock_physical <= row.stock_min;
+                  const unit       = UNIT_LABELS[row.product.unit] ?? row.product.unit;
+                  const key        = `${row.store_id}-${row.product_id}`;
+                  const isExpanded = expandedKeys.has(key);
+                  const breakdown  = breakdownData[key] ?? [];
+                  const isLoadingBreakdown = breakdownLoading.has(key);
+                  const colSpan    = (canEdit || canMove) ? 10 : 9;
 
                   return (
+                    <React.Fragment key={key}>
                     <tr
-                      key={`${row.store_id}-${row.product_id}`}
                       className={['hover:bg-background/60 transition-colors', isLow ? 'bg-red-50/30' : ''].join(' ')}
                     >
                       {/* Établissement */}
@@ -676,6 +807,26 @@ export default function InventoryPage() {
                         <StockAlertBadge row={row} />
                       </td>
 
+                      {/* Bouton ventilation */}
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => toggleBreakdown(row)}
+                          className="text-xs text-primary hover:underline focus:outline-none flex items-center gap-1"
+                          aria-expanded={isExpanded}
+                          aria-label="Afficher la ventilation par format"
+                        >
+                          <svg
+                            width="10" height="10" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                            className={['transition-transform', isExpanded ? 'rotate-90' : ''].join(' ')}
+                            aria-hidden="true"
+                          >
+                            <polyline points="9 18 15 12 9 6" />
+                          </svg>
+                          {isExpanded ? 'Masquer' : 'Voir'}
+                        </button>
+                      </td>
+
                       {/* Actions */}
                       {(canEdit || canMove) && (
                         <td className="px-4 py-3">
@@ -694,6 +845,42 @@ export default function InventoryPage() {
                         </td>
                       )}
                     </tr>
+
+                    {/* Panneau de ventilation */}
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={colSpan} className="px-0 py-0 bg-background/40">
+                          <div className="px-8 py-3 border-t border-borderLight">
+                            {isLoadingBreakdown ? (
+                              <p className="text-xs text-textMuted">Chargement…</p>
+                            ) : breakdown.length === 0 ? (
+                              <p className="text-xs text-textMuted italic">
+                                Aucune ventilation enregistrée. Les prochains mouvements avec un format mettront à jour cette vue.
+                              </p>
+                            ) : (
+                              <div className="flex flex-wrap gap-3">
+                                {breakdown.map((b) => (
+                                  <div
+                                    key={b.id}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-borderLight rounded text-sm"
+                                  >
+                                    {b.packaging_format.is_base_unit && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" aria-hidden="true" />
+                                    )}
+                                    <span className="font-medium text-textMain">{b.quantity}</span>
+                                    <span className="text-textMuted">{b.packaging_format.label}</span>
+                                    <span className="text-xs text-textMuted/60">
+                                      = {b.quantity * b.packaging_format.units_per_package} {unit}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })
               )}

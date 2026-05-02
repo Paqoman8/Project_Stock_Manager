@@ -41,6 +41,8 @@ const receptionItemSchema = z.object({
   product_id:   z.string().uuid('product_id doit être un UUID valide'),
   /** Quantité reçue en unités de commande — entier strictement positif. */
   received_qty: z.number().int().positive('received_qty doit être un entier positif'),
+  /** Format de conditionnement reçu (optionnel — hérité depuis la commande si absent). */
+  packaging_format_id: z.string().uuid('packaging_format_id doit être un UUID valide').optional(),
 });
 
 /** Schéma de validation pour la création d'une réception. */

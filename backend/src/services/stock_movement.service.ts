@@ -3,9 +3,12 @@
 // Logique métier pour les mouvements de stock.
 //
 // Règles :
-//   - INITIAL : impossible si une entrée d'inventaire existe déjà
+//   - INITIAL : impossible si une entrée d'inventaire avec stock > 0 existe déjà
 //   - ADJUSTMENT_IN / ADJUSTMENT_OUT : motif obligatoire
-//   - ADJUSTMENT_OUT : ne peut pas dépasser le stock disponible (warning, non bloquant)
+//   - Si packaging_format_id fourni :
+//       · Le format doit appartenir au produit
+//       · packages_count obligatoire (> 0)
+//       · qty est calculé server-side : packages_count × units_per_package
 //   - Journalise chaque mouvement dans l'audit
 
 import { AuditAction, MovementType } from '@prisma/client';
@@ -33,16 +36,18 @@ export async function getMovements(
 /**
  * Crée un mouvement de stock manuel.
  *
- * @throws Error('INITIAL_STOCK_ALREADY_EXISTS') si tentative d'INITIAL sur une entrée existante
+ * @throws Error('INITIAL_STOCK_ALREADY_EXISTS') si tentative d'INITIAL sur stock existant > 0
  * @throws Error('REASON_REQUIRED')              si ADJUSTMENT sans motif
  * @throws Error('STORE_NOT_FOUND')              si l'établissement est introuvable
  * @throws Error('PRODUCT_NOT_FOUND')            si le produit est introuvable
+ * @throws Error('FORMAT_NOT_FOUND')             si le format est introuvable ou n'appartient pas au produit
+ * @throws Error('PACKAGES_COUNT_REQUIRED')      si format fourni mais packages_count manquant
  */
 export async function createMovement(
   data: Omit<CreateMovementData, 'performed_by_id'> & { performed_by_id: string },
-  actorId: string,
+  actorId:   string,
   actorName: string,
-  storeId?: string,
+  storeId?:  string,
   storeName?: string,
   ipAddress?: string,
 ): Promise<StockMovementRow> {
@@ -60,6 +65,29 @@ export async function createMovement(
   });
   if (!product) throw new Error('PRODUCT_NOT_FOUND');
 
+  // Résolution du format et calcul de qty si packaging_format_id fourni
+  let finalQty = data.qty;
+  let packagingLabel: string | undefined;
+
+  if (data.packaging_format_id) {
+    if (!data.packages_count || data.packages_count <= 0) {
+      throw new Error('PACKAGES_COUNT_REQUIRED');
+    }
+
+    const format = await prisma.packagingFormat.findUnique({
+      where:  { id: data.packaging_format_id },
+      select: { id: true, label: true, units_per_package: true, product_id: true },
+    });
+
+    if (!format || format.product_id !== data.product_id) {
+      throw new Error('FORMAT_NOT_FOUND');
+    }
+
+    // La quantité en unités de base est calculée ici — le client n'a pas à l'envoyer
+    finalQty      = data.packages_count * format.units_per_package;
+    packagingLabel = `${data.packages_count} × ${format.label}`;
+  }
+
   // INITIAL : impossible si une entrée inventaire avec stock > 0 existe déjà
   if (data.type === 'INITIAL') {
     const existing = await prisma.inventory.findUnique({
@@ -71,7 +99,6 @@ export async function createMovement(
       },
       select: { stock_physical: true },
     });
-    // On autorise INITIAL si l'entrée n'existe pas OU si stock_physical = 0
     if (existing && existing.stock_physical !== 0) {
       throw new Error('INITIAL_STOCK_ALREADY_EXISTS');
     }
@@ -85,7 +112,10 @@ export async function createMovement(
     throw new Error('REASON_REQUIRED');
   }
 
-  const movement = await movementRepo.create(data);
+  const movement = await movementRepo.create({
+    ...data,
+    qty: finalQty,
+  });
 
   // Audit — non-bloquant
   try {
@@ -101,16 +131,16 @@ export async function createMovement(
       action:     AuditAction.STOCK_MOVEMENT_CREATED,
       targetType: 'STOCK_MOVEMENT',
       targetId:   movement.id,
-      targetName: `${product.name} — ${typeLabels[data.type]} (${data.qty})`,
+      targetName: `${product.name} — ${typeLabels[data.type]} (${packagingLabel ?? finalQty})`,
       storeId,
       storeName,
       ipAddress,
       metadata: {
-        type:       data.type,
-        qty:        data.qty,
-        reason:     data.reason ?? null,
-        store_id:   data.store_id,
-        product_id: data.product_id,
+        type:                data.type,
+        qty:                 finalQty,
+        reason:              data.reason ?? null,
+        packaging_format_id: data.packaging_format_id ?? null,
+        packages_count:      data.packages_count      ?? null,
       },
     });
   } catch (err) {

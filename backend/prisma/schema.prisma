@@ -55,8 +55,9 @@ model Store {
   transactions       Transaction[]
   audit_logs         AuditLog[]        @relation("AuditStore")
   purchase_orders    PurchaseOrder[]   @relation("PurchaseOrderDestination")
-  stock_movements    StockMovement[]
-  inventory_reports  InventoryReport[]
+  stock_movements      StockMovement[]
+  inventory_reports    InventoryReport[]
+  inventory_breakdowns InventoryBreakdown[]
 
   @@map("stores")
 }
@@ -126,10 +127,60 @@ model Product {
   transaction_items TransactionItem[]
   supplier_products SupplierProduct[]
   reception_items   ReceptionItem[]
-  stock_movements   StockMovement[]
-  report_lines      InventoryReportLine[]
+  stock_movements      StockMovement[]
+  report_lines         InventoryReportLine[]
+  packaging_formats    PackagingFormat[]
+  inventory_breakdowns InventoryBreakdown[]
 
   @@map("products")
+}
+
+// ---------------------------------------------------------------------------
+// Formats de conditionnement — unités de vente/stockage par produit
+//
+// Exemples : Unité ×1, Pack ×6, Carton ×24, Palette ×240
+// Défini au niveau produit (catalogue), la disponibilité par magasin
+// sera gérée dans InventoryBreakdown (Phase 2).
+// ---------------------------------------------------------------------------
+
+model PackagingFormat {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  product_id        String               @db.Uuid
+  label             String               // "Unité", "Pack ×6", "Carton ×24"
+  units_per_package Int                  // Nombre d'unités de base par colis (≥ 1)
+  is_base_unit      Boolean              @default(false) // Un seul par produit — unité de référence
+  created_at        DateTime             @default(now())
+  updated_at        DateTime             @updatedAt
+  product           Product              @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  stock_movements      StockMovement[]
+  inventory_breakdowns InventoryBreakdown[]
+  purchase_order_items PurchaseOrderItem[]
+  reception_items      ReceptionItem[]
+
+  @@unique([product_id, label])
+  @@map("packaging_formats")
+}
+
+// ---------------------------------------------------------------------------
+// Ventilation du stock par format de conditionnement (par magasin × produit × format)
+//
+// Complément optionnel de Inventory.stock_physical.
+// Mis à jour uniquement quand un mouvement précise un packaging_format_id.
+// stock_physical reste la source de vérité totale.
+// ---------------------------------------------------------------------------
+
+model InventoryBreakdown {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id            String          @db.Uuid
+  product_id          String          @db.Uuid
+  packaging_format_id String          @db.Uuid
+  quantity            Int             @default(0)  // Nombre de colis de ce format
+  store               Store           @relation(fields: [store_id], references: [id])
+  product             Product         @relation(fields: [product_id], references: [id])
+  packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id])
+
+  @@unique([store_id, product_id, packaging_format_id])
+  @@map("inventory_breakdowns")
 }
 
 model Inventory {
@@ -393,13 +444,15 @@ model PurchaseOrderSequence {
 }
 
 model PurchaseOrderItem {
-  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  order_id            String          @db.Uuid
-  supplier_product_id String          @db.Uuid
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id            String           @db.Uuid
+  supplier_product_id String           @db.Uuid
   ordered_qty         Int
-  unit_price          Decimal         @db.Decimal(10, 2) // Dénormalisé au moment de la commande
-  order               PurchaseOrder   @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  supplier_product    SupplierProduct @relation(fields: [supplier_product_id], references: [id])
+  unit_price          Decimal          @db.Decimal(10, 2) // Dénormalisé au moment de la commande
+  packaging_format_id String?          @db.Uuid           // Format de conditionnement commandé (optionnel)
+  order               PurchaseOrder    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  supplier_product    SupplierProduct  @relation(fields: [supplier_product_id], references: [id])
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
   @@unique([order_id, supplier_product_id])
   @@map("purchase_order_items")
@@ -431,13 +484,16 @@ model StockReception {
 }
 
 model ReceptionItem {
-  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reception_id      String         @db.Uuid
-  product_id        String         @db.Uuid
-  received_qty      Int            // Quantité reçue en unités de commande
-  stock_units_added Int            // = received_qty × units_per_order (dénormalisé)
-  reception         StockReception @relation(fields: [reception_id], references: [id], onDelete: Cascade)
-  product           Product        @relation(fields: [product_id], references: [id])
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reception_id        String           @db.Uuid
+  product_id          String           @db.Uuid
+  received_qty        Int              // Quantité reçue en unités de commande
+  stock_units_added   Int              // = received_qty × units_per_order (dénormalisé)
+  packaging_format_id String?          @db.Uuid // Format de conditionnement reçu (optionnel)
+  packages_received   Int?             // = received_qty si format renseigné (dénormalisé pour breakdown)
+  reception           StockReception   @relation(fields: [reception_id], references: [id], onDelete: Cascade)
+  product             Product          @relation(fields: [product_id], references: [id])
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
   @@map("reception_items")
 }
@@ -517,17 +573,21 @@ enum MovementType {
 }
 
 model StockMovement {
-  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  store_id        String       @db.Uuid
-  product_id      String       @db.Uuid
-  type            MovementType
-  qty             Int          // Toujours positif — la direction est portée par le type
-  reason          String?      // Motif libre (obligatoire pour ADJUSTMENT_*)
-  performed_by_id String       @db.Uuid
-  created_at      DateTime     @default(now())
-  store           Store        @relation(fields: [store_id], references: [id])
-  product         Product      @relation(fields: [product_id], references: [id])
-  performed_by    User         @relation("MovementsPerformedBy", fields: [performed_by_id], references: [id])
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id            String          @db.Uuid
+  product_id          String          @db.Uuid
+  type                MovementType
+  qty                 Int             // Toujours positif en unités de base
+  reason              String?         // Motif libre (obligatoire pour ADJUSTMENT_*)
+  performed_by_id     String          @db.Uuid
+  // Conditionnement optionnel — non nul quand le mouvement est saisi par format
+  packaging_format_id String?         @db.Uuid
+  packages_count      Int?            // Nombre de colis (qty = packages_count × units_per_package)
+  created_at          DateTime        @default(now())
+  store               Store           @relation(fields: [store_id], references: [id])
+  product             Product         @relation(fields: [product_id], references: [id])
+  performed_by        User            @relation("MovementsPerformedBy", fields: [performed_by_id], references: [id])
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
   @@map("stock_movements")
 }

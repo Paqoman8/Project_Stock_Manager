@@ -43,18 +43,27 @@ type PurchaseOrderStatus =
   | 'RECEIVED'
   | 'CANCELLED';
 
+interface PackagingFormat {
+  id: string;
+  label: string;
+  units_per_package: number;
+  is_base_unit: boolean;
+}
+
 interface PurchaseOrderItemRow {
   id: string;
   order_id: string;
   supplier_product_id: string;
   ordered_qty: number;
   unit_price: string; // Decimal sérialisé
+  packaging_format_id: string | null;
   supplier_product: {
     id: string;
     order_unit: string;
     units_per_order: number;
     product: { id: string; name: string; sku: string; unit: string };
   };
+  packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
 
 interface PurchaseOrderRow {
@@ -217,8 +226,10 @@ interface CreateOrderItem {
   min_order_qty: number;
   product_name: string;
   product_sku: string;
+  product_id: string;
   order_unit: string;
   units_per_order: number;
+  packaging_format_id?: string;
 }
 
 interface CreateOrderFormData {
@@ -253,6 +264,8 @@ function CreateOrderModal({
   const [loadingProducts, setLoadingProducts]   = useState(false);
   // selectedItems : map de supplier_product_id → CreateOrderItem
   const [selectedItems, setSelectedItems] = useState<Map<string, CreateOrderItem>>(new Map());
+  // formats : map de product_id → PackagingFormat[]
+  const [formatsMap, setFormatsMap]       = useState<Map<string, PackagingFormat[]>>(new Map());
   const [apiError, setApiError]           = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting]   = useState(false);
   const firstInputRef = useRef<HTMLSelectElement>(null);
@@ -263,6 +276,7 @@ function CreateOrderModal({
     setForm(emptyForm);
     setSupplierProducts([]);
     setSelectedItems(new Map());
+    setFormatsMap(new Map());
     setApiError(null);
     setTimeout(() => firstInputRef.current?.focus(), 50);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -283,6 +297,7 @@ function CreateOrderModal({
     if (!form.supplier_id) {
       setSupplierProducts([]);
       setSelectedItems(new Map());
+      setFormatsMap(new Map());
       return;
     }
     let cancelled = false;
@@ -296,6 +311,7 @@ function CreateOrderModal({
           setSupplierProducts(res.data.supplierProducts ?? []);
           // Réinitialiser les lignes sélectionnées si le fournisseur change
           setSelectedItems(new Map());
+          setFormatsMap(new Map());
         }
       })
       .catch(() => {
@@ -307,10 +323,28 @@ function CreateOrderModal({
     return () => { cancelled = true; };
   }, [form.supplier_id]);
 
+  // Charger les formats d'un produit à la demande
+  function loadFormatsForProduct(productId: string) {
+    if (formatsMap.has(productId)) return;
+    apiClient
+      .get<{ success: boolean; formats: PackagingFormat[] }>(
+        `/api/products/${productId}/packaging-formats`
+      )
+      .then(({ data }) => {
+        setFormatsMap((prev) => new Map(prev).set(productId, data.formats ?? []));
+      })
+      .catch(() => {
+        setFormatsMap((prev) => new Map(prev).set(productId, []));
+      });
+  }
+
   function handleToggleProduct(sp: SupplierProductOption, checked: boolean) {
+    if (checked) loadFormatsForProduct(sp.product.id);
     setSelectedItems((prev) => {
       const next = new Map(prev);
       if (checked) {
+        const formats        = formatsMap.get(sp.product.id) ?? [];
+        const baseFormat     = formats.find((f) => f.is_base_unit);
         next.set(sp.id, {
           supplier_product_id: sp.id,
           ordered_qty:         sp.min_order_qty,
@@ -318,8 +352,10 @@ function CreateOrderModal({
           min_order_qty:       sp.min_order_qty,
           product_name:        sp.product.name,
           product_sku:         sp.product.sku,
+          product_id:          sp.product.id,
           order_unit:          sp.order_unit,
           units_per_order:     sp.units_per_order,
+          packaging_format_id: baseFormat?.id,
         });
       } else {
         next.delete(sp.id);
@@ -330,8 +366,8 @@ function CreateOrderModal({
 
   function handleItemChange(
     spId: string,
-    field: 'ordered_qty' | 'unit_price',
-    value: number
+    field: 'ordered_qty' | 'unit_price' | 'packaging_format_id',
+    value: number | string
   ) {
     setSelectedItems((prev) => {
       const next = new Map(prev);
@@ -376,7 +412,7 @@ function CreateOrderModal({
       destination_store_id: string;
       notes?: string;
       expected_at?: string;
-      items: Array<{ supplier_product_id: string; ordered_qty: number; unit_price: number }>;
+      items: Array<{ supplier_product_id: string; ordered_qty: number; unit_price: number; packaging_format_id?: string }>;
     } = {
       supplier_id:          form.supplier_id,
       destination_store_id: form.destination_store_id,
@@ -384,6 +420,7 @@ function CreateOrderModal({
         supplier_product_id: item.supplier_product_id,
         ordered_qty:         item.ordered_qty,
         unit_price:          item.unit_price,
+        ...(item.packaging_format_id ? { packaging_format_id: item.packaging_format_id } : {}),
       })),
     };
     if (form.notes.trim())     payload.notes       = form.notes.trim();
@@ -573,45 +610,73 @@ function CreateOrderModal({
                             </div>
                           </label>
 
-                          {/* Champs qté + prix — visibles si coché */}
+                          {/* Champs qté + prix + format — visibles si coché */}
                           {isChecked && item && (
-                            <div className="flex items-end gap-3 pl-7">
-                              <div className="flex flex-col gap-1 flex-1">
-                                <label
-                                  htmlFor={`qty-${sp.id}`}
-                                  className="text-xs font-medium text-textSecondary"
-                                >
-                                  Quantité <span className="text-textMuted">(min. {sp.min_order_qty})</span>
-                                </label>
-                                <input
-                                  id={`qty-${sp.id}`}
-                                  type="number"
-                                  step={1}
-                                  value={item.ordered_qty}
-                                  onChange={(e) =>
-                                    handleItemChange(sp.id, 'ordered_qty', parseInt(e.target.value, 10) || sp.min_order_qty)
-                                  }
-                                  className={inputCls}
-                                />
+                            <div className="flex flex-col gap-2 pl-7">
+                              <div className="flex items-end gap-3">
+                                <div className="flex flex-col gap-1 flex-1">
+                                  <label
+                                    htmlFor={`qty-${sp.id}`}
+                                    className="text-xs font-medium text-textSecondary"
+                                  >
+                                    Quantité <span className="text-textMuted">(min. {sp.min_order_qty})</span>
+                                  </label>
+                                  <input
+                                    id={`qty-${sp.id}`}
+                                    type="number"
+                                    step={1}
+                                    value={item.ordered_qty}
+                                    onChange={(e) =>
+                                      handleItemChange(sp.id, 'ordered_qty', parseInt(e.target.value, 10) || sp.min_order_qty)
+                                    }
+                                    className={inputCls}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1 flex-1">
+                                  <label
+                                    htmlFor={`price-${sp.id}`}
+                                    className="text-xs font-medium text-textSecondary"
+                                  >
+                                    Prix unitaire (XOF)
+                                  </label>
+                                  <input
+                                    id={`price-${sp.id}`}
+                                    type="number"
+                                    step={0.01}
+                                    value={item.unit_price}
+                                    onChange={(e) =>
+                                      handleItemChange(sp.id, 'unit_price', parseFloat(e.target.value) || 0)
+                                    }
+                                    className={inputCls}
+                                  />
+                                </div>
                               </div>
-                              <div className="flex flex-col gap-1 flex-1">
-                                <label
-                                  htmlFor={`price-${sp.id}`}
-                                  className="text-xs font-medium text-textSecondary"
-                                >
-                                  Prix unitaire (XOF)
-                                </label>
-                                <input
-                                  id={`price-${sp.id}`}
-                                  type="number"
-                                  step={0.01}
-                                  value={item.unit_price}
-                                  onChange={(e) =>
-                                    handleItemChange(sp.id, 'unit_price', parseFloat(e.target.value) || 0)
-                                  }
-                                  className={inputCls}
-                                />
-                              </div>
+                              {/* Sélecteur de format de conditionnement */}
+                              {(formatsMap.get(sp.product.id) ?? []).length > 0 && (
+                                <div className="flex flex-col gap-1">
+                                  <label
+                                    htmlFor={`format-${sp.id}`}
+                                    className="text-xs font-medium text-textSecondary"
+                                  >
+                                    Format de conditionnement
+                                  </label>
+                                  <select
+                                    id={`format-${sp.id}`}
+                                    value={item.packaging_format_id ?? ''}
+                                    onChange={(e) =>
+                                      handleItemChange(sp.id, 'packaging_format_id', e.target.value)
+                                    }
+                                    className={inputCls}
+                                  >
+                                    <option value="">Sans format spécifique</option>
+                                    {(formatsMap.get(sp.product.id) ?? []).map((f) => (
+                                      <option key={f.id} value={f.id}>
+                                        {f.label} ({f.units_per_package} unité{f.units_per_package > 1 ? 's' : ''})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -677,6 +742,7 @@ function EditOrderModal({
   const [supplierProducts, setSupplierProducts]             = useState<SupplierProductOption[]>([]);
   const [loadingProducts, setLoadingProducts]               = useState(false);
   const [selectedItems, setSelectedItems]                   = useState<Map<string, CreateOrderItem>>(new Map());
+  const [formatsMap, setFormatsMap]                         = useState<Map<string, PackagingFormat[]>>(new Map());
   const [apiError, setApiError]                             = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting]                     = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -688,6 +754,7 @@ function EditOrderModal({
     setExpectedAt(order.expected_at ? order.expected_at.slice(0, 10) : '');
     setDestinationStoreId(order.destination_store_id);
     setApiError(null);
+    setFormatsMap(new Map());
 
     // Pré-remplir les lignes depuis les items existants
     const initialItems = new Map<string, CreateOrderItem>();
@@ -699,11 +766,24 @@ function EditOrderModal({
         min_order_qty:       1, // Mis à jour après chargement du catalogue fournisseur
         product_name:        item.supplier_product.product.name,
         product_sku:         item.supplier_product.product.sku,
+        product_id:          item.supplier_product.product.id,
         order_unit:          item.supplier_product.order_unit,
         units_per_order:     item.supplier_product.units_per_order,
+        packaging_format_id: item.packaging_format_id ?? undefined,
       });
     }
     setSelectedItems(initialItems);
+
+    // Pré-charger les formats pour les produits déjà sélectionnés
+    const productIds = [...new Set(order.items.map((i) => i.supplier_product.product.id))];
+    productIds.forEach((pid) => {
+      apiClient
+        .get<{ success: boolean; formats: PackagingFormat[] }>(`/api/products/${pid}/packaging-formats`)
+        .then(({ data }) => {
+          setFormatsMap((prev) => new Map(prev).set(pid, data.formats ?? []));
+        })
+        .catch(() => {});
+    });
 
     setTimeout(() => firstInputRef.current?.focus(), 50);
   }, [order]);
@@ -739,6 +819,21 @@ function EditOrderModal({
     return () => { cancelled = true; };
   }, [order?.supplier_id]);
 
+  // Charger les formats d'un produit à la demande (EditOrderModal)
+  function loadFormatsForProduct(productId: string) {
+    if (formatsMap.has(productId)) return;
+    apiClient
+      .get<{ success: boolean; formats: PackagingFormat[] }>(
+        `/api/products/${productId}/packaging-formats`
+      )
+      .then(({ data }) => {
+        setFormatsMap((prev) => new Map(prev).set(productId, data.formats ?? []));
+      })
+      .catch(() => {
+        setFormatsMap((prev) => new Map(prev).set(productId, []));
+      });
+  }
+
   // Fermeture par Escape
   useEffect(() => {
     if (!order) return;
@@ -750,9 +845,12 @@ function EditOrderModal({
   }, [order, onClose]);
 
   function handleToggleProduct(sp: SupplierProductOption, checked: boolean) {
+    if (checked) loadFormatsForProduct(sp.product.id);
     setSelectedItems((prev) => {
       const next = new Map(prev);
       if (checked) {
+        const formats    = formatsMap.get(sp.product.id) ?? [];
+        const baseFormat = formats.find((f) => f.is_base_unit);
         next.set(sp.id, {
           supplier_product_id: sp.id,
           ordered_qty:         sp.min_order_qty,
@@ -760,8 +858,10 @@ function EditOrderModal({
           min_order_qty:       sp.min_order_qty,
           product_name:        sp.product.name,
           product_sku:         sp.product.sku,
+          product_id:          sp.product.id,
           order_unit:          sp.order_unit,
           units_per_order:     sp.units_per_order,
+          packaging_format_id: baseFormat?.id,
         });
       } else {
         next.delete(sp.id);
@@ -772,8 +872,8 @@ function EditOrderModal({
 
   function handleItemChange(
     spId: string,
-    field: 'ordered_qty' | 'unit_price',
-    value: number
+    field: 'ordered_qty' | 'unit_price' | 'packaging_format_id',
+    value: number | string
   ) {
     setSelectedItems((prev) => {
       const next = new Map(prev);
@@ -814,12 +914,13 @@ function EditOrderModal({
       destination_store_id?: string;
       notes?: string;
       expected_at?: string;
-      items: Array<{ supplier_product_id: string; ordered_qty: number; unit_price: number }>;
+      items: Array<{ supplier_product_id: string; ordered_qty: number; unit_price: number; packaging_format_id?: string }>;
     } = {
       items: Array.from(selectedItems.values()).map((item) => ({
         supplier_product_id: item.supplier_product_id,
         ordered_qty:         item.ordered_qty,
         unit_price:          item.unit_price,
+        ...(item.packaging_format_id ? { packaging_format_id: item.packaging_format_id } : {}),
       })),
     };
 
@@ -992,45 +1093,73 @@ function EditOrderModal({
                           </div>
                         </label>
 
-                        {/* Champs qté + prix — visibles si coché */}
+                        {/* Champs qté + prix + format — visibles si coché */}
                         {isChecked && item && (
-                          <div className="flex items-end gap-3 pl-7">
-                            <div className="flex flex-col gap-1 flex-1">
-                              <label
-                                htmlFor={`edit-qty-${sp.id}`}
-                                className="text-xs font-medium text-textSecondary"
-                              >
-                                Quantité <span className="text-textMuted">(min. {sp.min_order_qty})</span>
-                              </label>
-                              <input
-                                id={`edit-qty-${sp.id}`}
-                                type="number"
-                                step={1}
-                                value={item.ordered_qty}
-                                onChange={(e) =>
-                                  handleItemChange(sp.id, 'ordered_qty', parseInt(e.target.value, 10) || sp.min_order_qty)
-                                }
-                                className={inputCls}
-                              />
+                          <div className="flex flex-col gap-2 pl-7">
+                            <div className="flex items-end gap-3">
+                              <div className="flex flex-col gap-1 flex-1">
+                                <label
+                                  htmlFor={`edit-qty-${sp.id}`}
+                                  className="text-xs font-medium text-textSecondary"
+                                >
+                                  Quantité <span className="text-textMuted">(min. {sp.min_order_qty})</span>
+                                </label>
+                                <input
+                                  id={`edit-qty-${sp.id}`}
+                                  type="number"
+                                  step={1}
+                                  value={item.ordered_qty}
+                                  onChange={(e) =>
+                                    handleItemChange(sp.id, 'ordered_qty', parseInt(e.target.value, 10) || sp.min_order_qty)
+                                  }
+                                  className={inputCls}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1 flex-1">
+                                <label
+                                  htmlFor={`edit-price-${sp.id}`}
+                                  className="text-xs font-medium text-textSecondary"
+                                >
+                                  Prix unitaire (XOF)
+                                </label>
+                                <input
+                                  id={`edit-price-${sp.id}`}
+                                  type="number"
+                                  step={0.01}
+                                  value={item.unit_price}
+                                  onChange={(e) =>
+                                    handleItemChange(sp.id, 'unit_price', parseFloat(e.target.value) || 0)
+                                  }
+                                  className={inputCls}
+                                />
+                              </div>
                             </div>
-                            <div className="flex flex-col gap-1 flex-1">
-                              <label
-                                htmlFor={`edit-price-${sp.id}`}
-                                className="text-xs font-medium text-textSecondary"
-                              >
-                                Prix unitaire (XOF)
-                              </label>
-                              <input
-                                id={`edit-price-${sp.id}`}
-                                type="number"
-                                step={0.01}
-                                value={item.unit_price}
-                                onChange={(e) =>
-                                  handleItemChange(sp.id, 'unit_price', parseFloat(e.target.value) || 0)
-                                }
-                                className={inputCls}
-                              />
-                            </div>
+                            {/* Sélecteur de format de conditionnement */}
+                            {(formatsMap.get(sp.product.id) ?? []).length > 0 && (
+                              <div className="flex flex-col gap-1">
+                                <label
+                                  htmlFor={`edit-format-${sp.id}`}
+                                  className="text-xs font-medium text-textSecondary"
+                                >
+                                  Format de conditionnement
+                                </label>
+                                <select
+                                  id={`edit-format-${sp.id}`}
+                                  value={item.packaging_format_id ?? ''}
+                                  onChange={(e) =>
+                                    handleItemChange(sp.id, 'packaging_format_id', e.target.value)
+                                  }
+                                  className={inputCls}
+                                >
+                                  <option value="">Sans format spécifique</option>
+                                  {(formatsMap.get(sp.product.id) ?? []).map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.label} ({f.units_per_package} unité{f.units_per_package > 1 ? 's' : ''})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1402,7 +1531,7 @@ function OrderDetailModal({
               >
                 <thead>
                   <tr className="bg-background border-b border-borderLight">
-                    {['Produit', 'SKU', 'Qté commandée', 'Unité cmd', 'Unités/cmd', 'Prix unitaire', 'Sous-total'].map((col) => (
+                    {['Produit', 'SKU', 'Format', 'Qté commandée', 'Unité cmd', 'Unités/cmd', 'Prix unitaire', 'Sous-total'].map((col) => (
                       <th
                         key={col}
                         scope="col"
@@ -1416,7 +1545,7 @@ function OrderDetailModal({
                 <tbody>
                   {order.items.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-6 text-center text-sm text-textMuted">
+                      <td colSpan={8} className="px-4 py-6 text-center text-sm text-textMuted">
                         Aucune ligne de commande.
                       </td>
                     </tr>
@@ -1430,6 +1559,11 @@ function OrderDetailModal({
                           </td>
                           <td className="px-4 py-3 text-textMuted whitespace-nowrap font-mono text-xs">
                             {item.supplier_product.product.sku}
+                          </td>
+                          <td className="px-4 py-3 text-textMuted whitespace-nowrap">
+                            {item.packaging_format
+                              ? item.packaging_format.label
+                              : <span className="text-textMuted/50 italic text-xs">—</span>}
                           </td>
                           <td className="px-4 py-3 text-textMain tabular-nums">
                             {item.ordered_qty}

@@ -12,6 +12,7 @@ import { Response } from 'express';
 import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import * as inventoryService from '../services/inventory.service';
+import * as breakdownRepo    from '../repositories/inventory_breakdown.repository';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -145,6 +146,25 @@ export async function updateThresholds(req: AuthenticatedRequest, res: Response)
     }
 
     console.error('Erreur lors de la mise à jour des seuils :', error);
+    res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
+  }
+}
+
+/**
+ * GET /api/inventory/:storeId/:productId/breakdown
+ *
+ * Retourne la ventilation du stock par format de conditionnement.
+ * Réponse 200 : { success: true, breakdown: InventoryBreakdownRow[] }
+ */
+export async function getBreakdown(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const storeId   = req.params.storeId   as string;
+  const productId = req.params.productId as string;
+
+  try {
+    const breakdown = await breakdownRepo.findByInventory(storeId, productId);
+    res.status(200).json({ success: true, breakdown });
+  } catch (error) {
+    console.error('Erreur lors de la récupération de la ventilation :', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
   }
 }

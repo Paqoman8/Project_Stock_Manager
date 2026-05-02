@@ -19,6 +19,7 @@ import supplierInvoiceRouter  from './routes/supplierInvoiceRoutes';
 import inventoryRouter        from './routes/inventoryRoutes';
 import stockMovementRouter    from './routes/stockMovementRoutes';
 import inventoryReportRouter  from './routes/inventoryReportRoutes';
+import packagingFormatRouter  from './routes/packagingFormatRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -84,6 +85,9 @@ app.use('/api/supplier-products', supplierProductRouter);
 // Gestion du catalogue — catégories et produits
 app.use('/api/categories', categoryRouter);
 app.use('/api/products',   productRouter);
+
+// Formats de conditionnement (imbriqués sous les produits)
+app.use('/api/products/:productId/packaging-formats', packagingFormatRouter);
 
 // Commandes fournisseurs, réceptions de stock et factures fournisseurs
 app.use('/api/purchase-orders', purchaseOrderRouter);

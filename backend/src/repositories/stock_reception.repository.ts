@@ -23,7 +23,10 @@ export interface ReceptionItemRow {
   product_id: string;
   received_qty: number;
   stock_units_added: number;
+  packaging_format_id: string | null;
+  packages_received: number | null;
   product: { id: string; name: string; sku: string; unit: string };
+  packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
 
 /** Une réception de stock complète telle que retournée par toutes les fonctions. */
@@ -49,6 +52,8 @@ export interface CreateReceptionData {
     product_id: string;
     received_qty: number;
     stock_units_added: number;
+    packaging_format_id?: string;
+    packages_received?: number;
   }>;
 }
 
@@ -63,7 +68,8 @@ const RECEPTION_INCLUDE = {
   received_by: { select: { id: true, username: true } },
   items: {
     include: {
-      product: { select: { id: true, name: true, sku: true, unit: true } },
+      product:          { select: { id: true, name: true, sku: true, unit: true } },
+      packaging_format: { select: { id: true, label: true, units_per_package: true } },
     },
   },
 } as const;
@@ -112,9 +118,11 @@ export async function create(data: CreateReceptionData): Promise<StockReceptionR
       notes:          data.notes ?? null,
       items: {
         create: data.items.map((item) => ({
-          product_id:        item.product_id,
-          received_qty:      item.received_qty,
-          stock_units_added: item.stock_units_added,
+          product_id:          item.product_id,
+          received_qty:        item.received_qty,
+          stock_units_added:   item.stock_units_added,
+          packaging_format_id: item.packaging_format_id ?? null,
+          packages_received:   item.packages_received   ?? null,
         })),
       },
     },
@@ -151,7 +159,7 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
     const orderId       = reception.order_id;
     const destStoreId   = reception.order.destination_store_id;
 
-    // 2. Upsert Inventory pour chaque ligne reçue
+    // 2. Upsert Inventory + InventoryBreakdown pour chaque ligne reçue
     for (const item of reception.items) {
       await tx.inventory.upsert({
         where: {
@@ -170,6 +178,27 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
           stock_physical: { increment: item.stock_units_added },
         },
       });
+
+      // Mettre à jour la ventilation si un format de conditionnement est renseigné
+      const itemExt = item as unknown as { packaging_format_id: string | null; packages_received: number | null };
+      if (itemExt.packaging_format_id && itemExt.packages_received != null) {
+        await (tx as unknown as typeof prisma).inventoryBreakdown.upsert({
+          where: {
+            store_id_product_id_packaging_format_id: {
+              store_id:            destStoreId,
+              product_id:          item.product_id,
+              packaging_format_id: itemExt.packaging_format_id,
+            },
+          },
+          update: { quantity: { increment: itemExt.packages_received } },
+          create: {
+            store_id:            destStoreId,
+            product_id:          item.product_id,
+            packaging_format_id: itemExt.packaging_format_id,
+            quantity:            itemExt.packages_received,
+          },
+        });
+      }
     }
 
     // 3. Déterminer le nouveau statut de la commande
