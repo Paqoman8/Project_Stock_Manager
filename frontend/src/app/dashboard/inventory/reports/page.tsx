@@ -319,7 +319,8 @@ function ReportDetailModal({
     );
   }
 
-  async function saveLines() {
+  // Retourne true si la sauvegarde a réussi, false sinon
+  async function saveLines(): Promise<boolean> {
     setSavingLines(true);
     setError(null);
     try {
@@ -338,8 +339,10 @@ function ReportDetailModal({
       });
       onUpdated(data.report as InventoryReport);
       setLines((data.report as InventoryReport).lines);
+      return true;
     } catch (err) {
       setError(extractApiError(err, 'Impossible de sauvegarder les lignes.'));
+      return false;
     } finally {
       setSavingLines(false);
     }
@@ -356,6 +359,13 @@ function ReportDetailModal({
     } finally {
       setActionLoading(null);
     }
+  }
+
+  // Sauvegarde les lignes puis soumet — garantit que les valeurs saisies sont persistées
+  async function handleSubmit() {
+    const saved = await saveLines();
+    if (!saved) return;
+    await doAction('submit');
   }
 
   async function handleApplyAdjustments() {
@@ -596,14 +606,14 @@ function ReportDetailModal({
                 </Button>
               )}
 
-              {/* Soumettre — uniquement depuis DRAFT (REJECTED est terminal) */}
+              {/* Soumettre — sauvegarde les lignes puis change le statut */}
               {isDraft && (
                 <Button
                   size="sm"
-                  onClick={() => doAction('submit')}
-                  disabled={actionLoading === 'submit'}
+                  onClick={handleSubmit}
+                  disabled={savingLines || actionLoading === 'submit'}
                 >
-                  {actionLoading === 'submit' ? 'Soumission…' : 'Soumettre pour validation'}
+                  {savingLines ? 'Sauvegarde…' : actionLoading === 'submit' ? 'Soumission…' : 'Soumettre pour validation'}
                 </Button>
               )}
 
