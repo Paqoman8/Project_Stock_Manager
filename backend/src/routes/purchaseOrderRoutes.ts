@@ -18,6 +18,7 @@ import {
   updatePurchaseOrder,
   sendPurchaseOrder,
   cancelPurchaseOrder,
+  closePurchaseOrder,
 } from '../controllers/purchaseOrderController';
 
 const purchaseOrderRouter = Router();
@@ -40,7 +41,15 @@ purchaseOrderRouter.put('/:id', superAdminOnly, updatePurchaseOrder);
 // PATCH /api/purchase-orders/:id/send — passe la commande au statut SENT
 purchaseOrderRouter.patch('/:id/send', superAdminOnly, sendPurchaseOrder);
 
-// PATCH /api/purchase-orders/:id/cancel — annule la commande
+// PATCH /api/purchase-orders/:id/cancel — annule la commande (SA uniquement)
 purchaseOrderRouter.patch('/:id/cancel', superAdminOnly, cancelPurchaseOrder);
+
+// PATCH /api/purchase-orders/:id/close — clôture définitive d'une commande PARTIALLY_RECEIVED
+// Accessible : SA, Admin, Manager (décision opérationnelle après entente fournisseur)
+purchaseOrderRouter.patch(
+  '/:id/close',
+  [requireAuth, requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin')],
+  closePurchaseOrder,
+);
 
 export default purchaseOrderRouter;

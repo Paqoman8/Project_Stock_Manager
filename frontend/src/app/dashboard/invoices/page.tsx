@@ -60,6 +60,7 @@ interface PurchaseOrderRow {
   supplier:  { id: string; name: string };
   destination_store: { id: string; name: string };
   invoice:   SupplierInvoiceRow | null;
+  items:     { ordered_qty: number; unit_price: string }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,19 @@ function CreateInvoiceModal({
       ['SENT', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(o.status) &&
       !o.invoice,
   );
+
+  // Auto-remplissage du montant dès qu'une commande est sélectionnée
+  useEffect(() => {
+    if (!orderId) return;
+    const selectedOrder = facturableOrders.find((o) => o.id === orderId);
+    if (!selectedOrder || !selectedOrder.items?.length) return;
+    const total = selectedOrder.items.reduce(
+      (sum, item) => sum + item.ordered_qty * parseFloat(item.unit_price),
+      0,
+    );
+    setAmount(String(Math.round(total)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId]);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }

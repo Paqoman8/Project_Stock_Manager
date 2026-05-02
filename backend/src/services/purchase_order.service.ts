@@ -334,6 +334,52 @@ export async function sendPurchaseOrder(
 }
 
 /**
+ * Clôture définitivement une commande PARTIALLY_RECEIVED.
+ *
+ * Utilisé quand une entente à l'amiable a été trouvée avec le fournisseur
+ * et que le stock manquant ne sera jamais reçu.
+ * La commande passe de PARTIALLY_RECEIVED → RECEIVED (état terminal).
+ *
+ * @throws Error('ORDER_NOT_FOUND')           si la commande n'existe pas
+ * @throws Error('INVALID_STATUS_TRANSITION') si la commande n'est pas PARTIALLY_RECEIVED
+ */
+export async function closePurchaseOrder(
+  id: string,
+  actorId: string,
+  actorName: string,
+  storeId?: string,
+  storeName?: string,
+  ipAddress?: string,
+): Promise<PurchaseOrderRow> {
+  const existing = await orderRepo.findById(id);
+  if (!existing) throw new Error('ORDER_NOT_FOUND');
+  if (existing.status !== PurchaseOrderStatus.PARTIALLY_RECEIVED) {
+    throw new Error('INVALID_STATUS_TRANSITION');
+  }
+
+  const order = await orderRepo.updateStatus(id, PurchaseOrderStatus.RECEIVED);
+
+  try {
+    await logAction({
+      actorId,
+      actorName,
+      action:     AuditAction.PURCHASE_ORDER_CLOSED,
+      targetType: 'PURCHASE_ORDER',
+      targetId:   order.id,
+      targetName: order.reference,
+      storeId,
+      storeName,
+      ipAddress,
+      metadata:   { reason: 'Clôture manuelle — stock partiellement reçu accepté' },
+    });
+  } catch (err) {
+    console.error('[audit] Échec du log PURCHASE_ORDER_CLOSED :', err);
+  }
+
+  return order;
+}
+
+/**
  * Annule une commande en statut DRAFT ou SENT.
  *
  * Règle métier : seule une commande en DRAFT ou SENT peut être annulée.

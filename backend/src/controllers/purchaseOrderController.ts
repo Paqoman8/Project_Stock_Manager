@@ -383,6 +383,53 @@ export async function sendPurchaseOrder(req: AuthenticatedRequest, res: Response
 }
 
 /**
+ * PATCH /api/purchase-orders/:id/close
+ *
+ * Clôture définitivement une commande PARTIALLY_RECEIVED (→ RECEIVED).
+ * Accessible aux SA, Administrateurs et Managers Magasin.
+ *
+ * Params   : id — UUID de la commande
+ * Réponse 200 : { success: true, message, order: PurchaseOrderRow }
+ * Réponse 404 : { success: false, message } si introuvable
+ * Réponse 422 : { success: false, message } si statut invalide
+ */
+export async function closePurchaseOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const id      = req.params.id as string;
+  const actorId = req.user!.userId;
+  const storeId = req.user!.storeId;
+  const ip      = extractIp(req);
+
+  try {
+    const [actorName, storeName] = await Promise.all([
+      resolveActorName(actorId),
+      resolveStoreName(storeId),
+    ]);
+
+    const order = await orderService.closePurchaseOrder(id, actorId, actorName, storeId, storeName, ip);
+
+    res.status(200).json({
+      success: true,
+      message: `La commande "${order.reference}" a été clôturée définitivement.`,
+      order,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'ORDER_NOT_FOUND') {
+      res.status(404).json({ success: false, message: 'Commande introuvable.' });
+      return;
+    }
+    if (error instanceof Error && error.message === 'INVALID_STATUS_TRANSITION') {
+      res.status(422).json({
+        success: false,
+        message: 'Seule une commande partiellement reçue peut être clôturée manuellement.',
+      });
+      return;
+    }
+    console.error('Erreur lors de la clôture de la commande :', error);
+    res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
+  }
+}
+
+/**
  * PATCH /api/purchase-orders/:id/cancel
  *
  * Annule une commande en statut DRAFT ou SENT.

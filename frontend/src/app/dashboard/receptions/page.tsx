@@ -1024,6 +1024,115 @@ function CancelReceptionModal({
 }
 
 // ---------------------------------------------------------------------------
+// Modale 5 : Clôture définitive d'une commande PARTIALLY_RECEIVED
+// ---------------------------------------------------------------------------
+
+function CloseOrderModal({
+  order,
+  onClose,
+  onSuccess,
+}: {
+  order:     PurchaseOrderRow | null;
+  onClose:   () => void;
+  onSuccess: () => void;
+}) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [apiError,     setApiError]     = useState<string | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!order) return;
+    setApiError(null);
+    setTimeout(() => confirmBtnRef.current?.focus(), 50);
+  }, [order]);
+
+  useEffect(() => {
+    if (!order) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [order, onClose]);
+
+  async function handleConfirm() {
+    if (!order) return;
+    setIsSubmitting(true);
+    setApiError(null);
+    try {
+      await apiClient.patch(`/api/purchase-orders/${order.id}/close`);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setApiError(extractApiError(err, 'Une erreur est survenue lors de la clôture.'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!order) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="close-order-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-sm mx-4 bg-surface border border-borderLight rounded shadow-lg">
+
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="close-order-title" className="text-base font-medium text-textMain">
+            Clôturer la commande
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="px-6 py-5 flex flex-col gap-3">
+          <p className="text-sm text-textMuted">
+            Voulez-vous clôturer définitivement la commande{' '}
+            <strong className="text-textMain font-mono">{order.reference}</strong> ?
+          </p>
+          <p className="text-sm text-textMuted">
+            Le stock partiellement reçu sera conservé tel quel. Les quantités manquantes
+            ne seront plus attendues (entente à l&apos;amiable avec le fournisseur).
+          </p>
+          <p className="text-xs text-danger font-medium">
+            Cette action est irréversible. La commande passera au statut Reçu.
+          </p>
+          {apiError && (
+            <p role="alert" className="text-sm text-danger">{apiError}</p>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button
+            ref={confirmBtnRef}
+            type="button"
+            variant="danger"
+            size="sm"
+            isLoading={isSubmitting}
+            onClick={handleConfirm}
+          >
+            Clôturer définitivement
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Composant principal
 // ---------------------------------------------------------------------------
 
@@ -1031,8 +1140,9 @@ export default function ReceptionsPage() {
   const router = useRouter();
   const { user: sessionUser, isLoading: sessionLoading } = useSession();
 
-  const isSA    = sessionUser?.roleName === ROLE_SA;
-  const isAdmin = sessionUser?.roleName === ROLE_ADMIN;
+  const isSA      = sessionUser?.roleName === ROLE_SA;
+  const isAdmin   = sessionUser?.roleName === ROLE_ADMIN;
+  const isManager = sessionUser?.roleName === 'Manager Magasin';
 
   // Données
   const [orders, setOrders] = useState<PurchaseOrderRow[]>([]);
@@ -1041,9 +1151,10 @@ export default function ReceptionsPage() {
 
   // État des modales
   const [orderToReceive, setOrderToReceive] = useState<PurchaseOrderRow | null>(null);
-  const [orderToView, setOrderToView] = useState<PurchaseOrderRow | null>(null);
+  const [orderToView,    setOrderToView]    = useState<PurchaseOrderRow | null>(null);
+  const [orderToClose,   setOrderToClose]   = useState<PurchaseOrderRow | null>(null);
   const [receptionToConfirm, setReceptionToConfirm] = useState<StockReceptionRow | null>(null);
-  const [receptionToCancel, setReceptionToCancel] = useState<StockReceptionRow | null>(null);
+  const [receptionToCancel,  setReceptionToCancel]  = useState<StockReceptionRow | null>(null);
 
   // ---------------------------------------------------------------------------
   // Contrôle d'accès : redirection si rôle non autorisé
@@ -1241,7 +1352,7 @@ export default function ReceptionsPage() {
 
                   {/* Actions */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Button
                         variant="primary"
                         size="sm"
@@ -1258,6 +1369,18 @@ export default function ReceptionsPage() {
                       >
                         Historique
                       </Button>
+                      {/* Clôture définitive — commande partiellement reçue + rôle autorisé */}
+                      {order.status === 'PARTIALLY_RECEIVED' && (isSA || isAdmin || isManager) && (
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setOrderToClose(order)}
+                          aria-label={`Clôturer définitivement la commande ${order.reference}`}
+                          title="Fermer la réception définitivement après entente avec le fournisseur"
+                        >
+                          Clôturer
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1292,6 +1415,12 @@ export default function ReceptionsPage() {
       <CancelReceptionModal
         reception={receptionToCancel}
         onClose={() => setReceptionToCancel(null)}
+        onSuccess={loadData}
+      />
+
+      <CloseOrderModal
+        order={orderToClose}
+        onClose={() => setOrderToClose(null)}
         onSuccess={loadData}
       />
     </div>
