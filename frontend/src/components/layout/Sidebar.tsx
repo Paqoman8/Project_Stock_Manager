@@ -291,7 +291,8 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
               />
               <NavSubItem
                 href="/dashboard/supplier-products"
-                label="Catalogue fournisseur"
+                // label="Catalogue fournisseur"
+                label="Catalogue"
                 icon={<IconSupplierProducts className="flex-shrink-0 opacity-75" />}
                 currentPath={pathname}
               />
