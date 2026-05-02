@@ -2,11 +2,7 @@
 //
 // Routes de gestion des commandes fournisseurs (PurchaseOrder).
 //
-// Accès :
-//   - Lecture et création  : requireAuth (SA + Admin)
-//   - Modification         : requireAuth (service vérifie que la commande est DRAFT)
-//   - Envoi                : requireAuth
-//   - Annulation           : requireAuth + requireRole('Super Administrateur')
+// Accès : toutes les routes réservées Super Administrateur uniquement.
 
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
@@ -22,27 +18,24 @@ import {
 
 const purchaseOrderRouter = Router();
 
+const superAdminOnly = [requireAuth, requireRole('Super Administrateur')];
+
 // GET /api/purchase-orders — liste les commandes (filtres : supplier_id, destination_store_id, status)
-purchaseOrderRouter.get('/', requireAuth, getPurchaseOrders);
+purchaseOrderRouter.get('/', superAdminOnly, getPurchaseOrders);
 
 // GET /api/purchase-orders/:id — récupère une commande par son UUID
-purchaseOrderRouter.get('/:id', requireAuth, getPurchaseOrderById);
+purchaseOrderRouter.get('/:id', superAdminOnly, getPurchaseOrderById);
 
 // POST /api/purchase-orders — crée une nouvelle commande
-purchaseOrderRouter.post('/', requireAuth, createPurchaseOrder);
+purchaseOrderRouter.post('/', superAdminOnly, createPurchaseOrder);
 
 // PUT /api/purchase-orders/:id — met à jour les champs d'une commande DRAFT
-purchaseOrderRouter.put('/:id', requireAuth, updatePurchaseOrder);
+purchaseOrderRouter.put('/:id', superAdminOnly, updatePurchaseOrder);
 
 // PATCH /api/purchase-orders/:id/send — passe la commande au statut SENT
-purchaseOrderRouter.patch('/:id/send', requireAuth, sendPurchaseOrder);
+purchaseOrderRouter.patch('/:id/send', superAdminOnly, sendPurchaseOrder);
 
-// PATCH /api/purchase-orders/:id/cancel — annule la commande (SA uniquement)
-purchaseOrderRouter.patch(
-  '/:id/cancel',
-  requireAuth,
-  requireRole('Super Administrateur'),
-  cancelPurchaseOrder,
-);
+// PATCH /api/purchase-orders/:id/cancel — annule la commande
+purchaseOrderRouter.patch('/:id/cancel', superAdminOnly, cancelPurchaseOrder);
 
 export default purchaseOrderRouter;

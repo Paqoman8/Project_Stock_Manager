@@ -114,7 +114,7 @@ export async function findAll(filters: ProductFilters = {}): Promise<ProductRow[
         : {}),
     },
     select:  PRODUCT_SELECT,
-    orderBy: { name: 'asc' },
+    orderBy: { created_at: 'desc' },
   });
 
   // Sérialise Decimal → string pour chaque ligne
@@ -185,6 +185,7 @@ export async function update(id: string, data: UpdateProductData): Promise<Produ
   const updateData: Record<string, unknown> = {};
   if (data.name        !== undefined) updateData.name        = data.name;
   if (data.price       !== undefined) updateData.price       = data.price;
+  if (data.unit        !== undefined) updateData.unit        = data.unit;
   if (data.category_id !== undefined) updateData.category_id = data.category_id;
   if (data.description !== undefined) updateData.description = data.description;
 

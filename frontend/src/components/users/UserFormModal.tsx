@@ -415,10 +415,17 @@ export function UserFormModal({
           <fieldset>
             <legend className="text-sm font-medium text-textSecondary mb-2">
               Magasins accessibles
-              <span className="text-danger ml-0.5" aria-hidden="true">
-                *
-              </span>
+              {!isEditingOwnAdminAccount && (
+                <span className="text-danger ml-0.5" aria-hidden="true">
+                  *
+                </span>
+              )}
             </legend>
+            {isEditingOwnAdminAccount && (
+              <p className="text-xs text-textMuted mb-2">
+                Vos accès magasin ne peuvent pas être modifiés par vous-même.
+              </p>
+            )}
 
             {stores.length === 0 ? (
               <p className="text-xs text-textMuted">
@@ -428,7 +435,43 @@ export function UserFormModal({
               <div className="flex flex-col gap-2">
                 {stores.map((store) => {
                   // Un store protégé édité pour le SA est toujours coché et non modifiable.
-                  const isForced = isEditingSuperAdmin && store.is_protected === true;
+                  // Les magasins d'un Admin éditant son propre compte sont aussi verrouillés :
+                  // un Admin ne peut pas modifier ses propres accès magasin.
+                  const isCurrentlyAssigned =
+                    isEditingOwnAdminAccount &&
+                    (user?.store_access.some((sa) => sa.store.id === store.id) ?? false);
+                  const isForced =
+                    (isEditingSuperAdmin && store.is_protected === true) ||
+                    isCurrentlyAssigned;
+
+                  // Admin éditant son propre compte : stores non attribués → désactivés + décochés
+                  if (isEditingOwnAdminAccount && !isCurrentlyAssigned) {
+                    return (
+                      <div
+                        key={store.id}
+                        className="flex items-center gap-2 text-sm text-textMuted opacity-50"
+                        aria-label={`${store.name} — non modifiable`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          disabled
+                          aria-checked="false"
+                          aria-disabled="true"
+                          className="rounded border-borderLight opacity-60 cursor-not-allowed"
+                          readOnly
+                        />
+                        <span>
+                          {store.name}
+                          {store.location && (
+                            <span className="text-textMuted ml-1 text-xs">
+                              ({store.location})
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  }
 
                   if (isForced) {
                     return (
@@ -456,7 +499,7 @@ export function UserFormModal({
                               ({store.location})
                             </span>
                           )}
-                          {/* Indicateur "requis" discret */}
+                          {/* Indicateur "verrouillé" */}
                           <span className="inline-flex items-center gap-0.5 text-xs text-textMuted select-none">
                             <svg
                               width="10"
@@ -472,7 +515,7 @@ export function UserFormModal({
                               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                             </svg>
-                            requis
+                            {isEditingOwnAdminAccount ? 'non modifiable' : 'requis'}
                           </span>
                         </span>
                       </div>

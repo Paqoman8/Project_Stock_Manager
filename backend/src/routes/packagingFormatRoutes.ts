@@ -17,8 +17,8 @@ import {
 const router = Router({ mergeParams: true }); // mergeParams pour accéder à :productId
 
 router.get('/',    requireAuth, getFormats);
-router.post('/',   requireAuth, requireRole('Super Administrateur'), createFormat);
-router.put('/:id', requireAuth, requireRole('Super Administrateur'), updateFormat);
-router.delete('/:id', requireAuth, requireRole('Super Administrateur'), deleteFormat);
+router.post('/',   requireAuth, requireRole('Super Administrateur', 'Administrateur'), createFormat);
+router.put('/:id', requireAuth, requireRole('Super Administrateur', 'Administrateur'), updateFormat);
+router.delete('/:id', requireAuth, requireRole('Super Administrateur', 'Administrateur'), deleteFormat);
 
 export default router;
