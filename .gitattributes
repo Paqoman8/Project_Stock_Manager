@@ -1,0 +1,3 @@
+# Force les fins de ligne LF pour les scripts shell
+# Sans ça, git sur Windows convertit en CRLF et le container Linux crashe au démarrage
+*.sh text eol=lf

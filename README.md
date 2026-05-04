@@ -28,42 +28,83 @@ Stock Manager est un ERP interne multi-établissements couvrant l'intégralité 
 | Styles | Tailwind CSS | 3.4.19 |
 | Auth | JWT (httpOnly cookie) | 9.0.3 |
 
-## Démarrage rapide
+---
+
+## Déploiement via Docker (recommandé)
+
+> **Prérequis unique : [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé.**
+> Aucune autre installation requise (Node.js, PostgreSQL, etc.).
+
+### Premier lancement
 
 ```bash
 # 1. Cloner le dépôt
-git clone <url-du-repo> gstock
-cd gstock
+git clone <url-du-repo> stock-manager
+cd stock-manager
 
-# 2. Démarrer la base de données
-docker compose up -d
+# 2. (Optionnel) Définir un JWT secret sécurisé
+cp .env.example .env
+# Éditer .env et remplacer JWT_SECRET par une valeur forte
 
-# 3. Configurer et initialiser le backend
-cd backend
-cp .env.example .env   # puis renseigner les variables
-npm install
-npx prisma migrate dev
-npx prisma db seed
-npm run dev            # port 5000
-
-# 4. Démarrer le frontend (dans un nouveau terminal)
-cd ../frontend
-cp .env.example .env.local
-npm install
-npm run dev            # port 3000
+# 3. Tout lancer en une seule commande
+make setup
+# — ou sans Make :
+docker compose up --build -d
 ```
 
-Compte par défaut après le seed : `super.admin` / `Admin@2026!`
+C'est tout. Docker s'occupe de :
+- Créer et démarrer la base de données PostgreSQL
+- Installer les dépendances backend et frontend
+- Compiler le code TypeScript
+- Appliquer les migrations de base de données
+- Exécuter le seed (rôles, établissement Hub Central, compte admin)
+- Démarrer les serveurs backend et frontend
+
+**L'application est accessible sur `http://localhost:3000`**
+
+| Identifiant | Mot de passe |
+|-------------|-------------|
+| `super.admin` | `Admin@2026!` |
+
+### Commandes du quotidien
+
+```bash
+make start    # Démarrer (sans rebuild)
+make stop     # Arrêter (données conservées)
+make restart  # Redémarrer les services
+make logs     # Suivre les logs en temps réel
+make reset    # ⚠️  Tout effacer et repartir de zéro
+make help     # Lister toutes les commandes
+```
+
+Sans Make :
+
+```bash
+docker compose up -d          # Démarrer
+docker compose down           # Arrêter
+docker compose logs -f        # Logs
+docker compose down -v        # Reset complet (supprime la base)
+docker compose up --build -d  # Rebuild après modification du code
+```
+
+---
+
+## Installation manuelle (développement local)
+
+Pour travailler sur le code sans Docker, voir [Docs/INSTALLATION.md](Docs/INSTALLATION.md).
+
+---
 
 ## Documentation
 
 | Fichier | Contenu |
 |---------|---------|
+| [Docs/DOCKER_DEPLOYMENT.md](Docs/DOCKER_DEPLOYMENT.md) | Guide complet de déploiement Docker (setup, commandes, dépannage) |
 | [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md) | Architecture technique, modèle de données, flux |
-| [Docs/INSTALLATION.md](Docs/INSTALLATION.md) | Guide d'installation complet avec prérequis |
+| [Docs/INSTALLATION.md](Docs/INSTALLATION.md) | Guide d'installation manuelle avec prérequis |
 | [Docs/USAGE.md](Docs/USAGE.md) | Guide d'utilisation des modules |
 | [Docs/STYLEGUIDE.md](Docs/STYLEGUIDE.md) | Standards de code TypeScript, React, Prisma |
-| [Docs/MONETIZATION_STRATEGY.md](Docs/MONETIZATION_STRATEGY.md) | Stratégie de monétisation, roadmap commerciale, projections |
+| [Docs/MONETIZATION_STRATEGY.md](Docs/MONETIZATION_STRATEGY.md) | Stratégie de monétisation, roadmap commerciale |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Comment contribuer au projet |
 | [CHANGELOG.md](CHANGELOG.md) | Historique des versions |
 | [SECURITY.md](SECURITY.md) | Politique de sécurité |
@@ -71,23 +112,28 @@ Compte par défaut après le seed : `super.admin` / `Admin@2026!`
 ## Structure du projet
 
 ```
-gstock/
+stock-manager/
 ├── backend/
-│   ├── prisma/           # Schéma Prisma, migrations, seed
+│   ├── Dockerfile
+│   ├── docker-entrypoint.sh  # Migrations + seed + démarrage
+│   ├── prisma/               # Schéma, migrations, seed
 │   └── src/
-│       ├── controllers/  # Logique HTTP
-│       ├── services/     # Logique métier
-│       ├── repositories/ # Accès base de données
-│       ├── routes/       # Définition des endpoints
-│       ├── middlewares/  # Auth, validation
-│       └── config/       # Configuration (DB, env)
+│       ├── controllers/
+│       ├── services/
+│       ├── repositories/
+│       ├── routes/
+│       ├── middlewares/
+│       └── config/
 ├── frontend/
+│   ├── Dockerfile
 │   └── src/
-│       ├── app/          # Pages Next.js (App Router)
-│       ├── components/   # Composants React réutilisables
-│       └── lib/          # Utilitaires, client API
-├── docs/                 # Documentation technique
-├── docker-compose.yml    # PostgreSQL 16
+│       ├── app/              # Pages Next.js (App Router)
+│       ├── components/
+│       └── lib/
+├── Docs/                     # Documentation
+├── docker-compose.yml        # Orchestration des 3 services
+├── Makefile                  # Commandes raccourcis
+├── .env.example              # Template des variables d'environnement
 └── README.md
 ```
 
