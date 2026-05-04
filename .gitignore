@@ -139,4 +139,6 @@ backend/dist/
 # Vercel
 .vercel
 
-/Docs
+# Docs internal (old spec files, word docs)
+Docs/.md/
+Docs/CDC.docx
