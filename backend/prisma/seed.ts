@@ -19,7 +19,7 @@ async function main() {
   // upsert = créer si n'existe pas, ignorer si déjà présent (idempotent)
   // "Administrateur" est ajouté entre "Super Administrateur" et "Manager Magasin".
   // Il couvre les opérations d'administration sans les droits réservés au Super Admin.
-  const roles = ['Super Administrateur', 'Administrateur', 'Manager Magasin', 'Opérateur'];
+  const roles = ['Super Administrateur', 'Administrateur', 'Manager Magasin', 'Opérateur', 'Caissier'];
   const createdRoles = [];
 
   for (const roleName of roles) {
@@ -43,7 +43,7 @@ async function main() {
     update: { color: '#1D4ED8', is_protected: true },
     create: {
       id: '00000000-0000-0000-0000-000000000001',
-      name: 'Hub Central GStock',
+      name: 'Hub Central',
       location: 'Centre de Contrôle Principal',
       color: '#1D4ED8',  // Bleu primary — siège social
       is_protected: true,
@@ -55,7 +55,7 @@ async function main() {
   if (superAdminRole) {
     const adminEmail = 'admin@gstock.local';
     const adminUsername = 'super.admin';
-    const motDePasseTest = 'Password1!';
+    const motDePasseTest = 'Admin@2026!'; // Mot de passe de test pour l'admin (à changer en production)
 
     // On hash le mot de passe avant de le stocker. Jamais de mot de passe en clair en base.
     const motDePasseHashe = await bcrypt.hash(motDePasseTest, BCRYPT_SALT_ROUNDS);
@@ -97,50 +97,50 @@ async function main() {
 
   // 4. Création des catégories et sous-catégories
   // findFirst + create conditonnel (idempotent sans contrainte unique sur name+parent_id)
-  const categoriesTree = [
-    {
-      name: 'Boissons Fonctionnelles & Sucrées',
-      children: ['Energy drinks', 'Sirops'],
-    },
-    {
-      name: 'Brasserie',
-      children: ['Bières', 'Gazéifiés'],
-    },
-    {
-      name: 'Cave & Spiritueux',
-      children: ['Liqueurs', 'Vins'],
-    },
-    {
-      name: 'Eaux & Jus',
-      children: ['Eaux', 'Jus de fruits'],
-    },
-  ];
+  // const categoriesTree = [
+  //   {
+  //     name: 'Boissons Fonctionnelles & Sucrées',
+  //     children: ['Energy drinks', 'Sirops'],
+  //   },
+  //   {
+  //     name: 'Brasserie',
+  //     children: ['Bières', 'Gazéifiés'],
+  //   },
+  //   {
+  //     name: 'Cave & Spiritueux',
+  //     children: ['Liqueurs', 'Vins'],
+  //   },
+  //   {
+  //     name: 'Eaux & Jus',
+  //     children: ['Eaux', 'Jus de fruits'],
+  //   },
+  // ];
 
-  for (const cat of categoriesTree) {
-    let parent = await prisma.category.findFirst({
-      where: { name: cat.name, parent_id: null },
-    });
-    if (!parent) {
-      parent = await prisma.category.create({ data: { name: cat.name } });
-      console.log(`Catégorie créée: ${parent.name}`);
-    } else {
-      console.log(`Catégorie déjà présente: ${parent.name}`);
-    }
+  // for (const cat of categoriesTree) {
+  //   let parent = await prisma.category.findFirst({
+  //     where: { name: cat.name, parent_id: null },
+  //   });
+  //   if (!parent) {
+  //     parent = await prisma.category.create({ data: { name: cat.name } });
+  //     console.log(`Catégorie créée: ${parent.name}`);
+  //   } else {
+  //     console.log(`Catégorie déjà présente: ${parent.name}`);
+  //   }
 
-    for (const childName of cat.children) {
-      const existing = await prisma.category.findFirst({
-        where: { name: childName, parent_id: parent.id },
-      });
-      if (!existing) {
-        const child = await prisma.category.create({
-          data: { name: childName, parent_id: parent.id },
-        });
-        console.log(`  └─ Sous-catégorie créée: ${child.name}`);
-      } else {
-        console.log(`  └─ Sous-catégorie déjà présente: ${existing.name}`);
-      }
-    }
-  }
+  //   for (const childName of cat.children) {
+  //     const existing = await prisma.category.findFirst({
+  //       where: { name: childName, parent_id: parent.id },
+  //     });
+  //     if (!existing) {
+  //       const child = await prisma.category.create({
+  //         data: { name: childName, parent_id: parent.id },
+  //       });
+  //       console.log(`  └─ Sous-catégorie créée: ${child.name}`);
+  //     } else {
+  //       console.log(`  └─ Sous-catégorie déjà présente: ${existing.name}`);
+  //     }
+  //   }
+  // }
 
   console.log('Seeding terminé avec succès.');
 }
