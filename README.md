@@ -99,6 +99,7 @@ Pour travailler sur le code sans Docker, voir [Docs/INSTALLATION.md](Docs/INSTAL
 
 | Fichier | Contenu |
 |---------|---------|
+| [Docs/PROJECT_STATUS.md](Docs/PROJECT_STATUS.md) | **État du projet — modules implémentés, en attente, conventions** (lire en premier) |
 | [Docs/DOCKER_DEPLOYMENT.md](Docs/DOCKER_DEPLOYMENT.md) | Guide complet de déploiement Docker (setup, commandes, dépannage) |
 | [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md) | Architecture technique, modèle de données, flux |
 | [Docs/INSTALLATION.md](Docs/INSTALLATION.md) | Guide d'installation manuelle avec prérequis |
