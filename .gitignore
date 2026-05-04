@@ -142,3 +142,6 @@ backend/dist/
 # Docs internal (old spec files, word docs)
 Docs/.md/
 Docs/CDC.docx
+
+# Sauvegardes base de données — ne jamais commiter
+backups/

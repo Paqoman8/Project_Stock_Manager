@@ -57,6 +57,31 @@ Ne jamais commiter les fichiers `.env`. Les variables suivantes sont critiques :
 
 | Variable | Exigences |
 |----------|-----------|
-| `JWT_SECRET` | Minimum 32 caractères aléatoires (`openssl rand -hex 32`) |
+| `JWT_SECRET` | Minimum 32 bytes aléatoires — voir commandes ci-dessous |
 | `DATABASE_URL` | Credentials de production distincts du développement |
 | `NODE_ENV` | Doit être `production` en production (active `secure` sur le cookie) |
+
+### Générer un `JWT_SECRET` fort
+
+```bash
+# macOS / Linux (recommandé)
+openssl rand -hex 32
+
+# macOS / Linux — alternative
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# Windows — PowerShell
+[System.Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+```
+
+Coller le résultat dans le fichier `.env` à la racine du projet :
+
+```env
+JWT_SECRET=COLLER_ICI_LA_VALEUR_GENEREE
+```
+
+**Ce qui rend un secret valide :**
+- 32 bytes minimum (64 chars hex / ~44 chars base64)
+- Généré par un outil cryptographique, pas inventé à la main
+- Unique par environnement — dev ≠ prod
+- Jamais partagé dans un chat, email ou issue

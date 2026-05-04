@@ -36,6 +36,7 @@ services:
       FRONTEND_URL: http://localhost:3000
     ports:
       - "5001:5001"
+      - "5555:5555"  # Prisma Studio
     restart: unless-stopped
 
   # ─── Frontend Next.js ─────────────────────────────────────────────────────────
@@ -43,12 +44,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Passé au moment de "next build" pour être sérialisé dans le routes-manifest
+        BACKEND_URL: http://backend:5001
     container_name: stockmanager-frontend
     depends_on:
       - backend
-    environment:
-      # En Docker, le frontend (serveur Next.js) parle au backend via le réseau interne
-      BACKEND_URL: http://backend:5001
     ports:
       - "3000:3000"
     restart: unless-stopped
