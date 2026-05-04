@@ -126,7 +126,7 @@ health:
 backup:
 	@mkdir -p $(BACKUP_DIR)
 	@FILE="$(BACKUP_DIR)/backup_$$(date +%Y%m%d_%H%M%S).sql"; \
-	docker exec $(POSTGRES) pg_dump -U admin gstock_db > "$$FILE" && \
+	docker exec $(POSTGRES) pg_dump --clean --if-exists -U admin gstock_db > "$$FILE" && \
 	echo "$(GREEN)✅ Sauvegarde créée : $$FILE$(RESET)" && \
 	echo "$(YELLOW)   Taille : $$(du -sh $$FILE | cut -f1)$(RESET)"
 
@@ -144,6 +144,10 @@ restore:
 	fi
 	@echo "$(YELLOW)⚠️  Restauration depuis : $(FILE)$(RESET)"
 	@echo "$(YELLOW)   Les données actuelles seront écrasées. Continuer ? [y/N]$(RESET)" && read ans && [ $${ans:-N} = y ]
+	@echo "$(CYAN)🧹 Nettoyage du schéma actuel...$(RESET)"
+	docker exec -i $(POSTGRES) psql -U admin -d gstock_db \
+		-c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO admin; GRANT ALL ON SCHEMA public TO public;"
+	@echo "$(CYAN)📥 Restauration des données...$(RESET)"
 	docker exec -i $(POSTGRES) psql -U admin -d gstock_db < "$(FILE)"
 	@echo "$(GREEN)✅ Restauration terminée depuis : $(FILE)$(RESET)"
 
