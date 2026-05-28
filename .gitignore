@@ -145,3 +145,5 @@ Docs/CDC.docx
 
 # Sauvegardes base de données — ne jamais commiter
 backups/
+
+.hidden/
