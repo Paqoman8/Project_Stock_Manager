@@ -33,7 +33,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-changez-moi-en-production-avec-openssl-rand-hex-32}
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 5001
-      FRONTEND_URL: http://localhost:3000
+      FRONTEND_URL: http://localhost:3005
     ports:
       - "5001:5001"
       - "5555:5555"  # Prisma Studio
@@ -51,7 +51,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "3000:3000"
+      - "3005:3000"
     restart: unless-stopped
 
 volumes:

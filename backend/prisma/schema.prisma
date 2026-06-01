@@ -157,6 +157,7 @@ model PackagingFormat {
   purchase_order_items    PurchaseOrderItem[]
   reception_items         ReceptionItem[]
   report_line_breakdowns  InventoryReportLineBreakdown[]
+  transfer_items          TransferItem[]
 
   @@unique([product_id, label])
   @@map("packaging_formats")
@@ -219,11 +220,14 @@ model Transfer {
 }
 
 model TransferItem {
-  transfer_id String   @db.Uuid
-  product_id  String   @db.Uuid
-  qty         Int
-  transfer    Transfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
-  product     Product  @relation(fields: [product_id], references: [id])
+  transfer_id         String          @db.Uuid
+  product_id          String          @db.Uuid
+  qty                 Int
+  packaging_format_id String?         @db.Uuid
+  packages_count      Int?
+  transfer            Transfer        @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  product             Product         @relation(fields: [product_id], references: [id])
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
   @@id([transfer_id, product_id])
   @@map("transfer_items")
@@ -339,6 +343,11 @@ enum AuditAction {
 
   // Mouvements de stock
   STOCK_MOVEMENT_CREATED
+
+  // Transferts inter-magasins
+  TRANSFER_CREATED
+  TRANSFER_CONFIRMED
+  TRANSFER_CANCELLED
 
   // Rapports d'inventaire
   INVENTORY_REPORT_CREATED

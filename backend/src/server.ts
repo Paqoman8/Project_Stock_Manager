@@ -20,6 +20,7 @@ import inventoryRouter        from './routes/inventoryRoutes';
 import stockMovementRouter    from './routes/stockMovementRoutes';
 import inventoryReportRouter  from './routes/inventoryReportRoutes';
 import packagingFormatRouter  from './routes/packagingFormatRoutes';
+import transferRouter         from './routes/transferRoutes';
 
 // Chargement des variables d'environnement depuis le fichier .env
 dotenv.config();
@@ -98,6 +99,7 @@ app.use('/api/invoices',        supplierInvoiceRouter);
 app.use('/api/inventory',         inventoryRouter);
 app.use('/api/stock-movements',   stockMovementRouter);
 app.use('/api/inventory-reports', inventoryReportRouter);
+app.use('/api/transfers', transferRouter);
 
 
 // --- Gestion des connexions WebSocket ---

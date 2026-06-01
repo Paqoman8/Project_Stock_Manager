@@ -130,6 +130,19 @@ function IconAudit({ className }: { className?: string }) {
   );
 }
 
+function IconTransfers({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M17 3h4v4" />
+      <path d="M7 21H3v-4" />
+      <path d="M21 7l-6-4" />
+      <path d="M3 17l6 4" />
+      <path d="M3 7h12a4 4 0 0 1 4 4v0" />
+      <path d="M21 17H9a4 4 0 0 1-4-4v0" />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Rôles
 // ---------------------------------------------------------------------------
@@ -138,6 +151,7 @@ const ROLES_ADMIN: readonly string[] = ['Super Administrateur', 'Administrateur'
 const ROLE_SA = 'Super Administrateur';
 const ROLES_AGENT: readonly string[] = ['Manager Magasin', 'Opérateur'];
 const ROLES_RECEPTION: readonly string[] = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
+const ROLES_TRANSFER: readonly string[] = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
 
 // ---------------------------------------------------------------------------
 // Composants de navigation
@@ -221,6 +235,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
   const estSA         = !isLoading && user !== null && user.roleName === ROLE_SA;
   const estAgent      = !isLoading && user !== null && ROLES_AGENT.includes(user.roleName);
   const estReception  = !isLoading && user !== null && ROLES_RECEPTION.includes(user.roleName);
+  const estTransfer   = !isLoading && user !== null && ROLES_TRANSFER.includes(user.roleName);
 
   if (!isOpen) return null;
 
@@ -317,6 +332,15 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
               href="/dashboard/receptions"
               label="Réceptions"
               icon={<IconReceptions className="flex-shrink-0" />}
+              currentPath={pathname}
+            />
+          )}
+
+          {estTransfer && (
+            <NavItem
+              href="/dashboard/transfers"
+              label="Transferts"
+              icon={<IconTransfers className="flex-shrink-0" />}
               currentPath={pathname}
             />
           )}
