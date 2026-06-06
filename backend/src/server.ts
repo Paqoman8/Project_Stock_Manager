@@ -21,30 +21,40 @@ import stockMovementRouter    from './routes/stockMovementRoutes';
 import inventoryReportRouter  from './routes/inventoryReportRoutes';
 import packagingFormatRouter  from './routes/packagingFormatRoutes';
 import transferRouter         from './routes/transferRoutes';
+import transactionRouter      from './routes/transactionRoutes';
 
-// Chargement des variables d'environnement depuis le fichier .env
+
+// ---------------------------------------------------------------------------
+// INITIALIZATION                                                           
+// ---------------------------------------------------------------------------
+
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
 
-// --- Middlewares globaux ---
 
-// Configuration CORS stricte : on autorise UNIQUEMENT notre frontend
-// à envoyer des requêtes avec des cookies (credentials: true)
+// ---------------------------------------------------------------------------
+// GLOBAL MIDDLEWARES                                                       
+// ---------------------------------------------------------------------------
+
+// CORS configuration — restrict to frontend origin only
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true, // Obligatoire pour que les cookies soient transmis entre frontend et backend
+  credentials: true,
 }));
 
-// Parser les corps de requêtes au format JSON
+// JSON request parsing
 app.use(express.json());
 
-// Parser les cookies (nécessaire pour lire notre cookie 'auth_token')
+// Cookie parsing — required for auth_token
 app.use(cookieParser());
 
 
-// --- Configuration Socket.io pour la communication temps réel ---
+// ---------------------------------------------------------------------------
+// WEBSOCKET CONFIGURATION                                                  
+// ---------------------------------------------------------------------------
+
 const io = new Server(server, {
   cors: {
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -54,55 +64,68 @@ const io = new Server(server, {
 });
 
 
-// --- Déclaration des routes ---
+// ---------------------------------------------------------------------------
+// ROUTE DECLARATIONS                                                       
+// ---------------------------------------------------------------------------
 
-// Route de santé : vérifie que l'API est bien démarrée
+// Health check
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'L\'API GStock est opérationnelle' });
 });
 
-// Routes d'authentification (login, logout, me)
+
+// ── AUTHENTICATION ────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
 
-// Routes de gestion des utilisateurs (CRUD — réservé Super Administrateur)
-app.use('/api/users', userRouter);
 
-// Routes des rôles — endpoint public pour alimenter les formulaires d'admin.
-// "Super Administrateur" est exclu systématiquement de la réponse.
+// ── USER & ROLE MANAGEMENT ──────────────────────────────────────────
+app.use('/api/users', userRouter);
 app.use('/api/roles', roleRouter);
 
-// Journal d'audit — SA voit tout, Admin voit ses magasins uniquement
+
+// ── AUDIT LOG ────────────────────────────────────────────────────────
 app.use('/api/audit', auditRouter);
 
-// Gestion des établissements — réservé Super Administrateur
+
+// ── STORE MANAGEMENT ─────────────────────────────────────────────────
 app.use('/api/stores', storeRouter);
 
-// Gestion des fournisseurs — réservé Super Administrateur
-app.use('/api/suppliers', supplierRouter);
 
-// Catalogue fournisseur — liaisons produit/fournisseur
+// ── SUPPLIER MANAGEMENT ──────────────────────────────────────────────
+app.use('/api/suppliers', supplierRouter);
 app.use('/api/supplier-products', supplierProductRouter);
 
-// Gestion du catalogue — catégories et produits
+
+// ── PRODUCT CATALOG ──────────────────────────────────────────────────
 app.use('/api/categories', categoryRouter);
 app.use('/api/products',   productRouter);
-
-// Formats de conditionnement (imbriqués sous les produits)
 app.use('/api/products/:productId/packaging-formats', packagingFormatRouter);
 
-// Commandes fournisseurs, réceptions de stock et factures fournisseurs
+
+// ── PROCUREMENT ──────────────────────────────────────────────────────
 app.use('/api/purchase-orders', purchaseOrderRouter);
 app.use('/api/receptions',      stockReceptionRouter);
 app.use('/api/invoices',        supplierInvoiceRouter);
 
-// Inventaire — niveaux de stock, seuils, mouvements et rapports
+
+// ── INVENTORY & STOCK MANAGEMENT ──────────────────────────────────────
 app.use('/api/inventory',         inventoryRouter);
 app.use('/api/stock-movements',   stockMovementRouter);
 app.use('/api/inventory-reports', inventoryReportRouter);
+
+
+// ── INTER-STORE TRANSFERS ────────────────────────────────────────────
 app.use('/api/transfers', transferRouter);
 
 
-// --- Gestion des connexions WebSocket ---
+// ── POS / CASHIER (M13) ──────────────────────────────────────────────
+app.use('/api/transactions', transactionRouter);
+
+
+// ---------------------------------------------------------------------------
+// WEBSOCKET HANDLERS                                                       
+// ---------------------------------------------------------------------------
+
 io.on('connection', (socket) => {
   console.log('Nouveau client WebSocket connecté:', socket.id);
 
@@ -112,7 +135,10 @@ io.on('connection', (socket) => {
 });
 
 
-// --- Démarrage du serveur ---
+// ---------------------------------------------------------------------------
+// SERVER STARTUP                                                           
+// ---------------------------------------------------------------------------
+
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {

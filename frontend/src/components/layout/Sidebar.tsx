@@ -1,13 +1,13 @@
 'use client';
 
-// src/components/layout/Sidebar.tsx
-
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSession } from '@/contexts/SessionContext';
+import { POS_ROLES } from '@/lib/pos';
+
 
 // ---------------------------------------------------------------------------
-// Icônes
+// ICON COMPONENTS                                                          
 // ---------------------------------------------------------------------------
 
 function IconUsers({ className }: { className?: string }) {
@@ -143,20 +143,49 @@ function IconTransfers({ className }: { className?: string }) {
   );
 }
 
+function IconPos({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+      <path d="M7 8h.01" />
+      <path d="M11 8h.01" />
+      <path d="M15 8h.01" />
+      <path d="M7 12h.01" />
+      <path d="M11 12h.01" />
+      <path d="M15 12h.01" />
+    </svg>
+  );
+}
+
+function IconTransactions({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </svg>
+  );
+}
+
+
 // ---------------------------------------------------------------------------
-// Rôles
+// ROLE DEFINITIONS                                                         
 // ---------------------------------------------------------------------------
 
-const ROLES_ADMIN: readonly string[] = ['Super Administrateur', 'Administrateur'];
+const ROLES_ADMIN: readonly string[]      = ['Super Administrateur', 'Administrateur'];
 const ROLE_SA = 'Super Administrateur';
-const ROLES_AGENT: readonly string[] = ['Manager Magasin', 'Opérateur'];
-const ROLES_RECEPTION: readonly string[] = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
-const ROLES_TRANSFER: readonly string[] = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
+const ROLES_AGENT: readonly string[]      = ['Manager Magasin', 'Opérateur'];
+const ROLES_RECEPTION: readonly string[]  = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
+const ROLES_TRANSFER: readonly string[]   = ['Super Administrateur', 'Administrateur', 'Manager Magasin'];
+
 
 // ---------------------------------------------------------------------------
-// Composants de navigation
+// NAVIGATION COMPONENTS                                                    
 // ---------------------------------------------------------------------------
 
+/**
+ * NavItem — top-level navigation link with active state styling.
+ */
 function NavItem({
   href,
   label,
@@ -190,7 +219,9 @@ function NavItem({
   );
 }
 
-/** Sous-item indenté — affiché sous un NavItem parent */
+/**
+ * NavSubItem — indented sub-link displayed under a parent NavItem.
+ */
 function NavSubItem({
   href,
   label,
@@ -223,10 +254,15 @@ function NavSubItem({
   );
 }
 
+
 // ---------------------------------------------------------------------------
-// Composant principal
+// MAIN COMPONENT                                                           
 // ---------------------------------------------------------------------------
 
+/**
+ * Sidebar — main navigation component with role-based menu items.
+ * Displays different sections based on user role (Admin, Agent, POS, etc.).
+ */
 export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
   const pathname = usePathname();
   const { user, isLoading } = useSession();
@@ -236,6 +272,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
   const estAgent      = !isLoading && user !== null && ROLES_AGENT.includes(user.roleName);
   const estReception  = !isLoading && user !== null && ROLES_RECEPTION.includes(user.roleName);
   const estTransfer   = !isLoading && user !== null && ROLES_TRANSFER.includes(user.roleName);
+  const estPos        = !isLoading && user !== null && POS_ROLES.includes(user.roleName as (typeof POS_ROLES)[number]);
 
   if (!isOpen) return null;
 
@@ -248,7 +285,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
       <nav className="py-4 flex-1">
         <ul className="flex flex-col gap-0.5" role="list">
 
-          {/* ── Liens communs à tous les Admin (SA + Admin) ── */}
+          {/* ADMIN SECTIONS — Super Admin and Admin shared links */}
           {estAdmin && (
             <>
               <NavItem
@@ -279,7 +316,6 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
               />
               <NavSubItem
                 href="/dashboard/inventory/reports"
-                // label="Rapports d'inventaire"
                 label="Rapports"
                 icon={<IconReports className="flex-shrink-0 opacity-75" />}
                 currentPath={pathname}
@@ -287,7 +323,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
             </>
           )}
 
-          {/* ── Liens SA uniquement ── */}
+          {/* SUPER ADMIN ONLY SECTIONS */}
           {estSA && (
             <>
               <NavItem
@@ -306,7 +342,6 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
               />
               <NavSubItem
                 href="/dashboard/supplier-products"
-                // label="Catalogue fournisseur"
                 label="Catalogue"
                 icon={<IconSupplierProducts className="flex-shrink-0 opacity-75" />}
                 currentPath={pathname}
@@ -326,7 +361,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
             </>
           )}
 
-          {/* ── Réceptions — SA + Admin + Manager ── */}
+          {/* RECEPTIONS — Super Admin + Admin + Manager */}
           {estReception && (
             <NavItem
               href="/dashboard/receptions"
@@ -345,7 +380,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
             />
           )}
 
-          {/* ── Liens Agents (Manager / Opérateur) ── */}
+          {/* AGENT SECTIONS — Manager and Operator links */}
           {estAgent && (
             <>
               <NavItem
@@ -357,9 +392,26 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
               />
               <NavSubItem
                 href="/dashboard/inventory/reports"
-                // label="Rapports d'inventaire"
                 label="Rapports"
                 icon={<IconReports className="flex-shrink-0 opacity-75" />}
+                currentPath={pathname}
+              />
+            </>
+          )}
+
+          {/* POS SECTIONS — all POS-enabled roles */}
+          {estPos && (
+            <>
+              <NavItem
+                href="/dashboard/pos"
+                label="Point de Vente"
+                icon={<IconPos className="flex-shrink-0" />}
+                currentPath={pathname}
+              />
+              <NavItem
+                href="/dashboard/transactions"
+                label="Transactions"
+                icon={<IconTransactions className="flex-shrink-0" />}
                 currentPath={pathname}
               />
             </>

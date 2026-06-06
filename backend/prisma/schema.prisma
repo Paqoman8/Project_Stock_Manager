@@ -1,3 +1,7 @@
+// ---------------------------------------------------------------------------
+// DATABASE CONFIGURATION                                                   
+// ---------------------------------------------------------------------------
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
@@ -7,6 +11,10 @@ datasource db {
   provider = "postgresql"
 }
 
+// ---------------------------------------------------------------------------
+// AUTHENTICATION & AUTHORIZATION                                           
+// ---------------------------------------------------------------------------
+
 model Role {
   id    String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name  String @unique
@@ -14,6 +22,7 @@ model Role {
 
   @@map("roles")
 }
+
 
 model User {
   id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -35,6 +44,11 @@ model User {
 
   @@map("users")
 }
+
+
+// ---------------------------------------------------------------------------
+// STORES & ACCESS CONTROL                                                  
+// ---------------------------------------------------------------------------
 
 model Store {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -62,6 +76,7 @@ model Store {
   @@map("stores")
 }
 
+
 model UserStoreAccess {
   user_id  String @db.Uuid
   store_id String @db.Uuid
@@ -71,6 +86,7 @@ model UserStoreAccess {
   @@id([user_id, store_id])
   @@map("user_store_access")
 }
+
 
 model SessionLog {
   id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -83,6 +99,11 @@ model SessionLog {
   @@map("sessions_log")
 }
 
+
+// ---------------------------------------------------------------------------
+// PRODUCT CATALOG & PACKAGING                                              
+// ---------------------------------------------------------------------------
+
 model Category {
   id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String
@@ -94,10 +115,8 @@ model Category {
   @@map("categories")
 }
 
-// ---------------------------------------------------------------------------
-// Unité de mesure — stock et vente au client final
-// ---------------------------------------------------------------------------
 
+// Product units — base measurement for inventory and sales
 enum ProductUnit {
   PIECE
   KG
@@ -109,6 +128,7 @@ enum ProductUnit {
   SACHET
   BOITE
 }
+
 
 model Product {
   id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -135,14 +155,10 @@ model Product {
   @@map("products")
 }
 
-// ---------------------------------------------------------------------------
-// Formats de conditionnement — unités de vente/stockage par produit
-//
-// Exemples : Unité ×1, Pack ×6, Carton ×24, Palette ×240
-// Défini au niveau produit (catalogue), la disponibilité par magasin
-// sera gérée dans InventoryBreakdown (Phase 2).
-// ---------------------------------------------------------------------------
 
+// Packaging formats — product-level packaging definitions
+// Examples: Unit ×1, Pack ×6, Carton ×24, Pallet ×240
+// Defined at catalog level; per-store availability managed in InventoryBreakdown.
 model PackagingFormat {
   id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   product_id        String               @db.Uuid
@@ -158,19 +174,16 @@ model PackagingFormat {
   reception_items         ReceptionItem[]
   report_line_breakdowns  InventoryReportLineBreakdown[]
   transfer_items          TransferItem[]
+  transaction_items       TransactionItem[]
 
   @@unique([product_id, label])
   @@map("packaging_formats")
 }
 
-// ---------------------------------------------------------------------------
-// Ventilation du stock par format de conditionnement (par magasin × produit × format)
-//
-// Complément optionnel de Inventory.stock_physical.
-// Mis à jour uniquement quand un mouvement précise un packaging_format_id.
-// stock_physical reste la source de vérité totale.
-// ---------------------------------------------------------------------------
 
+// Inventory breakdown — stock allocated by packaging format per store
+// Optional detail to Inventory.stock_physical. Updated only when a movement
+// specifies packaging_format_id. stock_physical remains the single source of truth.
 model InventoryBreakdown {
   id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   store_id            String          @db.Uuid
@@ -184,6 +197,7 @@ model InventoryBreakdown {
   @@unique([store_id, product_id, packaging_format_id])
   @@map("inventory_breakdowns")
 }
+
 
 model Inventory {
   store_id       String  @db.Uuid
@@ -199,11 +213,17 @@ model Inventory {
   @@map("inventory")
 }
 
+
+// ---------------------------------------------------------------------------
+// INTER-STORE TRANSFERS                                                    
+// ---------------------------------------------------------------------------
+
 enum TransferStatus {
   PENDING
   DONE
   CANCEL
 }
+
 
 model Transfer {
   id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -219,6 +239,7 @@ model Transfer {
   @@map("transfers")
 }
 
+
 model TransferItem {
   transfer_id         String          @db.Uuid
   product_id          String          @db.Uuid
@@ -233,40 +254,61 @@ model TransferItem {
   @@map("transfer_items")
 }
 
+
+// ---------------------------------------------------------------------------
+// POS / CASHIER TRANSACTIONS                                               
+// ---------------------------------------------------------------------------
+
 enum TransactionType {
   SALE
   REFUND
   EXPENSE
 }
 
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE_MONEY
+}
+
+
 model Transaction {
-  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  store_id     String            @db.Uuid
-  user_id      String            @db.Uuid
-  type         TransactionType
-  total_amount Decimal           @db.Decimal(10, 2)
-  created_at   DateTime          @default(now())
-  store        Store             @relation(fields: [store_id], references: [id])
-  user         User              @relation(fields: [user_id], references: [id])
-  items        TransactionItem[]
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id       String            @db.Uuid
+  user_id        String            @db.Uuid
+  type           TransactionType
+  payment_method PaymentMethod     @default(CASH)
+  total_amount   Decimal           @db.Decimal(10, 2)
+  refund_of_id   String?           @db.Uuid      // Link to original sale when type = REFUND
+  created_at     DateTime          @default(now())
+  store          Store             @relation(fields: [store_id], references: [id])
+  user           User              @relation(fields: [user_id], references: [id])
+  refund_of      Transaction?      @relation("TransactionRefunds", fields: [refund_of_id], references: [id])
+  refunds        Transaction[]     @relation("TransactionRefunds")
+  items          TransactionItem[]
 
   @@map("transactions")
 }
 
+
 model TransactionItem {
-  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  transaction_id String      @db.Uuid
-  product_id     String      @db.Uuid
-  qty            Int
-  price_at_sale  Decimal     @db.Decimal(10, 2)
-  transaction    Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
-  product        Product     @relation(fields: [product_id], references: [id])
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transaction_id      String           @db.Uuid
+  product_id          String           @db.Uuid
+  qty                 Int
+  price_at_sale       Decimal          @db.Decimal(10, 2)
+  packaging_format_id String?          @db.Uuid
+  transaction         Transaction      @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  product             Product          @relation(fields: [product_id], references: [id])
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
   @@map("transaction_items")
 }
 
+
 // ---------------------------------------------------------------------------
-// Types d'établissements
+// STORE TYPES & STATUS                                                     
 // ---------------------------------------------------------------------------
 
 enum StoreType {
@@ -275,13 +317,15 @@ enum StoreType {
   ENTREPOT
 }
 
+
 enum StoreStatus {
   ACTIVE
   CLOSED
 }
 
+
 // ---------------------------------------------------------------------------
-// Journal d'audit — trace toutes les actions métier de la plateforme
+// AUDIT LOG — traces all business operations                              
 // ---------------------------------------------------------------------------
 
 enum AuditAction {
@@ -349,6 +393,10 @@ enum AuditAction {
   TRANSFER_CONFIRMED
   TRANSFER_CANCELLED
 
+  // Transactions caisse (POS)
+  TRANSACTION_CREATED
+  TRANSACTION_REFUNDED
+
   // Rapports d'inventaire
   INVENTORY_REPORT_CREATED
   INVENTORY_REPORT_SUBMITTED
@@ -357,8 +405,9 @@ enum AuditAction {
   INVENTORY_REPORT_ADJUSTED
 }
 
+
 // ---------------------------------------------------------------------------
-// Fournisseurs — conditions de paiement et référentiel fournisseurs
+// SUPPLIER MANAGEMENT                                                      
 // ---------------------------------------------------------------------------
 
 enum PaymentTerms {
@@ -386,10 +435,8 @@ model Supplier {
   @@map("suppliers")
 }
 
-// ---------------------------------------------------------------------------
-// Catalogue fournisseur — conditions d'achat par couple (fournisseur, produit)
-// ---------------------------------------------------------------------------
 
+// Supplier catalog — per-supplier purchase conditions for each product
 model SupplierProduct {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   supplier_id     String          @db.Uuid
@@ -411,8 +458,9 @@ model SupplierProduct {
   @@map("supplier_products")
 }
 
+
 // ---------------------------------------------------------------------------
-// Commandes fournisseurs
+// PURCHASE ORDERS                                                          
 // ---------------------------------------------------------------------------
 
 enum PurchaseOrderStatus {
@@ -422,6 +470,7 @@ enum PurchaseOrderStatus {
   RECEIVED
   CANCELLED
 }
+
 
 model PurchaseOrder {
   id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -445,8 +494,9 @@ model PurchaseOrder {
   @@map("purchase_orders")
 }
 
-// Séquence atomique pour la génération de références BC-YYYY-XXXXXX.
-// Un enregistrement par année civile, incrémenté via upsert PostgreSQL natif.
+
+// Atomic sequence for PO reference generation: BC-YYYY-XXXXXX
+// One record per calendar year, incremented via native PostgreSQL upsert.
 model PurchaseOrderSequence {
   year     Int @id
   last_seq Int @default(0)
@@ -454,13 +504,14 @@ model PurchaseOrderSequence {
   @@map("purchase_order_sequences")
 }
 
+
 model PurchaseOrderItem {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   order_id            String           @db.Uuid
   supplier_product_id String           @db.Uuid
   ordered_qty         Int
-  unit_price          Decimal          @db.Decimal(10, 2) // Dénormalisé au moment de la commande
-  packaging_format_id String?          @db.Uuid           // Format de conditionnement commandé (optionnel)
+  unit_price          Decimal          @db.Decimal(10, 2) // Denormalized at order time
+  packaging_format_id String?          @db.Uuid           // Packaging format ordered (optional)
   order               PurchaseOrder    @relation(fields: [order_id], references: [id], onDelete: Cascade)
   supplier_product    SupplierProduct  @relation(fields: [supplier_product_id], references: [id])
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
@@ -469,8 +520,9 @@ model PurchaseOrderItem {
   @@map("purchase_order_items")
 }
 
+
 // ---------------------------------------------------------------------------
-// Réceptions de stock
+// STOCK RECEPTIONS                                                         
 // ---------------------------------------------------------------------------
 
 enum ReceptionStatus {
@@ -478,6 +530,7 @@ enum ReceptionStatus {
   CONFIRMED
   CANCELLED
 }
+
 
 model StockReception {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -494,14 +547,15 @@ model StockReception {
   @@map("stock_receptions")
 }
 
+
 model ReceptionItem {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reception_id        String           @db.Uuid
   product_id          String           @db.Uuid
-  received_qty        Int              // Quantité reçue en unités de commande
-  stock_units_added   Int              // = received_qty × units_per_order (dénormalisé)
-  packaging_format_id String?          @db.Uuid // Format de conditionnement reçu (optionnel)
-  packages_received   Int?             // = received_qty si format renseigné (dénormalisé pour breakdown)
+  received_qty        Int              // Qty received in order units
+  stock_units_added   Int              // = received_qty × units_per_order (denormalized)
+  packaging_format_id String?          @db.Uuid // Packaging format received (optional)
+  packages_received   Int?             // = received_qty if format set (denormalized for breakdown)
   reception           StockReception   @relation(fields: [reception_id], references: [id], onDelete: Cascade)
   product             Product          @relation(fields: [product_id], references: [id])
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
@@ -509,8 +563,9 @@ model ReceptionItem {
   @@map("reception_items")
 }
 
+
 // ---------------------------------------------------------------------------
-// Factures fournisseurs
+// SUPPLIER INVOICES                                                        
 // ---------------------------------------------------------------------------
 
 enum InvoiceStatus {
@@ -519,6 +574,7 @@ enum InvoiceStatus {
   OVERDUE
   DISPUTED
 }
+
 
 model SupplierInvoice {
   id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -535,36 +591,24 @@ model SupplierInvoice {
   @@map("supplier_invoices")
 }
 
+
 // ---------------------------------------------------------------------------
-// Journal d'audit
+// AUDIT LOG RECORDS                                                        
 // ---------------------------------------------------------------------------
 
 model AuditLog {
   id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   created_at  DateTime    @default(now())
-
-  // Qui — nullable pour les tentatives de connexion échouées (user inconnu)
-  actor_id    String?     @db.Uuid
-  actor_name  String      // Dénormalisé : nom au moment du fait
-
-  // Quoi
+  actor_id    String?     @db.Uuid                    // Nullable for failed login attempts
+  actor_name  String                                  // Denormalized at time of action
   action      AuditAction
-
-  // Sur quoi — nullable pour les actions sans cible (login/logout)
-  target_type String?
+  target_type String?                                 // Nullable for actions without target (login/logout)
   target_id   String?     @db.Uuid
-  target_name String?     // Dénormalisé : nom au moment du fait
-
-  // Contexte magasin — nullable (login échoué peut ne pas avoir de magasin)
-  store_id    String?     @db.Uuid
-  store_name  String?     // Dénormalisé
-
-  // Adresse IP du poste depuis lequel l'action a été effectuée
-  // VarChar(45) couvre IPv4 (15 cars) et IPv6 complet (39 cars)
-  ip_address  String?     @db.VarChar(45)
-
-  // Données contextuelles selon l'action : raison, modifications, détails…
-  metadata    Json?       @db.JsonB
+  target_name String?                                 // Denormalized at time of action
+  store_id    String?     @db.Uuid                    // Nullable (failed login may lack store context)
+  store_name  String?                                 // Denormalized
+  ip_address  String?     @db.VarChar(45)             // IPv4 (15 chars) + IPv6 (39 chars max)
+  metadata    Json?       @db.JsonB                   // Contextual data: reason, changes, details
 
   actor       User?       @relation(fields: [actor_id], references: [id])
   store       Store?      @relation("AuditStore", fields: [store_id], references: [id])
@@ -572,28 +616,29 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+
 // ---------------------------------------------------------------------------
-// Mouvements de stock — ledger de toutes les modifications de stock_physical
+// STOCK MOVEMENTS — ledger of all stock_physical changes                  
 // ---------------------------------------------------------------------------
 
 enum MovementType {
   INITIAL        // Saisie initiale du stock (premier enregistrement)
   ADJUSTMENT_IN  // Régularisation positive (retour, erreur de comptage…)
   ADJUSTMENT_OUT // Régularisation négative (casse, perte, vol…)
-  RECEPTION      // Créé automatiquement à la confirmation d'une réception
+  RECEPTION      // Auto-created on reception confirmation
 }
+
 
 model StockMovement {
   id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   store_id            String          @db.Uuid
   product_id          String          @db.Uuid
   type                MovementType
-  qty                 Int             // Toujours positif en unités de base
-  reason              String?         // Motif libre (obligatoire pour ADJUSTMENT_*)
+  qty                 Int             // Always positive in base units
+  reason              String?         // Free-form reason (required for ADJUSTMENT_*)
   performed_by_id     String          @db.Uuid
-  // Conditionnement optionnel — non nul quand le mouvement est saisi par format
-  packaging_format_id String?         @db.Uuid
-  packages_count      Int?            // Nombre de colis (qty = packages_count × units_per_package)
+  packaging_format_id String?         @db.Uuid // Optional packaging; non-null when movement by format
+  packages_count      Int?            // Package count (qty = packages_count × units_per_package)
   created_at          DateTime        @default(now())
   store               Store           @relation(fields: [store_id], references: [id])
   product             Product         @relation(fields: [product_id], references: [id])
@@ -603,18 +648,20 @@ model StockMovement {
   @@map("stock_movements")
 }
 
+
 // ---------------------------------------------------------------------------
-// Rapports d'inventaire — comptage physique hebdomadaire par établissement
+// INVENTORY REPORTS — weekly physical inventory per store                 
 // ---------------------------------------------------------------------------
 
 enum ReportStatus {
   DRAFT      // En cours de saisie
   SUBMITTED  // Soumis au responsable pour validation
   VALIDATED  // Approuvé
-  REJECTED   // Rejeté — retour pour correction
+  REJECTED   // Rejected — returned for correction
 }
 
-// Séquence atomique pour la génération de références INV-YYYY-XXXX.
+
+// Atomic sequence for inventory report reference generation: INV-YYYY-XXXX
 model InventoryReportSequence {
   year     Int @id
   last_seq Int @default(0)
@@ -622,9 +669,10 @@ model InventoryReportSequence {
   @@map("inventory_report_sequences")
 }
 
+
 model InventoryReport {
   id                      String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reference               String               @unique // Format : INV-YYYY-XXXX (séquence globale)
+  reference               String               @unique // Format: INV-YYYY-XXXX (global sequence)
   store_id                String               @db.Uuid
   status                  ReportStatus         @default(DRAFT)
   period_start            DateTime
@@ -635,7 +683,7 @@ model InventoryReport {
   submitted_at            DateTime?
   validated_at            DateTime?
   validated_by_id         String?              @db.Uuid
-  adjustments_applied_at  DateTime?            // Non null = ajustements déjà appliqués (irréversible)
+  adjustments_applied_at  DateTime?            // Non-null = adjustments already applied (irreversible)
   created_at              DateTime             @default(now())
   updated_at              DateTime             @updatedAt
   store                   Store                @relation(fields: [store_id], references: [id])
@@ -646,14 +694,15 @@ model InventoryReport {
   @@map("inventory_reports")
 }
 
+
 model InventoryReportLine {
   id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   report_id         String          @db.Uuid
   product_id        String          @db.Uuid
-  stock_theoretical Int             // Stock système au moment de la création du rapport
-  stock_counted     Int             @default(0) // Quantité physiquement comptée
-  variance          Int             @default(0) // stock_counted − stock_theoretical (dénormalisé)
-  note              String?         // Motif si écart significatif
+  stock_theoretical Int             // System stock at report creation time
+  stock_counted     Int             @default(0) // Physically counted quantity
+  variance          Int             @default(0) // stock_counted − stock_theoretical (denormalized)
+  note              String?         // Reason if variance significant
   report            InventoryReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
   product           Product         @relation(fields: [product_id], references: [id])
   breakdowns        InventoryReportLineBreakdown[]
@@ -662,19 +711,15 @@ model InventoryReportLine {
   @@map("inventory_report_lines")
 }
 
-// ---------------------------------------------------------------------------
-// Ventilation du comptage par format de conditionnement dans un rapport
-//
-// Créé automatiquement lors de la création du rapport si des InventoryBreakdown
-// existent pour le couple (établissement, produit).
-// Mis à jour lors de la saisie du comptage (PUT /lines).
-// ---------------------------------------------------------------------------
 
+// Report line breakdown by packaging format
+// Auto-created on report init if InventoryBreakdown exists for (store, product).
+// Updated when count data is entered (PUT /lines).
 model InventoryReportLineBreakdown {
   id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   line_id              String              @db.Uuid
   packaging_format_id  String              @db.Uuid
-  packages_theoretical Int                 // Snapshot de InventoryBreakdown.quantity au moment de la création
+  packages_theoretical Int                 // Snapshot of InventoryBreakdown.quantity at creation
   packages_counted     Int                 @default(0)
   packages_variance    Int                 @default(0) // packages_counted − packages_theoretical
   line                 InventoryReportLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
@@ -683,3 +728,8 @@ model InventoryReportLineBreakdown {
   @@unique([line_id, packaging_format_id])
   @@map("inventory_report_line_breakdowns")
 }
+
+
+// ---------------------------------------------------------------------------
+// END OF SCHEMA                                                             
+// ---------------------------------------------------------------------------
