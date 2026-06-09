@@ -351,7 +351,7 @@ export function UserFormModal({
             id="email"
             label="Email"
             type="email"
-            placeholder="ex : jean@gstock.local"
+            placeholder="ex : jean.dupont@example.com"
             error={errors.email?.message}
             {...register('email')}
           />

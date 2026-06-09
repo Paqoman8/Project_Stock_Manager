@@ -47,6 +47,8 @@ services:
       args:
         # Passé au moment de "next build" pour être sérialisé dans le routes-manifest
         BACKEND_URL: http://backend:5001
+        # Nom affiché dans l'UI — configurable via APP_NAME dans le .env racine
+        APP_NAME: ${APP_NAME:-Stock Manager}
     container_name: stockmanager-frontend
     depends_on:
       - backend
