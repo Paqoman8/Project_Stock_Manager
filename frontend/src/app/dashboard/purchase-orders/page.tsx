@@ -59,9 +59,9 @@ interface PurchaseOrderItemRow {
   packaging_format_id: string | null;
   supplier_product: {
     id: string;
-    order_unit: string;
-    units_per_order: number;
+    packaging_format_id: string;
     product: { id: string; name: string; sku: string; unit: string };
+    packaging_format: { id: string; label: string; units_per_package: number };
   };
   packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
@@ -99,10 +99,10 @@ interface StoreOption {
 interface SupplierProductOption {
   id: string;
   purchase_price: string;
-  order_unit: string;
-  units_per_order: number;
+  packaging_format_id: string;
   min_order_qty: number;
   product: { id: string; name: string; sku: string; unit: string };
+  packaging_format: { id: string; label: string; units_per_package: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,8 +227,8 @@ interface CreateOrderItem {
   product_name: string;
   product_sku: string;
   product_id: string;
-  order_unit: string;
-  units_per_order: number;
+  format_label: string;
+  format_units: number;
   packaging_format_id?: string;
 }
 
@@ -343,8 +343,6 @@ function CreateOrderModal({
     setSelectedItems((prev) => {
       const next = new Map(prev);
       if (checked) {
-        const formats        = formatsMap.get(sp.product.id) ?? [];
-        const baseFormat     = formats.find((f) => f.is_base_unit);
         next.set(sp.id, {
           supplier_product_id: sp.id,
           ordered_qty:         sp.min_order_qty,
@@ -353,9 +351,9 @@ function CreateOrderModal({
           product_name:        sp.product.name,
           product_sku:         sp.product.sku,
           product_id:          sp.product.id,
-          order_unit:          sp.order_unit,
-          units_per_order:     sp.units_per_order,
-          packaging_format_id: baseFormat?.id,
+          format_label:        sp.packaging_format.label,
+          format_units:        sp.packaging_format.units_per_package,
+          packaging_format_id: sp.packaging_format_id,
         });
       } else {
         next.delete(sp.id);
@@ -603,8 +601,8 @@ function CreateOrderModal({
                                 {sp.product.name}
                               </span>
                               <span className="text-xs text-textMuted">
-                                SKU: {sp.product.sku} &bull; Unité cmd: {sp.order_unit} &bull;{' '}
-                                {sp.units_per_order} {sp.product.unit}/commande &bull;{' '}
+                                SKU: {sp.product.sku} &bull; Format: {sp.packaging_format.label} &bull;{' '}
+                                {sp.packaging_format.units_per_package} {sp.product.unit}/colis &bull;{' '}
                                 Min. {sp.min_order_qty}
                               </span>
                             </div>
@@ -767,8 +765,8 @@ function EditOrderModal({
         product_name:        item.supplier_product.product.name,
         product_sku:         item.supplier_product.product.sku,
         product_id:          item.supplier_product.product.id,
-        order_unit:          item.supplier_product.order_unit,
-        units_per_order:     item.supplier_product.units_per_order,
+        format_label:        item.supplier_product.packaging_format.label,
+        format_units:        item.supplier_product.packaging_format.units_per_package,
         packaging_format_id: item.packaging_format_id ?? undefined,
       });
     }
@@ -849,8 +847,6 @@ function EditOrderModal({
     setSelectedItems((prev) => {
       const next = new Map(prev);
       if (checked) {
-        const formats    = formatsMap.get(sp.product.id) ?? [];
-        const baseFormat = formats.find((f) => f.is_base_unit);
         next.set(sp.id, {
           supplier_product_id: sp.id,
           ordered_qty:         sp.min_order_qty,
@@ -859,9 +855,9 @@ function EditOrderModal({
           product_name:        sp.product.name,
           product_sku:         sp.product.sku,
           product_id:          sp.product.id,
-          order_unit:          sp.order_unit,
-          units_per_order:     sp.units_per_order,
-          packaging_format_id: baseFormat?.id,
+          format_label:        sp.packaging_format.label,
+          format_units:        sp.packaging_format.units_per_package,
+          packaging_format_id: sp.packaging_format_id,
         });
       } else {
         next.delete(sp.id);
@@ -1086,8 +1082,8 @@ function EditOrderModal({
                               {sp.product.name}
                             </span>
                             <span className="text-xs text-textMuted">
-                              SKU: {sp.product.sku} &bull; Unité cmd: {sp.order_unit} &bull;{' '}
-                              {sp.units_per_order} {sp.product.unit}/commande &bull;{' '}
+                              SKU: {sp.product.sku} &bull; Format: {sp.packaging_format.label} &bull;{' '}
+                              {sp.packaging_format.units_per_package} {sp.product.unit}/colis &bull;{' '}
                               Min. {sp.min_order_qty}
                             </span>
                           </div>
@@ -1531,7 +1527,7 @@ function OrderDetailModal({
               >
                 <thead>
                   <tr className="bg-background border-b border-borderLight">
-                    {['Produit', 'SKU', 'Format', 'Qté commandée', 'Unité cmd', 'Unités/cmd', 'Prix unitaire', 'Sous-total'].map((col) => (
+                    {['Produit', 'SKU', 'Format colis', 'Qté commandée', 'Prix unitaire', 'Sous-total'].map((col) => (
                       <th
                         key={col}
                         scope="col"
@@ -1545,7 +1541,7 @@ function OrderDetailModal({
                 <tbody>
                   {order.items.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-6 text-center text-sm text-textMuted">
+                      <td colSpan={6} className="px-4 py-6 text-center text-sm text-textMuted">
                         Aucune ligne de commande.
                       </td>
                     </tr>
@@ -1567,12 +1563,6 @@ function OrderDetailModal({
                           </td>
                           <td className="px-4 py-3 text-textMain tabular-nums">
                             {item.ordered_qty}
-                          </td>
-                          <td className="px-4 py-3 text-textMuted whitespace-nowrap">
-                            {item.supplier_product.order_unit}
-                          </td>
-                          <td className="px-4 py-3 text-textMuted tabular-nums">
-                            {item.supplier_product.units_per_order}
                           </td>
                           <td className="px-4 py-3 text-textMain tabular-nums whitespace-nowrap">
                             {parseFloat(item.unit_price).toLocaleString('fr-FR', {
@@ -1860,7 +1850,7 @@ export default function PurchaseOrdersPage() {
               <SkeletonRows cols={8} />
             ) : filteredOrders.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-textMuted">
+                <td colSpan={6} className="px-4 py-10 text-center text-sm text-textMuted">
                   {orders.length === 0
                     ? 'Aucune commande trouvée.'
                     : 'Aucune commande ne correspond aux filtres.'}

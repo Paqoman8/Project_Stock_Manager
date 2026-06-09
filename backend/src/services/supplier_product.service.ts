@@ -12,8 +12,9 @@
 import { AuditAction } from '@prisma/client';
 import { prisma } from '../config/database';
 import { logAction } from './audit.service';
-import * as supplierRepo        from '../repositories/supplier.repository';
-import * as supplierProductRepo from '../repositories/supplier_product.repository';
+import * as supplierRepo          from '../repositories/supplier.repository';
+import * as supplierProductRepo   from '../repositories/supplier_product.repository';
+import * as packagingFormatRepo   from '../repositories/packaging_format.repository';
 import type {
   SupplierProductRow,
   SupplierProductFilters,
@@ -99,6 +100,12 @@ export async function createSupplierProduct(
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
+  // Vérification que le format de conditionnement appartient au bon produit
+  const packagingFormat = await packagingFormatRepo.findById(data.packaging_format_id);
+  if (!packagingFormat || packagingFormat.product_id !== data.product_id) {
+    throw new Error('PACKAGING_FORMAT_NOT_FOUND');
+  }
+
   // Vérification unicité du couple (supplier_id, product_id)
   const existing = await supplierProductRepo.findBySupplierAndProduct(
     data.supplier_id,
@@ -166,6 +173,14 @@ export async function updateSupplierProduct(
   const existing = await supplierProductRepo.findById(id);
   if (!existing) {
     throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
+  }
+
+  // Vérification que le nouveau format de conditionnement appartient au bon produit
+  if (data.packaging_format_id) {
+    const packagingFormat = await packagingFormatRepo.findById(data.packaging_format_id);
+    if (!packagingFormat || packagingFormat.product_id !== existing.product_id) {
+      throw new Error('PACKAGING_FORMAT_NOT_FOUND');
+    }
   }
 
   // Si is_preferred = true : retirer le flag des autres entrées du même produit

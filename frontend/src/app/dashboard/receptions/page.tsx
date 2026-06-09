@@ -68,9 +68,8 @@ interface PurchaseOrderItemRow {
   unit_price: string;
   supplier_product: {
     id: string;
-    order_unit: string;
-    units_per_order: number;
     product: { id: string; name: string; sku: string; unit: string };
+    packaging_format: { id: string; label: string; units_per_package: number };
   };
 }
 
@@ -375,7 +374,7 @@ function CreateReceptionModal({
                     const product = oi.supplier_product.product;
                     const productId = product.id;
                     const qty = receivedQtys.get(productId) ?? 0;
-                    const totalUnits = oi.ordered_qty * oi.supplier_product.units_per_order;
+                    const totalUnits = oi.ordered_qty * oi.supplier_product.packaging_format.units_per_package;
 
                     return (
                       <div
@@ -391,7 +390,7 @@ function CreateReceptionModal({
                         {/* Infos commande */}
                         <div className="flex items-center gap-4 text-xs text-textMuted">
                           <span>
-                            Commandé&nbsp;: {oi.ordered_qty} {oi.supplier_product.order_unit}
+                            Commandé&nbsp;: {oi.ordered_qty} {oi.supplier_product.packaging_format.label}
                           </span>
                           <span>
                             Soit {totalUnits} {product.unit}
@@ -404,7 +403,7 @@ function CreateReceptionModal({
                             htmlFor={`reception-qty-${productId}`}
                             className="text-xs font-medium text-textSecondary whitespace-nowrap"
                           >
-                            Quantité reçue ({oi.supplier_product.order_unit})
+                            Quantité reçue ({oi.supplier_product.packaging_format.label})
                           </label>
                           <input
                             ref={index === 0 ? firstInputRef : undefined}
@@ -555,7 +554,7 @@ function OrderReceptionsModal({
       const received  = confirmedByProduct.get(product.id) ?? 0;
       const remaining = Math.max(0, ordered - received);
       const pct       = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
-      return { product, orderUnit: oi.supplier_product.order_unit, ordered, received, remaining, pct };
+      return { product, orderUnit: oi.supplier_product.packaging_format.label, ordered, received, remaining, pct };
     });
   }, [order, receptions]);
 

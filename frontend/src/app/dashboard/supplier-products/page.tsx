@@ -42,8 +42,7 @@ type SupplierProductRow = {
   product_id: string;
   supplier_ref: string | null;
   purchase_price: string; // Decimal sérialisé en string
-  order_unit: string;
-  units_per_order: number;
+  packaging_format_id: string;
   min_order_qty: number;
   is_preferred: boolean;
   is_active: boolean;
@@ -51,17 +50,18 @@ type SupplierProductRow = {
   updated_at: string;
   supplier: { id: string; name: string };
   product: { id: string; name: string; sku: string; unit: string };
+  packaging_format: { id: string; label: string; units_per_package: number };
 };
 
-type SupplierOption = { id: string; name: string };
-type ProductOption  = { id: string; name: string; sku: string; unit: string };
+type SupplierOption        = { id: string; name: string };
+type ProductOption         = { id: string; name: string; sku: string; unit: string };
+type PackagingFormatOption = { id: string; label: string; units_per_package: number };
 
 type FormErrors = {
   supplier_id?: string;
   product_id?: string;
   purchase_price?: string;
-  order_unit?: string;
-  units_per_order?: string;
+  packaging_format_id?: string;
   min_order_qty?: string;
   generic?: string;
 };
@@ -71,8 +71,7 @@ interface SupplierProductFormData {
   product_id: string;
   supplier_ref: string;
   purchase_price: string;
-  order_unit: string;
-  units_per_order: string;
+  packaging_format_id: string;
   min_order_qty: string;
   is_preferred: boolean;
 }
@@ -215,14 +214,13 @@ function SupplierProductFormModal({
   const isEdit = entry !== null;
 
   const emptyForm: SupplierProductFormData = {
-    supplier_id:    '',
-    product_id:     '',
-    supplier_ref:   '',
-    purchase_price: '',
-    order_unit:     '',
-    units_per_order: '1',
-    min_order_qty:  '1',
-    is_preferred:   false,
+    supplier_id:         '',
+    product_id:          '',
+    supplier_ref:        '',
+    purchase_price:      '',
+    packaging_format_id: '',
+    min_order_qty:       '1',
+    is_preferred:        false,
   };
 
   const [form, setForm]                   = useState<SupplierProductFormData>(emptyForm);
@@ -235,27 +233,31 @@ function SupplierProductFormModal({
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const productComboRef = useRef<HTMLDivElement>(null);
 
+  const [packagingFormats, setPackagingFormats]             = useState<PackagingFormatOption[]>([]);
+  const [formatsLoading, setFormatsLoading]                 = useState(false);
+
   // Remplir le formulaire en édition
   useEffect(() => {
     if (!isOpen) return;
     if (isEdit && entry) {
       setForm({
-        supplier_id:    entry.supplier_id,
-        product_id:     entry.product_id,
-        supplier_ref:   entry.supplier_ref ?? '',
-        purchase_price: parseFloat(entry.purchase_price).toString(),
-        order_unit:     entry.order_unit,
-        units_per_order: entry.units_per_order.toString(),
-        min_order_qty:  entry.min_order_qty.toString(),
-        is_preferred:   entry.is_preferred,
+        supplier_id:         entry.supplier_id,
+        product_id:          entry.product_id,
+        supplier_ref:        entry.supplier_ref ?? '',
+        purchase_price:      parseFloat(entry.purchase_price).toString(),
+        packaging_format_id: entry.packaging_format_id,
+        min_order_qty:       entry.min_order_qty.toString(),
+        is_preferred:        entry.is_preferred,
       });
+      // Load formats for the already-selected product
+      void loadFormats(entry.product_id);
     } else {
       setForm(emptyForm);
       setProductSearch('');
       setShowProductDropdown(false);
+      setPackagingFormats([]);
     }
     setErrors({});
-    // Focus initial — création sur le select fournisseur, édition sur le premier input modifiable
     setTimeout(() => {
       if (isEdit) {
         firstInputRef.current?.focus();
@@ -287,19 +289,30 @@ function SupplierProductFormModal({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  async function loadFormats(productId: string) {
+    if (!productId) { setPackagingFormats([]); return; }
+    setFormatsLoading(true);
+    try {
+      const res = await apiClient.get<{ formats: PackagingFormatOption[] }>(
+        `/api/products/${productId}/packaging-formats`,
+      );
+      setPackagingFormats(res.data.formats ?? []);
+    } catch {
+      setPackagingFormats([]);
+    } finally {
+      setFormatsLoading(false);
+    }
+  }
+
   function validate(): boolean {
     const next: FormErrors = {};
-    if (!isEdit && !form.supplier_id) next.supplier_id = 'Le fournisseur est requis.';
-    if (!isEdit && !form.product_id)  next.product_id  = 'Le produit est requis.';
+    if (!isEdit && !form.supplier_id)         next.supplier_id         = 'Le fournisseur est requis.';
+    if (!isEdit && !form.product_id)          next.product_id          = 'Le produit est requis.';
     const price = parseFloat(form.purchase_price);
     if (!form.purchase_price || isNaN(price) || price < 0.01) {
       next.purchase_price = 'Le prix d\'achat doit être supérieur à 0.';
     }
-    if (!form.order_unit.trim()) next.order_unit = 'L\'unité de commande est requise.';
-    const upo = parseInt(form.units_per_order, 10);
-    if (!form.units_per_order || isNaN(upo) || upo < 1) {
-      next.units_per_order = 'Doit être au moins 1.';
-    }
+    if (!form.packaging_format_id) next.packaging_format_id = 'Le format de conditionnement est requis.';
     const moq = parseInt(form.min_order_qty, 10);
     if (!form.min_order_qty || isNaN(moq) || moq < 1) {
       next.min_order_qty = 'Doit être au moins 1.';
@@ -318,23 +331,21 @@ function SupplierProductFormModal({
     try {
       if (isEdit && entry) {
         const payload: Record<string, unknown> = {
-          purchase_price: parseFloat(form.purchase_price),
-          order_unit:     form.order_unit.trim(),
-          units_per_order: parseInt(form.units_per_order, 10),
-          min_order_qty:  parseInt(form.min_order_qty, 10),
-          is_preferred:   form.is_preferred,
+          purchase_price:      parseFloat(form.purchase_price),
+          packaging_format_id: form.packaging_format_id,
+          min_order_qty:       parseInt(form.min_order_qty, 10),
+          is_preferred:        form.is_preferred,
         };
         if (form.supplier_ref.trim()) payload.supplier_ref = form.supplier_ref.trim();
         await apiClient.put(`/api/supplier-products/${entry.id}`, payload);
       } else {
         const payload: Record<string, unknown> = {
-          supplier_id:    form.supplier_id,
-          product_id:     form.product_id,
-          purchase_price: parseFloat(form.purchase_price),
-          order_unit:     form.order_unit.trim(),
-          units_per_order: parseInt(form.units_per_order, 10),
-          min_order_qty:  parseInt(form.min_order_qty, 10),
-          is_preferred:   form.is_preferred,
+          supplier_id:         form.supplier_id,
+          product_id:          form.product_id,
+          purchase_price:      parseFloat(form.purchase_price),
+          packaging_format_id: form.packaging_format_id,
+          min_order_qty:       parseInt(form.min_order_qty, 10),
+          is_preferred:        form.is_preferred,
         };
         if (form.supplier_ref.trim()) payload.supplier_ref = form.supplier_ref.trim();
         await apiClient.post('/api/supplier-products', payload);
@@ -376,16 +387,18 @@ function SupplierProductFormModal({
   }
 
   function handleSelectProduct(p: ProductOption) {
-    setForm((f) => ({ ...f, product_id: p.id }));
+    setForm((f) => ({ ...f, product_id: p.id, packaging_format_id: '' }));
     setProductSearch(`${p.name} (${p.sku})`);
     setShowProductDropdown(false);
     if (errors.product_id) setErrors((prev) => ({ ...prev, product_id: undefined }));
+    void loadFormats(p.id);
   }
 
   function handleClearProduct() {
-    setForm((f) => ({ ...f, product_id: '' }));
+    setForm((f) => ({ ...f, product_id: '', packaging_format_id: '' }));
     setProductSearch('');
     setShowProductDropdown(false);
+    setPackagingFormats([]);
   }
 
   if (!isOpen) return null;
@@ -601,82 +614,71 @@ function SupplierProductFormModal({
               )}
             </div>
 
-            {/* Unité de commande */}
+            {/* Format de conditionnement */}
             <div className="flex flex-col gap-1">
-              <label htmlFor="sp-order-unit" className="text-xs font-medium text-textSecondary">
-                Unité de commande <span className="text-danger" aria-hidden="true">*</span>
+              <label htmlFor="sp-format" className="text-xs font-medium text-textSecondary">
+                Format de conditionnement <span className="text-danger" aria-hidden="true">*</span>
               </label>
-              <input
-                id="sp-order-unit"
-                type="text"
-                value={form.order_unit}
-                onChange={(e) => {
-                  setForm((f) => ({ ...f, order_unit: e.target.value }));
-                  if (errors.order_unit) setErrors((p) => ({ ...p, order_unit: undefined }));
-                }}
-                placeholder="ex: Carton, Pack, Palette"
-                className={inputCls + (errors.order_unit ? ' border-danger' : '')}
-                aria-required="true"
-                aria-describedby={errors.order_unit ? 'sp-order-unit-err' : undefined}
-              />
-              {errors.order_unit && (
-                <p id="sp-order-unit-err" role="alert" className="text-xs text-danger">
-                  {errors.order_unit}
+              {!form.product_id && !isEdit ? (
+                <div className={inputCls + ' bg-background/50 text-textMuted cursor-not-allowed'}>
+                  Sélectionnez d&apos;abord un produit
+                </div>
+              ) : formatsLoading ? (
+                <div className={inputCls + ' text-textMuted'}>Chargement…</div>
+              ) : (
+                <select
+                  id="sp-format"
+                  value={form.packaging_format_id}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, packaging_format_id: e.target.value }));
+                    if (errors.packaging_format_id) setErrors((p) => ({ ...p, packaging_format_id: undefined }));
+                  }}
+                  className={inputCls + (errors.packaging_format_id ? ' border-danger' : '')}
+                  aria-required="true"
+                  aria-describedby={errors.packaging_format_id ? 'sp-format-err' : undefined}
+                >
+                  <option value="">— Sélectionner un format —</option>
+                  {packagingFormats.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label} (×{f.units_per_package})
+                    </option>
+                  ))}
+                </select>
+              )}
+              {errors.packaging_format_id && (
+                <p id="sp-format-err" role="alert" className="text-xs text-danger">
+                  {errors.packaging_format_id}
                 </p>
               )}
+              <p className="text-xs text-textMuted">
+                Le format dans lequel ce fournisseur livre ce produit.
+              </p>
             </div>
 
-            {/* Unités par commande + Quantité minimale — côte à côte */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1">
-                <label htmlFor="sp-upo" className="text-xs font-medium text-textSecondary">
-                  Unités/commande <span className="text-danger" aria-hidden="true">*</span>
-                </label>
-                <input
-                  id="sp-upo"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.units_per_order}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, units_per_order: e.target.value }));
-                    if (errors.units_per_order) setErrors((p) => ({ ...p, units_per_order: undefined }));
-                  }}
-                  className={inputCls + (errors.units_per_order ? ' border-danger' : '')}
-                  aria-required="true"
-                  aria-describedby={errors.units_per_order ? 'sp-upo-err' : undefined}
-                />
-                {errors.units_per_order && (
-                  <p id="sp-upo-err" role="alert" className="text-xs text-danger">
-                    {errors.units_per_order}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label htmlFor="sp-moq" className="text-xs font-medium text-textSecondary">
-                  Qté minimale <span className="text-danger" aria-hidden="true">*</span>
-                </label>
-                <input
-                  id="sp-moq"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.min_order_qty}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, min_order_qty: e.target.value }));
-                    if (errors.min_order_qty) setErrors((p) => ({ ...p, min_order_qty: undefined }));
-                  }}
-                  className={inputCls + (errors.min_order_qty ? ' border-danger' : '')}
-                  aria-required="true"
-                  aria-describedby={errors.min_order_qty ? 'sp-moq-err' : undefined}
-                />
-                {errors.min_order_qty && (
-                  <p id="sp-moq-err" role="alert" className="text-xs text-danger">
-                    {errors.min_order_qty}
-                  </p>
-                )}
-              </div>
+            {/* Quantité minimale */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="sp-moq" className="text-xs font-medium text-textSecondary">
+                Qté minimale <span className="text-danger" aria-hidden="true">*</span>
+              </label>
+              <input
+                id="sp-moq"
+                type="number"
+                min="1"
+                step="1"
+                value={form.min_order_qty}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, min_order_qty: e.target.value }));
+                  if (errors.min_order_qty) setErrors((p) => ({ ...p, min_order_qty: undefined }));
+                }}
+                className={inputCls + (errors.min_order_qty ? ' border-danger' : '')}
+                aria-required="true"
+                aria-describedby={errors.min_order_qty ? 'sp-moq-err' : undefined}
+              />
+              {errors.min_order_qty && (
+                <p id="sp-moq-err" role="alert" className="text-xs text-danger">
+                  {errors.min_order_qty}
+                </p>
+              )}
             </div>
 
             {/* Toggle fournisseur préféré */}
@@ -1195,8 +1197,7 @@ export default function SupplierProductsPage() {
                 'Fournisseur',
                 'Réf. fournisseur',
                 'Prix d\'achat',
-                'Unité cde.',
-                'Unités/cde.',
+                'Format de cde.',
                 'Qté min.',
                 'Préféré',
                 'Statut',
@@ -1218,7 +1219,7 @@ export default function SupplierProductsPage() {
               <SkeletonRows />
             ) : filteredEntries.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-10 text-center text-sm text-textMuted">
+                <td colSpan={9} className="px-4 py-10 text-center text-sm text-textMuted">
                   {entries.length === 0
                     ? 'Aucune entrée catalogue trouvée.'
                     : 'Aucune entrée ne correspond aux filtres.'}
@@ -1252,14 +1253,10 @@ export default function SupplierProductsPage() {
                     {parseFloat(row.purchase_price).toLocaleString('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0 })}
                   </td>
 
-                  {/* Unité de commande */}
+                  {/* Format de commande */}
                   <td className="px-4 py-3 text-textMuted whitespace-nowrap">
-                    {row.order_unit}
-                  </td>
-
-                  {/* Unités par commande */}
-                  <td className="px-4 py-3 text-textMuted whitespace-nowrap tabular-nums text-center">
-                    {row.units_per_order}
+                    {row.packaging_format.label}
+                    <span className="ml-1 text-xs text-textMuted">(×{row.packaging_format.units_per_package})</span>
                   </td>
 
                   {/* Quantité minimale */}

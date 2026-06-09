@@ -25,9 +25,9 @@ export interface PurchaseOrderItemRow {
   packaging_format_id: string | null;
   supplier_product: {
     id: string;
-    order_unit: string;
-    units_per_order: number;
+    packaging_format_id: string;
     product: { id: string; name: string; sku: string; unit: string };
+    packaging_format: { id: string; label: string; units_per_package: number };
   };
   packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
@@ -108,10 +108,10 @@ const PURCHASE_ORDER_INCLUDE = {
     include: {
       supplier_product: {
         select: {
-          id:              true,
-          order_unit:      true,
-          units_per_order: true,
+          id:                  true,
+          packaging_format_id: true,
           product: { select: { id: true, name: true, sku: true, unit: true } },
+          packaging_format: { select: { id: true, label: true, units_per_package: true } },
         },
       },
       packaging_format: { select: { id: true, label: true, units_per_package: true } },

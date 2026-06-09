@@ -4,7 +4,7 @@
 //
 // Responsabilités :
 //   - Validation métier : statut de la commande, existence des produits
-//   - Calcul de stock_units_added = received_qty × units_per_order
+//   - Calcul de stock_units_added = received_qty × packaging_format.units_per_package
 //   - Cycle de vie : PENDING → CONFIRMED | CANCELLED
 //   - Journalisation de chaque action métier via audit.service (non-bloquant)
 
@@ -68,7 +68,7 @@ export async function getReceptionById(id: string): Promise<StockReceptionRow> {
  * Règles métier vérifiées :
  *   - La commande doit être en statut SENT ou PARTIALLY_RECEIVED.
  *   - Pour chaque ligne reçue, le SupplierProduct correspondant est chargé
- *     afin de calculer stock_units_added = received_qty × units_per_order.
+ *     afin de calculer stock_units_added = received_qty × packaging_format.units_per_package.
  *
  * @param input         - Données de la réception (order_id, items…)
  * @param actorId       - UUID de l'utilisateur connecté (received_by_id)
@@ -95,7 +95,12 @@ export async function createReception(
     include: {
       items: {
         include: {
-          supplier_product: { select: { product_id: true, units_per_order: true } },
+          supplier_product: {
+            select: {
+              product_id:      true,
+              packaging_format: { select: { units_per_package: true } },
+            },
+          },
         },
       },
     },
@@ -111,12 +116,12 @@ export async function createReception(
     throw new Error('INVALID_ORDER_STATUS');
   }
 
-  // Construire un index product_id → { units_per_order, packaging_format_id } depuis les lignes de commande
+  // Construire un index product_id → { unitsPerPackage, packaging_format_id } depuis les lignes de commande
   const orderInfoByProduct = new Map<string, { unitsPerOrder: number; packagingFormatId: string | null }>();
   for (const oi of order.items) {
     orderInfoByProduct.set(oi.supplier_product.product_id, {
-      unitsPerOrder:      oi.supplier_product.units_per_order,
-      packagingFormatId:  (oi as unknown as { packaging_format_id: string | null }).packaging_format_id ?? null,
+      unitsPerOrder:     oi.supplier_product.packaging_format.units_per_package,
+      packagingFormatId: (oi as unknown as { packaging_format_id: string | null }).packaging_format_id ?? null,
     });
   }
 
