@@ -481,8 +481,7 @@ function PackagingFormatsModal({
 
   // Formulaire ajout
   const [addLabel,      setAddLabel]      = useState('');
-  const [addUnits,      setAddUnits]      = useState('1');
-  const [addIsBase,     setAddIsBase]     = useState(false);
+  const [addUnits,      setAddUnits]      = useState('');
   const [addSaving,     setAddSaving]     = useState(false);
   const [addError,      setAddError]      = useState<string | null>(null);
 
@@ -526,14 +525,13 @@ function PackagingFormatsModal({
       const { data } = await apiClient.post(`/api/products/${product!.id}/packaging-formats`, {
         label:             addLabel.trim(),
         units_per_package: units,
-        is_base_unit:      addIsBase,
+        is_base_unit:      false,
       });
       setFormats((prev) => [...prev, data.format as PackagingFormatRow].sort(
         (a, b) => a.units_per_package - b.units_per_package
       ));
       setAddLabel('');
-      setAddUnits('1');
-      setAddIsBase(false);
+      setAddUnits('');
     } catch (err) {
       if (axios.isAxiosError(err)) setAddError(err.response?.data?.message ?? 'Erreur.');
       else setAddError('Erreur inattendue.');
@@ -675,15 +673,22 @@ function PackagingFormatsModal({
                             placeholder="Coeff."
                           />
                         </div>
-                        <label className="flex items-center gap-2 text-xs text-textMuted cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={editIsBase}
-                            onChange={(e) => setEditIsBase(e.target.checked)}
-                            className="rounded"
-                          />
-                          Unité de base (coefficient = 1)
-                        </label>
+                        {editIsBase ? (
+                          <p className="text-xs text-primary flex items-center gap-1.5">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded font-medium bg-primary/10 border border-primary/20">Base</span>
+                            Unité de base — ne peut pas être retirée directement. Modifiez le libellé si nécessaire.
+                          </p>
+                        ) : (
+                          <label className="flex items-center gap-2 text-xs text-textMuted cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={editIsBase}
+                              onChange={(e) => setEditIsBase(e.target.checked)}
+                              className="rounded"
+                            />
+                            Définir comme unité de base (remplace l&apos;actuelle)
+                          </label>
+                        )}
                         {editError && (
                           <p className="text-xs text-danger">{editError}</p>
                         )}
@@ -766,15 +771,6 @@ function PackagingFormatsModal({
                   />
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-xs text-textMuted cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={addIsBase}
-                  onChange={(e) => setAddIsBase(e.target.checked)}
-                  className="rounded"
-                />
-                Unité de base — coefficient obligatoirement 1
-              </label>
               {addError && (
                 <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
                   {addError}
@@ -815,6 +811,7 @@ interface ProductFormData {
   unit: ProductUnit;
   category_id: string;
   description: string;
+  base_format_label: string;
 }
 
 function ProductFormModal({
@@ -833,12 +830,13 @@ function ProductFormModal({
   const isEdit = product !== null;
 
   const emptyForm: ProductFormData = {
-    sku:         '',
-    name:        '',
-    price:       '',
-    unit:        'PIECE',
-    category_id: '',
-    description: '',
+    sku:               '',
+    name:              '',
+    price:             '',
+    unit:              'PIECE',
+    category_id:       '',
+    description:       '',
+    base_format_label: '',
   };
 
   const [form, setForm]       = useState<ProductFormData>(emptyForm);
@@ -851,12 +849,13 @@ function ProductFormModal({
     if (!isOpen) return;
     if (isEdit && product) {
       setForm({
-        sku:         product.sku,
-        name:        product.name,
-        price:       parseFloat(product.price).toString(),
-        unit:        product.unit,
-        category_id: product.category_id,
-        description: product.description ?? '',
+        sku:               product.sku,
+        name:              product.name,
+        price:             parseFloat(product.price).toString(),
+        unit:              product.unit,
+        category_id:       product.category_id,
+        description:       product.description ?? '',
+        base_format_label: '',
       });
     } else {
       setForm(emptyForm);
@@ -885,6 +884,9 @@ function ProductFormModal({
     if (!form.price.trim() || isNaN(priceVal) || priceVal <= 0) {
       next.price = 'Le prix doit être un nombre positif.';
     }
+    if (!isEdit && !form.base_format_label.trim()) {
+      next.base_format_label = 'Le format de base est requis.';
+    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -896,7 +898,7 @@ function ProductFormModal({
     setIsSubmitting(true);
     setApiError(null);
 
-    const payload: Record<string, string | number> = {
+    const payload: Record<string, unknown> = {
       name:        form.name.trim(),
       price:       parseFloat(form.price),
       unit:        form.unit,
@@ -906,6 +908,10 @@ function ProductFormModal({
     if (form.description.trim()) payload.description = form.description.trim();
     // SKU uniquement en création (immuable en édition)
     if (!isEdit) payload.sku = form.sku.trim();
+    // Format de base — obligatoire en création (validé dans validate())
+    if (!isEdit) {
+      payload.initial_format = { label: form.base_format_label.trim() };
+    }
 
     try {
       if (isEdit && product) {
@@ -1126,6 +1132,38 @@ function ProductFormModal({
                 className={inputCls + ' resize-none'}
               />
             </div>
+
+            {/* Format de base — création uniquement, obligatoire */}
+            {!isEdit && (
+              <div className="flex flex-col gap-2 pt-2 border-t border-borderLight">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="prod-base-format" className="text-xs font-medium text-textSecondary">
+                    Format de base <span className="text-danger" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="prod-base-format"
+                    type="text"
+                    value={form.base_format_label}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, base_format_label: e.target.value }));
+                      if (errors.base_format_label) setErrors((prev) => ({ ...prev, base_format_label: undefined }));
+                    }}
+                    placeholder="Ex : Pièce, Unité, Kg…"
+                    className={inputCls + (errors.base_format_label ? ' border-danger' : '')}
+                    aria-required="true"
+                    aria-describedby={errors.base_format_label ? 'prod-base-format-err' : undefined}
+                  />
+                  {errors.base_format_label && (
+                    <p id="prod-base-format-err" role="alert" className="text-xs text-danger">
+                      {errors.base_format_label}
+                    </p>
+                  )}
+                  <p className="text-xs text-textMuted">
+                    L&apos;unité fondamentale du produit. D&apos;autres formats (carton, palette…) pourront être ajoutés ensuite depuis la fiche produit.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Erreur API générique */}
             {apiError && (
