@@ -19,7 +19,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
 import apiClient from '@/lib/apiClient';
-import type { UserRow } from '@/app/dashboard/users/page';
+import type { UserRow } from '@/app/dashboard/users/types';
 
 // ---------------------------------------------------------------------------
 // Props
