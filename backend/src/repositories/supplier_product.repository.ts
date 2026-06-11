@@ -152,22 +152,23 @@ export async function findById(id: string): Promise<SupplierProductRow | null> {
 }
 
 /**
- * Retourne l'enregistrement correspondant au couple (supplier_id, product_id), ou null.
+ * Retourne l'enregistrement correspondant au triplet (supplier_id, product_id, packaging_format_id), ou null.
  * Utilisé pour la vérification d'unicité avant création.
  *
- * @param supplierId - UUID du fournisseur
- * @param productId  - UUID du produit
+ * @param supplierId        - UUID du fournisseur
+ * @param productId         - UUID du produit
+ * @param packagingFormatId - UUID du format de conditionnement
  */
-export async function findBySupplierAndProduct(
-  supplierId: string,
-  productId:  string,
+export async function findBySupplierProductAndFormat(
+  supplierId:        string,
+  productId:         string,
+  packagingFormatId: string,
 ): Promise<SupplierProductRow | null> {
-  return prisma.supplierProduct.findUnique({
+  return prisma.supplierProduct.findFirst({
     where: {
-      supplier_id_product_id: {
-        supplier_id: supplierId,
-        product_id:  productId,
-      },
+      supplier_id:          supplierId,
+      product_id:           productId,
+      packaging_format_id:  packagingFormatId,
     },
     select: SUPPLIER_PRODUCT_SELECT,
   }) as unknown as Promise<SupplierProductRow | null>;
@@ -180,18 +181,25 @@ export async function findBySupplierAndProduct(
  * @returns L'enregistrement créé avec ses relations
  */
 export async function create(data: CreateSupplierProductData): Promise<SupplierProductRow> {
-  return prisma.supplierProduct.create({
-    data: {
-      supplier_id:          data.supplier_id,
-      product_id:           data.product_id,
-      supplier_ref:         data.supplier_ref ?? null,
-      purchase_price:       data.purchase_price,
-      packaging_format_id:  data.packaging_format_id,
-      min_order_qty:        data.min_order_qty ?? 1,
-      is_preferred:         data.is_preferred  ?? false,
-    },
-    select: SUPPLIER_PRODUCT_SELECT,
-  }) as unknown as SupplierProductRow;
+  try {
+    return await prisma.supplierProduct.create({
+      data: {
+        supplier_id:          data.supplier_id,
+        product_id:           data.product_id,
+        supplier_ref:         data.supplier_ref ?? null,
+        purchase_price:       data.purchase_price,
+        packaging_format_id:  data.packaging_format_id,
+        min_order_qty:        data.min_order_qty ?? 1,
+        is_preferred:         data.is_preferred  ?? false,
+      },
+      select: SUPPLIER_PRODUCT_SELECT,
+    }) as unknown as SupplierProductRow;
+  } catch (err: unknown) {
+    if (typeof err === 'object' && err !== null && 'code' in err && (err as { code: string }).code === 'P2002') {
+      throw new Error('SUPPLIER_PRODUCT_ALREADY_EXISTS');
+    }
+    throw err;
+  }
 }
 
 /**

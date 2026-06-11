@@ -455,7 +455,7 @@ model SupplierProduct {
   packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id])
   order_items         PurchaseOrderItem[]
 
-  @@unique([supplier_id, product_id])
+  @@unique([supplier_id, product_id, packaging_format_id])
   @@map("supplier_products")
 }
 

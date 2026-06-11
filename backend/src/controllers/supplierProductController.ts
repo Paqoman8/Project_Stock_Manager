@@ -11,6 +11,7 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as supplierProductService from '../services/supplier_product.service';
+import { sendInternalError } from '../utils/httpError';
 
 // ---------------------------------------------------------------------------
 // Helpers internes
@@ -108,11 +109,7 @@ export async function getSupplierProducts(
       supplierProducts,
     });
   } catch (error) {
-    console.error('Erreur lors de la récupération du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'getSupplierProducts');
   }
 }
 
@@ -147,11 +144,7 @@ export async function getSupplierProductById(
       return;
     }
 
-    console.error('Erreur lors de la récupération de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'getSupplierProductById');
   }
 }
 
@@ -236,16 +229,12 @@ export async function createSupplierProduct(
     if (error instanceof Error && error.message === 'SUPPLIER_PRODUCT_ALREADY_EXISTS') {
       res.status(409).json({
         success: false,
-        message: 'Une entrée de catalogue existe déjà pour ce couple fournisseur/produit.',
+        message: 'Une entrée de catalogue existe déjà pour ce fournisseur, ce produit et ce format.',
       });
       return;
     }
 
-    console.error('Erreur lors de la création de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'createSupplierProduct');
   }
 }
 
@@ -329,11 +318,7 @@ export async function updateSupplierProduct(
       return;
     }
 
-    console.error('Erreur lors de la mise à jour de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'updateSupplierProduct');
   }
 }
 
@@ -384,10 +369,6 @@ export async function deleteSupplierProduct(
       return;
     }
 
-    console.error('Erreur lors de la désactivation de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'deleteSupplierProduct');
   }
 }

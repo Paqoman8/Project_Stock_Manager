@@ -357,10 +357,7 @@ function SupplierProductFormModal({
         const status  = err.response?.status;
         const message = err.response?.data?.message ?? 'Une erreur est survenue.';
         if (status === 409) {
-          setErrors((prev) => ({
-            ...prev,
-            product_id: 'Ce fournisseur référence déjà ce produit.',
-          }));
+          setErrors((prev) => ({ ...prev, generic: message }));
         } else {
           setErrors((prev) => ({ ...prev, generic: message }));
         }
@@ -571,6 +568,47 @@ function SupplierProductFormModal({
               )}
             </div>
 
+            {/* Format de conditionnement */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="sp-format" className="text-xs font-medium text-textSecondary">
+                Format de conditionnement <span className="text-danger" aria-hidden="true">*</span>
+              </label>
+              {!form.product_id && !isEdit ? (
+                <div className={inputCls + ' bg-background/50 text-textMuted cursor-not-allowed'}>
+                  Sélectionnez d&apos;abord un produit
+                </div>
+              ) : formatsLoading ? (
+                <div className={inputCls + ' text-textMuted'}>Chargement…</div>
+              ) : (
+                <select
+                  id="sp-format"
+                  value={form.packaging_format_id}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, packaging_format_id: e.target.value }));
+                    if (errors.packaging_format_id) setErrors((p) => ({ ...p, packaging_format_id: undefined }));
+                  }}
+                  className={inputCls + (errors.packaging_format_id ? ' border-danger' : '')}
+                  aria-required="true"
+                  aria-describedby={errors.packaging_format_id ? 'sp-format-err' : undefined}
+                >
+                  <option value="">— Sélectionner un format —</option>
+                  {packagingFormats.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label} (×{f.units_per_package})
+                    </option>
+                  ))}
+                </select>
+              )}
+              {errors.packaging_format_id && (
+                <p id="sp-format-err" role="alert" className="text-xs text-danger">
+                  {errors.packaging_format_id}
+                </p>
+              )}
+              <p className="text-xs text-textMuted">
+                Le format dans lequel ce fournisseur livre ce produit.
+              </p>
+            </div>
+
             {/* Référence fournisseur */}
             <div className="flex flex-col gap-1">
               <label htmlFor="sp-ref" className="text-xs font-medium text-textSecondary">
@@ -612,47 +650,6 @@ function SupplierProductFormModal({
                   {errors.purchase_price}
                 </p>
               )}
-            </div>
-
-            {/* Format de conditionnement */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="sp-format" className="text-xs font-medium text-textSecondary">
-                Format de conditionnement <span className="text-danger" aria-hidden="true">*</span>
-              </label>
-              {!form.product_id && !isEdit ? (
-                <div className={inputCls + ' bg-background/50 text-textMuted cursor-not-allowed'}>
-                  Sélectionnez d&apos;abord un produit
-                </div>
-              ) : formatsLoading ? (
-                <div className={inputCls + ' text-textMuted'}>Chargement…</div>
-              ) : (
-                <select
-                  id="sp-format"
-                  value={form.packaging_format_id}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, packaging_format_id: e.target.value }));
-                    if (errors.packaging_format_id) setErrors((p) => ({ ...p, packaging_format_id: undefined }));
-                  }}
-                  className={inputCls + (errors.packaging_format_id ? ' border-danger' : '')}
-                  aria-required="true"
-                  aria-describedby={errors.packaging_format_id ? 'sp-format-err' : undefined}
-                >
-                  <option value="">— Sélectionner un format —</option>
-                  {packagingFormats.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label} (×{f.units_per_package})
-                    </option>
-                  ))}
-                </select>
-              )}
-              {errors.packaging_format_id && (
-                <p id="sp-format-err" role="alert" className="text-xs text-danger">
-                  {errors.packaging_format_id}
-                </p>
-              )}
-              <p className="text-xs text-textMuted">
-                Le format dans lequel ce fournisseur livre ce produit.
-              </p>
             </div>
 
             {/* Quantité minimale */}

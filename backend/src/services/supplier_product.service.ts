@@ -100,18 +100,19 @@ export async function createSupplierProduct(
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
-  // Vérification que le format de conditionnement appartient au bon produit
+  // Vérification que le format de conditionnement existe et appartient au bon produit
   const packagingFormat = await packagingFormatRepo.findById(data.packaging_format_id);
   if (!packagingFormat || packagingFormat.product_id !== data.product_id) {
     throw new Error('PACKAGING_FORMAT_NOT_FOUND');
   }
 
-  // Vérification unicité du couple (supplier_id, product_id)
-  const existing = await supplierProductRepo.findBySupplierAndProduct(
+  // Vérification d'unicité : le triplet (fournisseur + produit + format) ne doit pas déjà exister
+  const duplicate = await supplierProductRepo.findBySupplierProductAndFormat(
     data.supplier_id,
     data.product_id,
+    data.packaging_format_id,
   );
-  if (existing) {
+  if (duplicate) {
     throw new Error('SUPPLIER_PRODUCT_ALREADY_EXISTS');
   }
 
