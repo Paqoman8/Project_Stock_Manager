@@ -1601,6 +1601,8 @@ function CancelOrderModal({
 // Modale : Détail de commande (pleine largeur)
 // ---------------------------------------------------------------------------
 
+const RECEPTION_TRACKED_STATUSES: PurchaseOrderStatus[] = ['SENT', 'PARTIALLY_RECEIVED', 'RECEIVED'];
+
 function OrderDetailModal({
   order,
   onClose,
@@ -1608,6 +1610,10 @@ function OrderDetailModal({
   order: PurchaseOrderRow | null;
   onClose: () => void;
 }) {
+  // Map "productId|formatId" → stock_units_added confirmés
+  const [confirmedUnitsMap, setConfirmedUnitsMap] = useState<Map<string, number>>(new Map());
+  const [isLoadingReceptions, setIsLoadingReceptions] = useState(false);
+
   useEffect(() => {
     if (!order) return;
     function handleKey(e: KeyboardEvent) {
@@ -1616,6 +1622,34 @@ function OrderDetailModal({
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
   }, [order, onClose]);
+
+  // Charger les réceptions confirmées pour les statuts concernés
+  useEffect(() => {
+    if (!order || !RECEPTION_TRACKED_STATUSES.includes(order.status)) return;
+    let cancelled = false;
+    setIsLoadingReceptions(true);
+    setConfirmedUnitsMap(new Map());
+    apiClient
+      .get<{ success: boolean; receptions: Array<{
+        status: string;
+        items: Array<{ product_id: string; stock_units_added: number; packaging_format_id: string | null }>;
+      }> }>(`/api/receptions/by-order/${order.id}`)
+      .then((res) => {
+        if (cancelled) return;
+        const map = new Map<string, number>();
+        for (const reception of res.data.receptions ?? []) {
+          if (reception.status !== 'CONFIRMED') continue;
+          for (const item of reception.items) {
+            const key = `${item.product_id}|${item.packaging_format_id ?? ''}`;
+            map.set(key, (map.get(key) ?? 0) + item.stock_units_added);
+          }
+        }
+        setConfirmedUnitsMap(map);
+      })
+      .catch(() => { /* non-bloquant */ })
+      .finally(() => { if (!cancelled) setIsLoadingReceptions(false); });
+    return () => { cancelled = true; };
+  }, [order]);
 
   if (!order) return null;
 
@@ -1776,6 +1810,98 @@ function OrderDetailModal({
               </div>
             )}
           </section>
+
+          {/* Suivi des réceptions — visible pour SENT, PARTIALLY_RECEIVED, RECEIVED */}
+          {RECEPTION_TRACKED_STATUSES.includes(order.status) && order.items.length > 0 && (
+            <section aria-labelledby="detail-reception-title">
+              <h3
+                id="detail-reception-title"
+                className="text-xs font-semibold text-textMuted uppercase tracking-wide mb-3"
+              >
+                Suivi des réceptions (confirmées)
+              </h3>
+
+              {isLoadingReceptions ? (
+                <div className="flex flex-col gap-2">
+                  {order.items.map((item) => (
+                    <div key={item.id} className="h-10 bg-borderLight rounded animate-pulse" aria-hidden="true" />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {order.items.map((item) => {
+                    const fmt            = item.supplier_product.packaging_format;
+                    const key            = `${item.supplier_product.product.id}|${fmt.id}`;
+                    const expectedUnits  = item.ordered_qty * fmt.units_per_package;
+                    const receivedUnits  = confirmedUnitsMap.get(key) ?? 0;
+                    const receivedOrders = fmt.units_per_package > 0 ? Math.round(receivedUnits / fmt.units_per_package) : 0;
+                    const remaining      = Math.max(0, item.ordered_qty - receivedOrders);
+                    const pct            = expectedUnits > 0 ? Math.min(100, Math.round((receivedUnits / expectedUnits) * 100)) : 0;
+                    const isComplete     = pct >= 100;
+                    const hasStarted     = receivedOrders > 0;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex flex-col gap-1 p-3 bg-background border border-borderLight rounded"
+                      >
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                          <div className="flex flex-col gap-0">
+                            <span className="text-sm font-medium text-textMain">
+                              {item.supplier_product.product.name}
+                              <span className="ml-1.5 text-xs font-normal text-textMuted">({fmt.label})</span>
+                            </span>
+                            <span className="text-xs text-textMuted font-mono">{item.supplier_product.product.sku}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-xs text-textMuted whitespace-nowrap">
+                            <span>
+                              Commandé&nbsp;:&nbsp;<strong className="text-textMain">{item.ordered_qty}</strong>
+                            </span>
+                            <span>
+                              Reçu&nbsp;:&nbsp;
+                              <strong className={isComplete ? 'text-green-700' : hasStarted ? 'text-orange-600' : 'text-textMuted'}>
+                                {receivedOrders}
+                              </strong>
+                            </span>
+                            <span>
+                              Restant&nbsp;:&nbsp;
+                              <strong className={remaining === 0 ? 'text-green-700' : 'text-textMain'}>
+                                {remaining}
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="flex-1 h-1.5 bg-borderLight rounded-full overflow-hidden"
+                            role="progressbar"
+                            aria-valuenow={pct}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label={`${item.supplier_product.product.name} : ${pct}% reçu`}
+                          >
+                            <div
+                              className={[
+                                'h-full rounded-full transition-all',
+                                isComplete ? 'bg-green-500' : hasStarted ? 'bg-orange-400' : 'bg-borderLight',
+                              ].join(' ')}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className={[
+                            'text-xs font-medium tabular-nums w-8 text-right',
+                            isComplete ? 'text-green-700' : hasStarted ? 'text-orange-600' : 'text-textMuted',
+                          ].join(' ')}>
+                            {pct}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
         </div>
 
         {/* Pied */}
