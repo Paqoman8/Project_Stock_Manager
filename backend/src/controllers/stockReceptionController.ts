@@ -37,12 +37,10 @@ function formatZodErrors(err: ZodError): string[] {
 
 /** Schéma de validation d'une ligne de réception. */
 const receptionItemSchema = z.object({
-  /** UUID du produit reçu. */
-  product_id:   z.string().uuid('product_id doit être un UUID valide'),
+  /** UUID de la ligne de commande (PurchaseOrderItem) reçue. */
+  order_item_id: z.string().uuid('order_item_id doit être un UUID valide'),
   /** Quantité reçue en unités de commande — entier strictement positif. */
-  received_qty: z.number().int().positive('received_qty doit être un entier positif'),
-  /** Format de conditionnement reçu (optionnel — hérité depuis la commande si absent). */
-  packaging_format_id: z.string().uuid('packaging_format_id doit être un UUID valide').optional(),
+  received_qty:  z.number().int().positive('received_qty doit être un entier positif'),
 });
 
 /** Schéma de validation pour la création d'une réception. */
@@ -112,7 +110,7 @@ export async function getReceptionById(req: AuthenticatedRequest, res: Response)
  *
  * Crée une nouvelle réception de stock pour une commande SENT ou PARTIALLY_RECEIVED.
  *
- * Body attendu : { order_id, notes?, items[{ product_id, received_qty }] }
+ * Body attendu : { order_id, notes?, items[{ order_item_id, received_qty }] }
  * Réponse 201  : { success: true, message, reception: StockReceptionRow }
  * Réponse 400  : { success: false, message, errors: string[] } si Zod échoue
  * Réponse 404  : { success: false, message } si commande ou produit introuvable
