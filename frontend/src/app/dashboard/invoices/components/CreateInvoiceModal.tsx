@@ -127,7 +127,7 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
                 Date d&apos;échéance (optionnel)
               </label>
               <input id="invoice-due-at" type="date" value={dueAt}
-                onChange={(e) => setDueAt(e.target.value ? new Date(e.target.value).toISOString() : '')}
+                onChange={(e) => setDueAt(e.target.value)}
                 className={inputCls} />
             </div>
 

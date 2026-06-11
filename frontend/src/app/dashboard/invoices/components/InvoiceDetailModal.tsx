@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/Button';
 import { inputCls, formatDate, extractApiError } from '@/lib/ui';
 import apiClient from '@/lib/apiClient';
 import InvoiceStatusBadge from './InvoiceStatusBadge';
-import type { SupplierInvoiceRow } from '../types';
+import type { SupplierInvoiceRow, InvoiceOrderItem } from '../types';
 
 interface InvoiceDetailModalProps {
   invoice:   SupplierInvoiceRow | null;
@@ -122,6 +122,62 @@ export default function InvoiceDetailModal({
                 )}
               </dl>
             </div>
+
+            {/* Lignes de commande */}
+            {invoice.order.items && invoice.order.items.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <h3 className="text-xs font-semibold text-textMuted uppercase tracking-wide">
+                  Lignes de commande
+                </h3>
+                <div className="border border-borderLight rounded overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-background border-b border-borderLight">
+                        <th className="px-3 py-2 text-left font-medium text-textMuted">Produit</th>
+                        <th className="px-3 py-2 text-left font-medium text-textMuted">Format</th>
+                        <th className="px-3 py-2 text-right font-medium text-textMuted">Qté</th>
+                        <th className="px-3 py-2 text-right font-medium text-textMuted">P.U.</th>
+                        <th className="px-3 py-2 text-right font-medium text-textMuted">Sous-total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoice.order.items.map((item: InvoiceOrderItem) => {
+                        const subtotal = item.ordered_qty * parseFloat(item.unit_price);
+                        return (
+                          <tr key={item.id} className="border-b border-borderLight last:border-b-0">
+                            <td className="px-3 py-2 text-textMain">
+                              <span className="font-medium">{item.supplier_product.product.name}</span>
+                              <span className="block text-textMuted font-mono text-[10px]">{item.supplier_product.product.sku}</span>
+                            </td>
+                            <td className="px-3 py-2 text-textMuted">{item.supplier_product.packaging_format.label}</td>
+                            <td className="px-3 py-2 text-right text-textMain tabular-nums">{item.ordered_qty}</td>
+                            <td className="px-3 py-2 text-right text-textMuted tabular-nums">
+                              {parseFloat(item.unit_price).toLocaleString('fr-FR')} XOF
+                            </td>
+                            <td className="px-3 py-2 text-right text-textMain font-medium tabular-nums">
+                              {subtotal.toLocaleString('fr-FR')} XOF
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-background border-t border-borderLight">
+                        <td colSpan={4} className="px-3 py-2 text-right text-xs font-semibold text-textMuted">
+                          Total commande
+                        </td>
+                        <td className="px-3 py-2 text-right text-sm font-semibold text-textMain tabular-nums">
+                          {invoice.order.items.reduce(
+                            (sum, item: InvoiceOrderItem) => sum + item.ordered_qty * parseFloat(item.unit_price),
+                            0,
+                          ).toLocaleString('fr-FR')} XOF
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1">
               <label htmlFor="detail-ref" className="text-xs font-medium text-textSecondary">
