@@ -1,5 +1,5 @@
 // src/components/ui/Input.tsx
-// Champ de saisie avec label au-dessus (design system GStock, UI_UX_KIT.md).
+// Champ de saisie avec label au-dessus (design system Stock Manager, UI_UX_KIT.md).
 // Gère l'état d'erreur, le champ obligatoire, et l'accessibilité (aria).
 // Navigation Tab optimisée selon le design system §C.
 //

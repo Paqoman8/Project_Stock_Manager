@@ -11,6 +11,7 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as supplierProductService from '../services/supplier_product.service';
+import { sendInternalError } from '../utils/httpError';
 
 // ---------------------------------------------------------------------------
 // Helpers internes
@@ -42,14 +43,13 @@ function formatZodErrors(err: ZodError): string[] {
  * supplier_id et product_id sont requis uniquement à la création.
  */
 const supplierProductSchema = z.object({
-  supplier_id:     z.string().uuid(),
-  product_id:      z.string().uuid(),
-  supplier_ref:    z.string().optional(),
-  purchase_price:  z.number().positive(),
-  order_unit:      z.string().min(1),
-  units_per_order: z.number().int().positive().optional(),
-  min_order_qty:   z.number().int().positive().optional(),
-  is_preferred:    z.boolean().optional(),
+  supplier_id:          z.string().uuid(),
+  product_id:           z.string().uuid(),
+  supplier_ref:         z.string().optional(),
+  purchase_price:       z.number().positive(),
+  packaging_format_id:  z.string().uuid('UUID de format de conditionnement invalide'),
+  min_order_qty:        z.number().int().positive().optional(),
+  is_preferred:         z.boolean().optional(),
 });
 
 /** Type inféré depuis le schéma de création. */
@@ -109,11 +109,7 @@ export async function getSupplierProducts(
       supplierProducts,
     });
   } catch (error) {
-    console.error('Erreur lors de la récupération du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'getSupplierProducts');
   }
 }
 
@@ -148,11 +144,7 @@ export async function getSupplierProductById(
       return;
     }
 
-    console.error('Erreur lors de la récupération de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'getSupplierProductById');
   }
 }
 
@@ -161,8 +153,8 @@ export async function getSupplierProductById(
  *
  * Crée un nouvel enregistrement dans le catalogue fournisseur.
  *
- * Body attendu : { supplier_id, product_id, purchase_price, order_unit, supplier_ref?,
- *                  units_per_order?, min_order_qty?, is_preferred? }
+ * Body attendu : { supplier_id, product_id, purchase_price, packaging_format_id, supplier_ref?,
+ *                  min_order_qty?, is_preferred? }
  * Réponse 201  : { success: true, message, supplierProduct: SupplierProductRow }
  * Réponse 400  : { success: false, message, errors: string[] } si validation Zod échoue
  * Réponse 404  : { success: false, message } si fournisseur ou produit introuvable
@@ -226,19 +218,23 @@ export async function createSupplierProduct(
       return;
     }
 
-    if (error instanceof Error && error.message === 'SUPPLIER_PRODUCT_ALREADY_EXISTS') {
-      res.status(409).json({
+    if (error instanceof Error && error.message === 'PACKAGING_FORMAT_NOT_FOUND') {
+      res.status(422).json({
         success: false,
-        message: 'Une entrée de catalogue existe déjà pour ce couple fournisseur/produit.',
+        message: 'Le format de conditionnement est introuvable ou n\'appartient pas au produit sélectionné.',
       });
       return;
     }
 
-    console.error('Erreur lors de la création de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    if (error instanceof Error && error.message === 'SUPPLIER_PRODUCT_ALREADY_EXISTS') {
+      res.status(409).json({
+        success: false,
+        message: 'Une entrée de catalogue existe déjà pour ce fournisseur, ce produit et ce format.',
+      });
+      return;
+    }
+
+    sendInternalError(res, error, 'createSupplierProduct');
   }
 }
 
@@ -248,7 +244,7 @@ export async function createSupplierProduct(
  * Met à jour les champs fournis d'un enregistrement existant.
  *
  * Params  : id — UUID de l'enregistrement
- * Body    : { supplier_ref?, purchase_price?, order_unit?, units_per_order?,
+ * Body    : { supplier_ref?, purchase_price?, packaging_format_id?,
  *             min_order_qty?, is_preferred?, is_active? }
  * Réponse 200 : { success: true, message, supplierProduct: SupplierProductRow }
  * Réponse 400 : { success: false, message, errors: string[] } si validation Zod échoue
@@ -314,11 +310,15 @@ export async function updateSupplierProduct(
       return;
     }
 
-    console.error('Erreur lors de la mise à jour de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    if (error instanceof Error && error.message === 'PACKAGING_FORMAT_NOT_FOUND') {
+      res.status(422).json({
+        success: false,
+        message: 'Le format de conditionnement est introuvable ou n\'appartient pas au produit sélectionné.',
+      });
+      return;
+    }
+
+    sendInternalError(res, error, 'updateSupplierProduct');
   }
 }
 
@@ -369,10 +369,6 @@ export async function deleteSupplierProduct(
       return;
     }
 
-    console.error('Erreur lors de la désactivation de l\'entrée du catalogue fournisseur :', error);
-    res.status(500).json({
-      success: false,
-      message: 'Une erreur interne est survenue.',
-    });
+    sendInternalError(res, error, 'deleteSupplierProduct');
   }
 }

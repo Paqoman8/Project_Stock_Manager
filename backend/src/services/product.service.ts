@@ -77,6 +77,7 @@ export async function createProduct(
   storeId?: string,
   storeName?: string,
   ipAddress?: string,
+  initialFormatLabel?: string,
 ): Promise<ProductRow> {
   // Vérification unicité SKU
   const existingSku = await productRepo.findBySku(data.sku);
@@ -90,7 +91,9 @@ export async function createProduct(
     throw new Error('CATEGORY_NOT_FOUND');
   }
 
-  const product = await productRepo.create(data);
+  const product = initialFormatLabel
+    ? await productRepo.createWithBaseFormat(data, initialFormatLabel)
+    : await productRepo.create(data);
 
   // Audit — non-bloquant
   try {

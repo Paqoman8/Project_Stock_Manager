@@ -44,7 +44,9 @@ interface ReceptionItemRow {
   product_id: string;
   received_qty: number;
   stock_units_added: number;
+  packaging_format_id: string | null;
   product: { id: string; name: string; sku: string; unit: string };
+  packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
 
 interface StockReceptionRow {
@@ -68,9 +70,8 @@ interface PurchaseOrderItemRow {
   unit_price: string;
   supplier_product: {
     id: string;
-    order_unit: string;
-    units_per_order: number;
     product: { id: string; name: string; sku: string; unit: string };
+    packaging_format: { id: string; label: string; units_per_package: number };
   };
 }
 
@@ -208,24 +209,53 @@ function CreateReceptionModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  // Map de product_id → quantité reçue (en unités de commande)
+  // Map de order_item_id → quantité reçue (en unités de commande)
   const [receivedQtys, setReceivedQtys] = useState<Map<string, number>>(new Map());
   const [notes, setNotes] = useState('');
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
+  // Map "productId|formatId" → stock_units_added confirmés (pour afficher l'avancement)
+  const [confirmedBaseUnits, setConfirmedBaseUnits] = useState<Map<string, number>>(new Map());
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   // Initialiser la Map quand la commande change
   useEffect(() => {
     if (!order) return;
     const initial = new Map<string, number>();
     for (const oi of order.items) {
-      initial.set(oi.supplier_product.product.id, 0);
+      initial.set(oi.id, 0);
     }
     setReceivedQtys(initial);
     setNotes('');
     setApiError(null);
     setTimeout(() => firstInputRef.current?.focus(), 50);
+  }, [order]);
+
+  // Charger les réceptions confirmées pour afficher l'avancement partiel
+  useEffect(() => {
+    if (!order) return;
+    let cancelled = false;
+    setIsLoadingHistory(true);
+    setConfirmedBaseUnits(new Map());
+    apiClient
+      .get<{ success: boolean; receptions: StockReceptionRow[] }>(`/api/receptions/by-order/${order.id}`)
+      .then((res) => {
+        if (cancelled) return;
+        const map = new Map<string, number>();
+        for (const reception of res.data.receptions ?? []) {
+          if (reception.status !== 'CONFIRMED') continue;
+          for (const item of reception.items) {
+            const key = `${item.product_id}|${item.packaging_format_id ?? ''}`;
+            map.set(key, (map.get(key) ?? 0) + item.stock_units_added);
+          }
+        }
+        setConfirmedBaseUnits(map);
+      })
+      .catch(() => { /* non-bloquant : l'avancement n'est pas critique */ })
+      .finally(() => { if (!cancelled) setIsLoadingHistory(false); });
+    return () => { cancelled = true; };
   }, [order]);
 
   // Fermeture par Escape
@@ -238,10 +268,10 @@ function CreateReceptionModal({
     return () => document.removeEventListener('keydown', handleKey);
   }, [order, onClose]);
 
-  function handleQtyChange(productId: string, raw: string) {
+  function handleQtyChange(itemId: string, raw: string) {
     const parsed = parseInt(raw, 10);
     const value = isNaN(parsed) ? 0 : Math.max(0, parsed);
-    setReceivedQtys((prev) => new Map(prev).set(productId, value));
+    setReceivedQtys((prev) => new Map(prev).set(itemId, value));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -249,16 +279,15 @@ function CreateReceptionModal({
     if (!order) return;
 
     // Validation : au moins un article avec qty > 0
-    const items: { product_id: string; received_qty: number }[] = [];
+    const items: { order_item_id: string; received_qty: number }[] = [];
     for (const oi of order.items) {
-      const productId = oi.supplier_product.product.id;
-      const qty = receivedQtys.get(productId) ?? 0;
+      const qty = receivedQtys.get(oi.id) ?? 0;
       if (qty < 0 || !Number.isInteger(qty)) {
         setApiError('Les quantités doivent être des entiers positifs ou nuls.');
         return;
       }
       if (qty > 0) {
-        items.push({ product_id: productId, received_qty: qty });
+        items.push({ order_item_id: oi.id, received_qty: qty });
       }
     }
 
@@ -372,10 +401,17 @@ function CreateReceptionModal({
               ) : (
                 <div className="flex flex-col gap-2">
                   {order.items.map((oi, index) => {
-                    const product = oi.supplier_product.product;
-                    const productId = product.id;
-                    const qty = receivedQtys.get(productId) ?? 0;
-                    const totalUnits = oi.ordered_qty * oi.supplier_product.units_per_order;
+                    const product        = oi.supplier_product.product;
+                    const fmt            = oi.supplier_product.packaging_format;
+                    const qty            = receivedQtys.get(oi.id) ?? 0;
+                    const totalUnits     = oi.ordered_qty * fmt.units_per_package;
+
+                    // Avancement confirmé pour cette ligne de commande
+                    const histKey         = `${product.id}|${fmt.id}`;
+                    const confirmedUnits  = confirmedBaseUnits.get(histKey) ?? 0;
+                    const confirmedOrders = fmt.units_per_package > 0 ? Math.round(confirmedUnits / fmt.units_per_package) : 0;
+                    const remainingOrders = Math.max(0, oi.ordered_qty - confirmedOrders);
+                    const confirmedPct    = totalUnits > 0 ? Math.min(100, Math.round((confirmedUnits / totalUnits) * 100)) : 0;
 
                     return (
                       <div
@@ -390,34 +426,64 @@ function CreateReceptionModal({
 
                         {/* Infos commande */}
                         <div className="flex items-center gap-4 text-xs text-textMuted">
-                          <span>
-                            Commandé&nbsp;: {oi.ordered_qty} {oi.supplier_product.order_unit}
-                          </span>
-                          <span>
-                            Soit {totalUnits} {product.unit}
-                          </span>
+                          <span>Commandé&nbsp;: <strong className="text-textMain">{oi.ordered_qty}</strong> {fmt.label}</span>
+                          <span>= {totalUnits} {product.unit}</span>
                         </div>
 
-                        {/* Input quantité reçue */}
-                        <div className="flex items-center gap-3">
-                          <label
-                            htmlFor={`reception-qty-${productId}`}
-                            className="text-xs font-medium text-textSecondary whitespace-nowrap"
-                          >
-                            Quantité reçue ({oi.supplier_product.order_unit})
-                          </label>
-                          <input
-                            ref={index === 0 ? firstInputRef : undefined}
-                            id={`reception-qty-${productId}`}
-                            type="number"
-                            step={1}
-                            min={0}
-                            value={qty === 0 ? '' : qty}
-                            placeholder="0"
-                            onChange={(e) => handleQtyChange(productId, e.target.value)}
-                            className={inputCls + ' max-w-[120px]'}
-                          />
-                        </div>
+                        {/* Avancement des réceptions confirmées */}
+                        {isLoadingHistory ? (
+                          <div className="h-3 w-48 bg-borderLight rounded animate-pulse" />
+                        ) : confirmedOrders > 0 ? (
+                          <div className="flex flex-col gap-1.5 px-2.5 py-2 bg-orange-50 border border-orange-200 rounded">
+                            <div className="flex items-center gap-4 text-xs flex-wrap">
+                              <span className="text-orange-700">
+                                Déjà confirmé&nbsp;: <strong>{confirmedOrders}</strong> {fmt.label}
+                              </span>
+                              <span className={remainingOrders === 0 ? 'text-green-700 font-medium' : 'text-primary font-medium'}>
+                                Restant&nbsp;: <strong>{remainingOrders}</strong> {fmt.label}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-1 bg-orange-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${confirmedPct >= 100 ? 'bg-green-400' : 'bg-orange-400'}`}
+                                  style={{ width: `${confirmedPct}%` }}
+                                />
+                              </div>
+                              <span className={`text-xs tabular-nums ${confirmedPct >= 100 ? 'text-green-700' : 'text-orange-600'}`}>
+                                {confirmedPct}%
+                              </span>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {/* Input quantité reçue — masqué si la ligne est entièrement confirmée */}
+                        {!isLoadingHistory && remainingOrders === 0 ? (
+                          <div className="flex items-center gap-1.5 text-xs text-green-700 font-medium">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                            Ligne entièrement reçue
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <label
+                              htmlFor={`reception-qty-${oi.id}`}
+                              className="text-xs font-medium text-textSecondary whitespace-nowrap"
+                            >
+                              Quantité reçue ({fmt.label})
+                            </label>
+                            <input
+                              ref={index === 0 ? firstInputRef : undefined}
+                              id={`reception-qty-${oi.id}`}
+                              type="number"
+                              step={1}
+                              min={0}
+                              value={qty === 0 ? '' : qty}
+                              placeholder="0"
+                              onChange={(e) => handleQtyChange(oi.id, e.target.value)}
+                              className={inputCls + ' max-w-[120px]'}
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -528,34 +594,36 @@ function OrderReceptionsModal({
   // ---------------------------------------------------------------------------
   // Récapitulatif d'avancement — calculé depuis les réceptions CONFIRMED
   //
-  // Pour chaque produit de la commande :
-  //   - ordered_qty      : quantité commandée (en unités de commande)
-  //   - total_received   : somme des received_qty des réceptions CONFIRMED
-  //   - remaining        : différence (peut être négative en cas de sur-réception)
-  //   - pct              : taux de complétion (plafonné à 100 %)
+  // Pour chaque ligne de commande (produit + format) :
+  //   - Agrégation en unités de base (stock_units_added) par clé (product_id|packaging_format_id)
+  //     pour éviter de mélanger des unités différentes (cartons vs sachets du même produit).
+  //   - Comparaison contre ordered_qty × units_per_package (unités de base attendues).
+  //   - Affichage reconverti en unités de commande (÷ units_per_package).
   // ---------------------------------------------------------------------------
   const completionSummary = useMemo(() => {
     if (!order) return [];
 
-    // Agréger les quantités reçues confirmées par product_id
-    const confirmedByProduct = new Map<string, number>();
+    // Agréger les stock_units_added confirmés par (product_id + packaging_format_id)
+    const confirmedBaseUnits = new Map<string, number>();
     for (const reception of receptions) {
       if (reception.status !== 'CONFIRMED') continue;
       for (const item of reception.items) {
-        confirmedByProduct.set(
-          item.product_id,
-          (confirmedByProduct.get(item.product_id) ?? 0) + item.received_qty,
-        );
+        const key = `${item.product_id}|${item.packaging_format_id ?? ''}`;
+        confirmedBaseUnits.set(key, (confirmedBaseUnits.get(key) ?? 0) + item.stock_units_added);
       }
     }
 
     return order.items.map((oi) => {
-      const product   = oi.supplier_product.product;
-      const ordered   = oi.ordered_qty;
-      const received  = confirmedByProduct.get(product.id) ?? 0;
-      const remaining = Math.max(0, ordered - received);
-      const pct       = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
-      return { product, orderUnit: oi.supplier_product.order_unit, ordered, received, remaining, pct };
+      const product        = oi.supplier_product.product;
+      const fmt            = oi.supplier_product.packaging_format;
+      const key            = `${product.id}|${fmt.id}`;
+      const expectedUnits  = oi.ordered_qty * fmt.units_per_package;
+      const receivedUnits  = confirmedBaseUnits.get(key) ?? 0;
+      // Reconvertir en unités de commande pour l'affichage (toujours entier)
+      const received       = fmt.units_per_package > 0 ? Math.round(receivedUnits / fmt.units_per_package) : 0;
+      const remaining      = Math.max(0, oi.ordered_qty - received);
+      const pct            = expectedUnits > 0 ? Math.min(100, Math.round((receivedUnits / expectedUnits) * 100)) : 0;
+      return { orderItemId: oi.id, product, orderUnit: fmt.label, ordered: oi.ordered_qty, received, remaining, pct };
     });
   }, [order, receptions]);
 
@@ -611,19 +679,22 @@ function OrderReceptionsModal({
               </div>
             ) : (
               <div className="flex flex-col gap-1.5">
-                {completionSummary.map(({ product, orderUnit, ordered, received, remaining, pct }) => {
+                {completionSummary.map(({ orderItemId, product, orderUnit, ordered, received, remaining, pct }) => {
                   const isComplete = pct >= 100;
                   const hasStarted = received > 0;
 
                   return (
                     <div
-                      key={product.id}
+                      key={orderItemId}
                       className="flex flex-col gap-1 p-3 bg-background border border-borderLight rounded"
                     >
                       {/* Ligne principale : nom + chiffres */}
                       <div className="flex items-center justify-between gap-4 flex-wrap">
                         <div className="flex flex-col gap-0">
-                          <span className="text-sm font-medium text-textMain">{product.name}</span>
+                          <span className="text-sm font-medium text-textMain">
+                            {product.name}
+                            <span className="ml-1.5 text-xs font-normal text-textMuted">({orderUnit})</span>
+                          </span>
                           <span className="text-xs text-textMuted font-mono">{product.sku}</span>
                         </div>
                         <div className="flex items-center gap-4 text-xs text-textMuted whitespace-nowrap">
@@ -755,11 +826,14 @@ function OrderReceptionsModal({
                         {reception.items.map((item) => (
                           <li key={item.id} className="text-xs text-textMuted">
                             <span className="font-medium text-textMain">{item.product.name}</span>
+                            {item.packaging_format && (
+                              <span className="text-textMuted"> ({item.packaging_format.label})</span>
+                            )}
                             {' — '}
                             {item.received_qty} reçu(s)
                             {' → '}
                             <span className="text-green-700 font-medium">
-                              {item.stock_units_added} unité(s) ajoutée(s) au stock
+                              +{item.stock_units_added} {item.product.unit}
                             </span>
                           </li>
                         ))}

@@ -175,6 +175,7 @@ model PackagingFormat {
   report_line_breakdowns  InventoryReportLineBreakdown[]
   transfer_items          TransferItem[]
   transaction_items       TransactionItem[]
+  supplier_products       SupplierProduct[]
 
   @@unique([product_id, label])
   @@map("packaging_formats")
@@ -438,23 +439,23 @@ model Supplier {
 
 // Supplier catalog — per-supplier purchase conditions for each product
 model SupplierProduct {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  supplier_id     String          @db.Uuid
-  product_id      String          @db.Uuid
-  supplier_ref    String?         // Référence interne du fournisseur pour ce produit
-  purchase_price  Decimal         @db.Decimal(10, 2)
-  order_unit      String          // Unité de commande : Carton, Pack, Palette…
-  units_per_order Int             @default(1)
-  min_order_qty   Int             @default(1)
-  is_preferred    Boolean         @default(false)
-  is_active       Boolean         @default(true)
-  created_at      DateTime        @default(now())
-  updated_at      DateTime        @updatedAt
-  supplier        Supplier        @relation(fields: [supplier_id], references: [id])
-  product         Product         @relation(fields: [product_id], references: [id])
-  order_items     PurchaseOrderItem[]
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supplier_id         String          @db.Uuid
+  product_id          String          @db.Uuid
+  supplier_ref        String?         // Référence interne du fournisseur pour ce produit
+  purchase_price      Decimal         @db.Decimal(10, 2)
+  packaging_format_id String          @db.Uuid  // Format de colis commandé chez ce fournisseur
+  min_order_qty       Int             @default(1)
+  is_preferred        Boolean         @default(false)
+  is_active           Boolean         @default(true)
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+  supplier            Supplier        @relation(fields: [supplier_id], references: [id])
+  product             Product         @relation(fields: [product_id], references: [id])
+  packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id])
+  order_items         PurchaseOrderItem[]
 
-  @@unique([supplier_id, product_id])
+  @@unique([supplier_id, product_id, packaging_format_id])
   @@map("supplier_products")
 }
 

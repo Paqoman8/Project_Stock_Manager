@@ -70,7 +70,7 @@ const io = new Server(server, {
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', message: 'L\'API GStock est opérationnelle' });
+  res.json({ status: 'ok', message: 'L\'API Stock Manager est opérationnelle' });
 });
 
 
@@ -142,5 +142,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`Le serveur GStock a démarré sur le port ${PORT}`);
+  console.log(`Le serveur Stock Manager a démarré sur le port ${PORT}`);
 });

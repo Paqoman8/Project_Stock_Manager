@@ -29,8 +29,8 @@ git -v
 ### 1. Cloner le dépôt
 
 ```bash
-git clone <url-du-repo> gstock
-cd gstock
+git clone <url-du-repo> stock-manager
+cd stock-manager
 ```
 
 ### 2. Démarrer la base de données
@@ -45,7 +45,7 @@ Vérifier que le conteneur est actif :
 
 ```bash
 docker ps
-# gstock-postgres doit apparaître avec l'état "Up"
+# stockmanager-postgres doit apparaître avec l'état "Up"
 ```
 
 Paramètres de la base (définis dans `docker-compose.yml`) :
@@ -145,6 +145,9 @@ Contenu du fichier `frontend/.env.local` :
 ```env
 # URL de l'API (optionnel en dev — les rewrites Next.js gèrent la redirection)
 NEXT_PUBLIC_API_URL="http://localhost:5000"
+
+# Nom affiché dans l'interface (optionnel — défaut : "Stock Manager")
+NEXT_PUBLIC_APP_NAME="Stock Manager"
 ```
 
 ### 9. Installer les dépendances frontend
@@ -223,7 +226,7 @@ docker compose up -d
 docker compose down
 
 # Voir les logs PostgreSQL
-docker logs gstock-postgres
+docker logs stockmanager-postgres
 
 # Arrêter et supprimer les volumes (réinitialisation complète)
 docker compose down -v

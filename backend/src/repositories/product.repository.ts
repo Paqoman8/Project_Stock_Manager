@@ -7,6 +7,7 @@
 //   - Sélecteur partagé PRODUCT_SELECT pour garantir une forme constante
 //   - Recherche textuelle sur name ou sku, filtres par catégorie et statut
 
+import { ProductUnit } from '@prisma/client';
 import { prisma } from '../config/database';
 
 // ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ export type CreateProductData = {
   sku:         string;
   name:        string;
   price:       number;
-  unit?:       string;
+  unit?:       ProductUnit;
   category_id: string;
   description?: string;
 };
@@ -165,12 +166,50 @@ export async function create(data: CreateProductData): Promise<ProductRow> {
       sku:         data.sku,
       name:        data.name,
       price:       data.price,
+      unit:        data.unit,
       category_id: data.category_id,
       description: data.description ?? null,
     },
     select: PRODUCT_SELECT,
   });
   return serializeProduct(row);
+}
+
+/**
+ * Crée un produit et son unité de base en une seule transaction atomique.
+ * Si l'une des deux insertions échoue, les deux sont annulées.
+ *
+ * @param data        - Données du produit
+ * @param formatLabel - Libellé de l'unité de base (ex. "Pièce", "Kg")
+ */
+export async function createWithBaseFormat(
+  data: CreateProductData,
+  formatLabel: string,
+): Promise<ProductRow> {
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.product.create({
+      data: {
+        sku:         data.sku,
+        name:        data.name,
+        price:       data.price,
+        unit:        data.unit,
+        category_id: data.category_id,
+        description: data.description ?? null,
+      },
+      select: PRODUCT_SELECT,
+    });
+
+    await tx.packagingFormat.create({
+      data: {
+        product_id:        row.id,
+        label:             formatLabel,
+        units_per_package: 1,
+        is_base_unit:      true,
+      },
+    });
+
+    return serializeProduct(row);
+  });
 }
 
 /**

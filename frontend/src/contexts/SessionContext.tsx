@@ -1,5 +1,5 @@
 // src/contexts/SessionContext.tsx
-// Contexte de session utilisateur pour GStock.
+// Contexte de session utilisateur pour Stock Manager.
 //
 // Responsabilités :
 //   1. Appeler GET /api/auth/me au montage pour hydrater le user courant.

@@ -140,7 +140,7 @@ export async function create(data: CreateReceptionData): Promise<StockReceptionR
  *      incrémente stock_physical de stock_units_added.
  *   3. Calcule si la commande est entièrement couverte ou non :
  *      - Compare le total stock_units_added confirmé par produit
- *        avec le total (ordered_qty × units_per_order) par produit dans la commande.
+ *        avec le total (ordered_qty × packaging_format.units_per_package) par produit dans la commande.
  *      - Si tous les produits sont couverts → RECEIVED, sinon → PARTIALLY_RECEIVED.
  *
  * @param id - UUID de la réception à confirmer
@@ -225,22 +225,27 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
     // c) Charger les lignes de la commande avec les détails du supplier_product
     const orderItems = await tx.purchaseOrderItem.findMany({
       where:   { order_id: orderId },
-      include: { supplier_product: { select: { units_per_order: true } } },
+      include: {
+        supplier_product: {
+          select: {
+            packaging_format: { select: { units_per_package: true } },
+          },
+        },
+      },
     });
 
-    // d) Calculer ce qui était attendu (ordered_qty × units_per_order) par produit
-    //    Note : supplier_product est lié au produit via product_id du SupplierProduct ;
-    //    pour la comparaison on utilise supplier_product_id comme clé de liaison —
-    //    mais les ReceptionItem stockent product_id directement, donc il faut
-    //    charger le product_id depuis le SupplierProduct de chaque ligne commande.
+    // d) Calculer ce qui était attendu (ordered_qty × units_per_package) par produit
     const orderedByProduct = new Map<string, number>();
     for (const oi of orderItems) {
       const sp = await tx.supplierProduct.findUnique({
         where:  { id: oi.supplier_product_id },
-        select: { product_id: true, units_per_order: true },
+        select: {
+          product_id:      true,
+          packaging_format: { select: { units_per_package: true } },
+        },
       });
       if (sp) {
-        const expected = oi.ordered_qty * sp.units_per_order;
+        const expected = oi.ordered_qty * sp.packaging_format.units_per_package;
         const current  = orderedByProduct.get(sp.product_id) ?? 0;
         orderedByProduct.set(sp.product_id, current + expected);
       }

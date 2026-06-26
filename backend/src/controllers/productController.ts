@@ -59,6 +59,13 @@ const productSchema = z.object({
   description: z.string().optional(),
 });
 
+/** Schéma de création : étend le schéma de base avec le format de base obligatoire. */
+const createProductSchema = productSchema.extend({
+  initial_format: z.object({
+    label: z.string().min(1, 'Le libellé du format de base est obligatoire.').max(50),
+  }),
+});
+
 /** Type inféré depuis le schéma Zod — utilisé pour créer un produit. */
 export type ProductInput = z.infer<typeof productSchema>;
 
@@ -165,7 +172,7 @@ export async function getProductById(req: AuthenticatedRequest, res: Response): 
  */
 export async function createProduct(req: AuthenticatedRequest, res: Response): Promise<void> {
   // Validation Zod
-  const parseResult = productSchema.safeParse(req.body);
+  const parseResult = createProductSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({
       success: false,
@@ -192,6 +199,7 @@ export async function createProduct(req: AuthenticatedRequest, res: Response): P
       storeId,
       storeName,
       ip,
+      parseResult.data.initial_format?.label,
     );
 
     res.status(201).json({

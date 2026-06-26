@@ -25,10 +25,19 @@ export interface SupplierInvoiceRow {
   paid_at:     Date | null;
   notes:       string | null;
   order: {
-    id:    string;
-    reference: string;
+    id:                string;
+    reference:         string;
     supplier:          { id: string; name: string };
     destination_store: { id: string; name: string };
+    items?: Array<{
+      id:          string;
+      ordered_qty: number;
+      unit_price:  string;
+      supplier_product: {
+        product:          { id: string; name: string; sku: string; unit: string };
+        packaging_format: { label: string; units_per_package: number };
+      };
+    }>;
   };
 }
 
@@ -70,6 +79,28 @@ const INVOICE_INCLUDE = {
   },
 } as const;
 
+// Include enrichi pour le détail — inclut les lignes de commande
+const INVOICE_DETAIL_INCLUDE = {
+  order: {
+    select: {
+      id:        true,
+      reference: true,
+      supplier:          { select: { id: true, name: true } },
+      destination_store: { select: { id: true, name: true } },
+      items: {
+        include: {
+          supplier_product: {
+            select: {
+              product:          { select: { id: true, name: true, sku: true, unit: true } },
+              packaging_format: { select: { label: true, units_per_package: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
 // ---------------------------------------------------------------------------
 // Fonctions du repository
 // ---------------------------------------------------------------------------
@@ -90,12 +121,12 @@ export async function findAll(filters: InvoiceFilters = {}): Promise<SupplierInv
 }
 
 /**
- * Retourne une facture par son UUID, ou null si elle n'existe pas.
+ * Retourne une facture par son UUID avec ses lignes de commande, ou null si elle n'existe pas.
  */
 export async function findById(id: string): Promise<SupplierInvoiceRow | null> {
   return prisma.supplierInvoice.findUnique({
     where:   { id },
-    include: INVOICE_INCLUDE,
+    include: INVOICE_DETAIL_INCLUDE,
   }) as unknown as SupplierInvoiceRow | null;
 }
 
