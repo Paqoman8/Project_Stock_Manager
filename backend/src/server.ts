@@ -39,6 +39,10 @@ const server = http.createServer(app);
 // GLOBAL MIDDLEWARES                                                       
 // ---------------------------------------------------------------------------
 
+// Trust one proxy hop (Next.js dev server / reverse proxy in prod)
+// Required for express-rate-limit to read X-Forwarded-For correctly
+app.set('trust proxy', 1);
+
 // CORS configuration — restrict to frontend origin only
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
