@@ -1,6 +1,7 @@
 import { AuditAction, Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { logAction } from './audit.service';
+import { resolveClient, type ClientInput } from './client.service';
 import * as transactionRepo from '../repositories/transaction.repository';
 
 export type { TransactionRow } from '../repositories/transaction.repository';
@@ -15,9 +16,11 @@ export type { TransactionRow } from '../repositories/transaction.repository';
  */
 export type SaleItemInput = {
   product_id:          string;
-  qty:                 number;
+  qty?:                number;
   price_at_sale:       number;
   packaging_format_id?: string;
+  packages_count?:     number;
+  original_transaction_item_id?: string;
 };
 
 /**
@@ -26,6 +29,7 @@ export type SaleItemInput = {
 export type CreateSaleInput = {
   payment_method: 'CASH' | 'CARD' | 'MOBILE_MONEY';
   items: SaleItemInput[];
+  client?: ClientInput;
 };
 
 /**
@@ -55,6 +59,56 @@ async function ensureProductsExist(productIds: string[]): Promise<void> {
   if (found.length !== unique.length) throw new Error('PRODUCT_NOT_FOUND');
 }
 
+type NormalizedSaleItem = {
+  product_id: string;
+  qty: number;
+  price_at_sale: number;
+  packaging_format_id?: string;
+  packages_count?: number;
+};
+
+function aggregateRequestedQuantities(
+  items: Array<{ product_id: string; qty: number }>,
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    totals.set(item.product_id, (totals.get(item.product_id) ?? 0) + item.qty);
+  }
+  return totals;
+}
+
+async function normalizeSaleItems(items: SaleItemInput[]): Promise<NormalizedSaleItem[]> {
+  const normalized: NormalizedSaleItem[] = [];
+
+  for (const item of items) {
+    if (item.packaging_format_id) {
+      if (item.packages_count === undefined) throw new Error('PACKAGES_COUNT_REQUIRED');
+      const format = await prisma.packagingFormat.findUnique({
+        where: { id: item.packaging_format_id },
+        select: { id: true, product_id: true, units_per_package: true },
+      });
+      if (!format || format.product_id !== item.product_id) throw new Error('FORMAT_NOT_FOUND');
+      normalized.push({
+        product_id: item.product_id,
+        qty: item.packages_count * format.units_per_package,
+        price_at_sale: item.price_at_sale,
+        packaging_format_id: item.packaging_format_id,
+        packages_count: item.packages_count,
+      });
+      continue;
+    }
+
+    if (item.qty === undefined) throw new Error('QTY_REQUIRED');
+    normalized.push({
+      product_id: item.product_id,
+      qty: item.qty,
+      price_at_sale: item.price_at_sale,
+    });
+  }
+
+  return normalized;
+}
+
 /**
  * Validates that store has sufficient stock for all sale items.
  * Throws INSUFFICIENT_STOCK if any product lacks required quantity.
@@ -63,18 +117,19 @@ async function ensureProductsExist(productIds: string[]): Promise<void> {
  */
 async function ensureEnoughStock(
   storeId: string,
-  items:   SaleItemInput[],
+  items:   Array<{ product_id: string; qty: number }>,
   tx?:     Prisma.TransactionClient,
 ): Promise<void> {
   const client = tx ?? prisma;
+  const requestedByProduct = aggregateRequestedQuantities(items);
   const rows = await client.inventory.findMany({
-    where:  { store_id: storeId, product_id: { in: items.map((i) => i.product_id) } },
+    where:  { store_id: storeId, product_id: { in: [...requestedByProduct.keys()] } },
     select: { product_id: true, stock_physical: true },
   });
   const byProduct = new Map(rows.map((r) => [r.product_id, r.stock_physical]));
-  for (const item of items) {
-    const available = byProduct.get(item.product_id) ?? 0;
-    if (available < item.qty) throw new Error('INSUFFICIENT_STOCK');
+  for (const [productId, requestedQty] of requestedByProduct.entries()) {
+    const available = byProduct.get(productId) ?? 0;
+    if (available < requestedQty) throw new Error('INSUFFICIENT_STOCK');
   }
 }
 
@@ -99,9 +154,10 @@ export async function createSale(
   storeName?:    string,
   ipAddress?:    string,
 ): Promise<transactionRepo.TransactionRow> {
-  await ensureProductsExist(input.items.map((i) => i.product_id));
+  const normalizedItems = await normalizeSaleItems(input.items);
+  await ensureProductsExist(normalizedItems.map((i) => i.product_id));
 
-  const totalAmount = input.items.reduce(
+  const totalAmount = normalizedItems.reduce(
     (sum, item) => sum + item.price_at_sale * item.qty,
     0,
   );
@@ -110,9 +166,10 @@ export async function createSale(
   // Stock availability is re-checked inside the TX to prevent TOCTOU races.
   const transaction = await prisma.$transaction(
     async (tx) => {
-      await ensureEnoughStock(storeId, input.items, tx);
+      await ensureEnoughStock(storeId, normalizedItems, tx);
+      const client = await resolveClient(input.client, tx, storeId);
 
-      for (const item of input.items) {
+      for (const item of normalizedItems) {
         // Decrement physical stock
         await tx.inventory.update({
           where: { store_id_product_id: { store_id: storeId, product_id: item.product_id } },
@@ -129,6 +186,7 @@ export async function createSale(
             reason:              'Vente directe (POS)',
             performed_by_id:     actorId,
             packaging_format_id: item.packaging_format_id,
+            packages_count:      item.packages_count,
           },
         });
       }
@@ -137,10 +195,11 @@ export async function createSale(
         {
           store_id:       storeId,
           user_id:        actorId,
+          client_id:      client?.id,
           type:           'SALE',
           payment_method: input.payment_method,
           total_amount:   totalAmount,
-          items:          input.items,
+          items:          normalizedItems,
         },
         tx,
       );
@@ -191,24 +250,73 @@ export async function refundSale(
   storeId:               string,
   storeName?:            string,
   ipAddress?:            string,
+  selectedItemIds?:      string[],
 ): Promise<transactionRepo.TransactionRow> {
   const original = await transactionRepo.getTransactionById(originalTransactionId);
   if (!original) throw new Error('TRANSACTION_NOT_FOUND');
   if (original.type !== 'SALE') throw new Error('ONLY_SALES_CAN_BE_REFUNDED');
   if (original.store_id !== storeId) throw new Error('TRANSACTION_STORE_MISMATCH');
 
-  // Check if already refunded
-  const existingRefund = await prisma.transaction.findFirst({
-    where: { refund_of_id: original.id },
-    select: { id: true },
-  });
-  if (existingRefund) throw new Error('TRANSACTION_ALREADY_REFUNDED');
+  const targetItems = selectedItemIds && selectedItemIds.length > 0
+    ? original.items.filter((item) => selectedItemIds.includes(item.id))
+    : original.items;
 
-  const refundAmount = Number(original.total_amount);
+  if (targetItems.length === 0) throw new Error('REFUND_ITEMS_REQUIRED');
+
+  const refundSiblings = await prisma.transaction.findMany({
+    where: { refund_of_id: original.id },
+    select: {
+      items: {
+        select: {
+          original_transaction_item_id: true,
+          product_id: true,
+          packaging_format_id: true,
+          packages_count: true,
+          qty: true,
+        },
+      },
+    },
+  });
+
+  const refundedOriginalItemIds = new Set<string>();
+  const refundedLegacySignatures = new Set<string>();
+  for (const refund of refundSiblings) {
+    for (const item of refund.items as Array<{
+      original_transaction_item_id?: string | null;
+      product_id: string;
+      packaging_format_id?: string | null;
+      packages_count?: number | null;
+      qty: number;
+    }>) {
+      if (item.original_transaction_item_id) {
+        refundedOriginalItemIds.add(item.original_transaction_item_id);
+        continue;
+      }
+      refundedLegacySignatures.add(
+        `${item.product_id}:${item.packaging_format_id ?? 'base'}:${item.packages_count ?? item.qty}`,
+      );
+    }
+  }
+
+  if (!selectedItemIds?.length && refundSiblings.length > 0) {
+    throw new Error('TRANSACTION_ALREADY_REFUNDED');
+  }
+
+  for (const item of targetItems) {
+    const signature = `${item.product_id}:${item.packaging_format_id ?? 'base'}:${item.packages_count ?? item.qty}`;
+    if (refundedOriginalItemIds.has(item.id) || refundedLegacySignatures.has(signature)) {
+      throw new Error('TRANSACTION_LINE_ALREADY_REFUNDED');
+    }
+  }
+
+  const refundAmount = targetItems.reduce(
+    (sum, item) => sum + Number(item.price_at_sale) * item.qty,
+    0,
+  );
 
   const refund = await prisma.$transaction(
     async (tx) => {
-      for (const item of original.items) {
+      for (const item of targetItems) {
         // Credit stock back
         await tx.inventory.upsert({
           where:  { store_id_product_id: { store_id: storeId, product_id: item.product_id } },
@@ -226,6 +334,7 @@ export async function refundSale(
             reason:              `Remboursement transaction ${original.id}`,
             performed_by_id:     actorId,
             packaging_format_id: item.packaging_format_id ?? undefined,
+            packages_count:      item.packages_count ?? undefined,
           },
         });
       }
@@ -238,11 +347,13 @@ export async function refundSale(
           payment_method: original.payment_method,
           total_amount:   refundAmount,
           refund_of_id:   original.id,
-          items: original.items.map((item) => ({
+          items: targetItems.map((item) => ({
+            original_transaction_item_id: item.id,
             product_id:          item.product_id,
             qty:                 item.qty,
             price_at_sale:       Number(item.price_at_sale),
             packaging_format_id: item.packaging_format_id ?? undefined,
+            packages_count:      item.packages_count ?? undefined,
           })),
         },
         tx,
@@ -272,13 +383,31 @@ export async function refundSale(
 // listTransactionsForStore — QUERY TRANSACTIONS                            
 // ---------------------------------------------------------------------------
 
+export type ListTransactionsOptions = {
+  storeId: string;
+  search?: string;
+  type?: transactionRepo.TransactionRow['type'];
+  paymentMethod?: transactionRepo.TransactionRow['payment_method'];
+  page: number;
+  limit: number;
+};
+
+export type ListTransactionsResult = transactionRepo.TransactionPaginationResult;
+
 /**
- * Retrieves all transactions for a store, sorted by creation date (newest first).
+ * Retrieves paginated transactions for a store, sorted by creation date (newest first).
  */
 export async function listTransactionsForStore(
-  storeId: string,
-): Promise<transactionRepo.TransactionRow[]> {
-  return transactionRepo.listTransactions({ store_id: storeId });
+  options: ListTransactionsOptions,
+): Promise<ListTransactionsResult> {
+  return transactionRepo.listTransactionsPaginated({
+    store_id: options.storeId,
+    search: options.search,
+    type: options.type,
+    payment_method: options.paymentMethod,
+    page: options.page,
+    limit: options.limit,
+  });
 }
 
 

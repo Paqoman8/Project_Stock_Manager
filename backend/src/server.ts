@@ -22,6 +22,7 @@ import inventoryReportRouter  from './routes/inventoryReportRoutes';
 import packagingFormatRouter  from './routes/packagingFormatRoutes';
 import transferRouter         from './routes/transferRoutes';
 import transactionRouter      from './routes/transactionRoutes';
+import dashboardRouter        from './routes/dashboardRoutes';
 
 
 // ---------------------------------------------------------------------------
@@ -120,6 +121,7 @@ app.use('/api/transfers', transferRouter);
 
 // ── POS / CASHIER (M13) ──────────────────────────────────────────────
 app.use('/api/transactions', transactionRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 
 // ---------------------------------------------------------------------------

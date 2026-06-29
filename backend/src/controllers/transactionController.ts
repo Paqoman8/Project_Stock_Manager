@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
+import * as clientService from '../services/client.service';
 import * as transactionService from '../services/transaction.service';
 
 
@@ -17,16 +18,40 @@ const uuidLike = (msg: string) => z.string().regex(UUID_REGEX, msg);
 
 const saleItemSchema = z.object({
   product_id:          uuidLike('product_id invalide'),
-  qty:                 z.number().int().min(1, 'qty doit être >= 1'),
+  qty:                 z.number().int().min(1, 'qty doit être >= 1').optional(),
   price_at_sale:       z.number().min(0, 'price_at_sale doit être >= 0'),
   packaging_format_id: uuidLike('packaging_format_id invalide').optional(),
+  packages_count:      z.number().int().min(1, 'packages_count doit être >= 1').optional(),
 });
 
 const createSaleSchema = z.object({
   payment_method: z.enum(['CASH', 'CARD', 'MOBILE_MONEY'], {
     message: 'payment_method doit être CASH, CARD ou MOBILE_MONEY',
   }),
-  items: z.array(saleItemSchema).min(1, 'Au moins un article est requis.'),
+  items: z.array(saleItemSchema)
+    .min(1, 'Au moins un article est requis.')
+    .refine(
+      (items) => items.every((item) => (item.packaging_format_id ? item.packages_count !== undefined : item.qty !== undefined)),
+      { message: 'Chaque ligne doit fournir qty (sans format) ou packages_count + packaging_format_id (avec format).' },
+    ),
+  client: z.object({
+    id: uuidLike('client.id invalide').optional(),
+    name: z.string().min(1, 'client.name est requis').optional(),
+    phone: z.string().optional(),
+    email: z.string().email('client.email invalide').optional().or(z.literal('')),
+  }).optional(),
+});
+
+const refundSchema = z.object({
+  item_ids: z.array(uuidLike('item_id invalide')).min(1, 'Sélectionnez au moins une ligne à rembourser.').optional(),
+});
+
+const listTransactionsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1, 'page doit être >= 1').default(1),
+  limit: z.coerce.number().int().min(1, 'limit doit être >= 1').max(100, 'limit doit être <= 100').default(10),
+  search: z.string().trim().max(200, 'search doit faire 200 caractères max').optional(),
+  type: z.enum(['SALE', 'REFUND', 'EXPENSE']).optional(),
+  payment_method: z.enum(['CASH', 'CARD', 'MOBILE_MONEY']).optional(),
 });
 
 
@@ -95,6 +120,18 @@ export async function createTransaction(req: AuthenticatedRequest, res: Response
         return void res.status(404).json({ success: false, message: 'Un ou plusieurs produits sont introuvables ou inactifs.' });
       if (error.message === 'INSUFFICIENT_STOCK')
         return void res.status(409).json({ success: false, message: 'Stock insuffisant pour un ou plusieurs articles.' });
+      if (error.message === 'FORMAT_NOT_FOUND')
+        return void res.status(404).json({ success: false, message: 'Format de conditionnement introuvable ou non associé au produit.' });
+      if (error.message === 'PACKAGES_COUNT_REQUIRED' || error.message === 'QTY_REQUIRED')
+        return void res.status(400).json({ success: false, message: 'Chaque ligne doit fournir qty (sans format) ou packages_count + packaging_format_id (avec format).' });
+      if (error.message === 'CLIENT_NOT_FOUND')
+        return void res.status(404).json({ success: false, message: 'Client introuvable.' });
+      if (error.message === 'CLIENT_NAME_REQUIRED')
+        return void res.status(400).json({ success: false, message: 'Le nom du client est requis.' });
+      if (error.message === 'CLIENT_CONTACT_REQUIRED')
+        return void res.status(400).json({ success: false, message: 'Ajoutez au moins un téléphone ou un email pour créer un nouveau client.' });
+      if (error.message === 'CLIENT_DUPLICATE_CONFLICT')
+        return void res.status(409).json({ success: false, message: 'Plusieurs clients correspondent à ces coordonnées. Réutilisez un client existant avant de valider.' });
     }
     console.error('Erreur createTransaction:', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
@@ -102,16 +139,50 @@ export async function createTransaction(req: AuthenticatedRequest, res: Response
 }
 
 /**
- * GET /api/transactions — Fetch all transactions for the user's store.
+ * GET /api/transactions — Fetch paginated transactions for the user's store.
  */
 export async function listTransactions(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const parsedQuery = listTransactionsQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    return void res.status(400).json({
+      success: false,
+      message: 'Paramètres de requête invalides.',
+      errors: formatZodErrors(parsedQuery.error),
+    });
+  }
+
+  const { page, limit, search, type, payment_method } = parsedQuery.data;
+
+  try {
+    const result = await transactionService.listTransactionsForStore({
+      storeId: req.user!.storeId,
+      search,
+      type,
+      paymentMethod: payment_method,
+      page,
+      limit,
+    });
+
+    res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error('Erreur listTransactions:', error);
+    res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
+  }
+}
+
+/**
+ * GET /api/transactions/clients/search?q=...
+ * Returns reusable clients for POS selection.
+ */
+export async function searchTransactionClients(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
   const storeId = req.user!.storeId;
 
   try {
-    const transactions = await transactionService.listTransactionsForStore(storeId);
-    res.status(200).json({ success: true, transactions });
+    const clients = await clientService.searchClients(query, storeId);
+    res.status(200).json({ success: true, clients });
   } catch (error) {
-    console.error('Erreur listTransactions:', error);
+    console.error('Erreur searchTransactionClients:', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
   }
 }
@@ -166,6 +237,14 @@ export async function refundTransaction(req: AuthenticatedRequest, res: Response
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
   const ip      = extractIp(req);
+  const parsedBody = refundSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return void res.status(400).json({
+      success: false,
+      message: 'Données invalides.',
+      errors: formatZodErrors(parsedBody.error),
+    });
+  }
 
   try {
     const [actorName, storeName] = await Promise.all([
@@ -173,7 +252,15 @@ export async function refundTransaction(req: AuthenticatedRequest, res: Response
       resolveStoreName(storeId),
     ]);
 
-    const refund = await transactionService.refundSale(id, actorId, actorName, storeId, storeName, ip);
+    const refund = await transactionService.refundSale(
+      id,
+      actorId,
+      actorName,
+      storeId,
+      storeName,
+      ip,
+      parsedBody.data.item_ids,
+    );
     res.status(201).json({ success: true, transaction: refund });
   } catch (error) {
     if (error instanceof Error) {
@@ -185,6 +272,10 @@ export async function refundTransaction(req: AuthenticatedRequest, res: Response
         return void res.status(403).json({ success: false, message: 'Cette transaction appartient à un autre magasin.' });
       if (error.message === 'TRANSACTION_ALREADY_REFUNDED')
         return void res.status(409).json({ success: false, message: 'Cette transaction a déjà été remboursée.' });
+      if (error.message === 'TRANSACTION_LINE_ALREADY_REFUNDED')
+        return void res.status(409).json({ success: false, message: 'Au moins une ligne sélectionnée a déjà été remboursée.' });
+      if (error.message === 'REFUND_ITEMS_REQUIRED')
+        return void res.status(400).json({ success: false, message: 'Sélectionnez au moins une ligne à rembourser.' });
     }
     console.error('Erreur refundTransaction:', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });

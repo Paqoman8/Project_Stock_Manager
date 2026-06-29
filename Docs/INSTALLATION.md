@@ -10,7 +10,7 @@ Ce guide décrit comment installer et démarrer Stock Manager en environnement d
 |-------|-----------------|-------|
 | Node.js | 20.x LTS | Runtime backend et frontend |
 | npm | 10.x | Gestionnaire de paquets |
-| Docker + Docker Compose | Récent | PostgreSQL 16 |
+| Docker + Docker Compose | Récent | PostgreSQL 16 local pour le mode dev |
 | Git | Récent | Clonage du dépôt |
 
 Vérifier les versions installées :
@@ -38,7 +38,7 @@ cd stock-manager
 PostgreSQL 16 tourne dans un conteneur Docker :
 
 ```bash
-docker compose up -d
+npm run dev:db
 ```
 
 Vérifier que le conteneur est actif :
@@ -53,7 +53,7 @@ Paramètres de la base (définis dans `docker-compose.yml`) :
 | Paramètre | Valeur |
 |-----------|--------|
 | Host | `localhost` |
-| Port | `5432` |
+| Port | `5433` |
 | Database | `gstock_db` |
 | User | `admin` |
 | Password | `adminpassword` |
@@ -74,7 +74,7 @@ Contenu du fichier `.env` à renseigner :
 
 ```env
 # Connexion à la base de données
-DATABASE_URL="postgresql://admin:adminpassword@localhost:5432/gstock_db?schema=public"
+DATABASE_URL="postgresql://admin:adminpassword@localhost:5433/gstock_db?schema=public"
 
 # Secret JWT — utiliser une valeur aléatoire longue en production
 JWT_SECRET="changez-moi-avec-openssl-rand-hex-32"
@@ -164,6 +164,27 @@ npm run dev
 
 L'application Next.js démarre sur `http://localhost:3000`.
 
+### Alternative rapide depuis la racine
+
+Une fois les dépendances installées et la base prête :
+
+```bash
+cd ..
+npm install
+npm run dev
+```
+
+Cette commande :
+- démarre PostgreSQL si nécessaire
+- lance le backend en local sur `5000`
+- lance le frontend en local sur `3000`
+- garde les logs des deux services dans le même terminal
+
+Quand lancer `migrate` et `seed` :
+- `npm run db:migrate` : au premier setup de la base, ou quand de nouvelles migrations ont été ajoutées
+- `npm run db:seed` : au premier peuplement, ou si vous voulez réinjecter les données initiales
+- ils ne sont pas nécessaires à chaque `npm run dev`
+
 ---
 
 ## Vérification de l'installation
@@ -220,7 +241,7 @@ npm run lint
 
 ```bash
 # Démarrer PostgreSQL
-docker compose up -d
+npm run dev:db
 
 # Arrêter PostgreSQL
 docker compose down

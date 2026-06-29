@@ -21,6 +21,17 @@ function IconUsers({ className }: { className?: string }) {
   );
 }
 
+function IconDashboard({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M3 13h8V3H3z" />
+      <path d="M13 21h8v-6h-8z" />
+      <path d="M13 11h8V3h-8z" />
+      <path d="M3 21h8v-6H3z" />
+    </svg>
+  );
+}
+
 function IconStores({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
@@ -159,17 +170,8 @@ function IconPos({ className }: { className?: string }) {
   );
 }
 
-function IconTransactions({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-    </svg>
-  );
-}
-
-
 // ---------------------------------------------------------------------------
-// ROLE DEFINITIONS                                                         
+// ROLE DEFINITIONS                                                          
 // ---------------------------------------------------------------------------
 
 const ROLES_ADMIN: readonly string[]      = ['Super Administrateur', 'Administrateur'];
@@ -288,6 +290,13 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
           {/* ADMIN SECTIONS — Super Admin and Admin shared links */}
           {estAdmin && (
             <>
+                <NavItem
+                  href="/dashboard"
+                  label="Dashboard"
+                  icon={<IconDashboard className="flex-shrink-0" />}
+                  currentPath={pathname}
+                  exact={true}
+                />
               <NavItem
                 href="/dashboard/users"
                 label="Utilisateurs"
@@ -321,6 +330,16 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
                 currentPath={pathname}
               />
             </>
+          )}
+
+          {!estAdmin && user !== null && (
+            <NavItem
+              href="/dashboard"
+              label="Dashboard"
+              icon={<IconDashboard className="flex-shrink-0" />}
+              currentPath={pathname}
+              exact={true}
+            />
           )}
 
           {/* SUPER ADMIN ONLY SECTIONS */}
@@ -406,12 +425,6 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
                 href="/dashboard/pos"
                 label="Point de Vente"
                 icon={<IconPos className="flex-shrink-0" />}
-                currentPath={pathname}
-              />
-              <NavItem
-                href="/dashboard/transactions"
-                label="Transactions"
-                icon={<IconTransactions className="flex-shrink-0" />}
                 currentPath={pathname}
               />
             </>

@@ -7,6 +7,7 @@
 //   - Sélecteur partagé SUPPLIER_PRODUCT_SELECT pour garantir une forme constante
 //   - Include des relations supplier et product sur toutes les opérations de lecture
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 
 // ---------------------------------------------------------------------------
@@ -180,9 +181,13 @@ export async function findBySupplierProductAndFormat(
  * @param data - Données de l'enregistrement à créer
  * @returns L'enregistrement créé avec ses relations
  */
-export async function create(data: CreateSupplierProductData): Promise<SupplierProductRow> {
+export async function create(
+  data: CreateSupplierProductData,
+  tx?: Prisma.TransactionClient,
+): Promise<SupplierProductRow> {
+  const client = tx ?? prisma;
   try {
-    return await prisma.supplierProduct.create({
+    return await client.supplierProduct.create({
       data: {
         supplier_id:          data.supplier_id,
         product_id:           data.product_id,
@@ -211,7 +216,12 @@ export async function create(data: CreateSupplierProductData): Promise<SupplierP
  * @returns L'enregistrement mis à jour avec ses relations
  * @throws Prisma P2025 si l'enregistrement n'existe pas
  */
-export async function update(id: string, data: UpdateSupplierProductData): Promise<SupplierProductRow> {
+export async function update(
+  id: string,
+  data: UpdateSupplierProductData,
+  tx?: Prisma.TransactionClient,
+): Promise<SupplierProductRow> {
+  const client = tx ?? prisma;
   const updateData: Record<string, unknown> = {};
   if (data.supplier_ref        !== undefined) updateData.supplier_ref        = data.supplier_ref;
   if (data.purchase_price      !== undefined) updateData.purchase_price      = data.purchase_price;
@@ -220,11 +230,18 @@ export async function update(id: string, data: UpdateSupplierProductData): Promi
   if (data.is_preferred        !== undefined) updateData.is_preferred        = data.is_preferred;
   if (data.is_active           !== undefined) updateData.is_active           = data.is_active;
 
-  return prisma.supplierProduct.update({
-    where:  { id },
-    data:   updateData,
-    select: SUPPLIER_PRODUCT_SELECT,
-  }) as unknown as SupplierProductRow;
+  try {
+    return await client.supplierProduct.update({
+      where:  { id },
+      data:   updateData,
+      select: SUPPLIER_PRODUCT_SELECT,
+    }) as unknown as SupplierProductRow;
+  } catch (err: unknown) {
+    if (typeof err === 'object' && err !== null && 'code' in err && (err as { code: string }).code === 'P2002') {
+      throw new Error('SUPPLIER_PRODUCT_ALREADY_EXISTS');
+    }
+    throw err;
+  }
 }
 
 /**
@@ -249,8 +266,9 @@ export async function setActive(id: string, isActive: boolean): Promise<Supplier
  *
  * @param productId - UUID du produit dont on veut réinitialiser le fournisseur préféré
  */
-export async function clearPreferred(productId: string): Promise<void> {
-  await prisma.supplierProduct.updateMany({
+export async function clearPreferred(productId: string, tx?: Prisma.TransactionClient): Promise<void> {
+  const client = tx ?? prisma;
+  await client.supplierProduct.updateMany({
     where: { product_id: productId, is_preferred: true },
     data:  { is_preferred: false },
   });

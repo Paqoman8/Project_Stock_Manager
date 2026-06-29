@@ -1,19 +1,24 @@
 import { Response } from 'express';
-import { TransferStatus } from '@prisma/client';
 import { z, ZodError } from 'zod';
 import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
+import * as authService from '../services/auth.service';
 import * as transferService from '../services/transfer.service';
 
+// PostgreSQL accepte n'importe quel format UUID (v1-v5 et UUID nil). La validation
+// Zod .uuid() par défaut exige un UUID v4, ce qui rejetterait les identifiants
+// historiques non v4 encore présents en base. On accepte donc tout UUID valide.
+const UUID_ANY_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const createTransferSchema = z.object({
-  from_store_id: z.string().uuid('from_store_id invalide'),
-  to_store_id: z.string().uuid('to_store_id invalide'),
+  from_store_id: z.string().regex(UUID_ANY_REGEX, 'from_store_id invalide'),
+  to_store_id: z.string().regex(UUID_ANY_REGEX, 'to_store_id invalide'),
   items: z.array(
     z.object({
-      product_id: z.string().uuid('product_id invalide'),
+      product_id: z.string().regex(UUID_ANY_REGEX, 'product_id invalide'),
       qty: z.number().int().min(1, 'qty doit être >= 1').optional(),
-      packaging_format_id: z.string().uuid('packaging_format_id invalide').optional(),
+      packaging_format_id: z.string().regex(UUID_ANY_REGEX, 'packaging_format_id invalide').optional(),
       packages_count: z.number().int().min(1, 'packages_count doit être >= 1').optional(),
     }),
   ).min(1, 'Au moins un item est requis.')
@@ -21,6 +26,13 @@ const createTransferSchema = z.object({
       (items) => items.every((item) => (item.packaging_format_id ? item.packages_count !== undefined : item.qty !== undefined)),
       { message: 'Chaque ligne doit fournir qty (sans format) ou packages_count + packaging_format_id (avec format).' },
     ),
+});
+
+const listTransfersQuerySchema = z.object({
+  page: z.coerce.number().int().min(1, 'page doit être >= 1').default(1),
+  limit: z.coerce.number().int().min(1, 'limit doit être >= 1').max(100, 'limit doit être <= 100').default(10),
+  search: z.string().trim().max(200, 'search doit faire 200 caractères max').optional(),
+  status: z.enum(['PENDING', 'DONE', 'CANCEL']).optional(),
 });
 
 function formatZodErrors(err: ZodError): string[] {
@@ -56,6 +68,18 @@ export async function createTransfer(req: AuthenticatedRequest, res: Response): 
   const ip = extractIp(req);
 
   try {
+    const roleName = await getRoleNameFromRequest(req);
+    const accessibleSourceStores = await authService.getAccessibleStores(
+      actorId,
+      roleName === 'Super Administrateur',
+    );
+    if (!accessibleSourceStores.some((store) => store.id === parsed.data.from_store_id)) {
+      return void res.status(403).json({
+        success: false,
+        message: 'Le magasin source sélectionné ne fait pas partie de vos établissements autorisés.',
+      });
+    }
+
     const [actorName, actorStoreName] = await Promise.all([
       resolveActorName(actorId),
       resolveStoreName(actorStoreId),
@@ -84,21 +108,30 @@ export async function createTransfer(req: AuthenticatedRequest, res: Response): 
 }
 
 export async function listTransfers(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const statusRaw = req.query.status as string | undefined;
-  const status = statusRaw && Object.values(TransferStatus).includes(statusRaw as TransferStatus)
-    ? (statusRaw as TransferStatus)
-    : undefined;
+  const parsedQuery = listTransfersQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    return void res.status(400).json({
+      success: false,
+      message: 'Paramètres de requête invalides.',
+      errors: formatZodErrors(parsedQuery.error),
+    });
+  }
+
+  const { page, limit, search, status } = parsedQuery.data;
 
   try {
     const roleName = await getRoleNameFromRequest(req);
     const forceRequesterScope = roleName === 'Manager Magasin';
-    const transfers = await transferService.listTransfers({
+    const result = await transferService.listTransfers({
       status,
       requesterStoreId: req.user!.storeId,
       forceRequesterScope,
+      search,
+      page,
+      limit,
     });
 
-    res.status(200).json({ success: true, transfers });
+    res.status(200).json({ success: true, ...result });
   } catch (error) {
     console.error('Erreur listTransfers:', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
@@ -108,11 +141,21 @@ export async function listTransfers(req: AuthenticatedRequest, res: Response): P
 export async function getTransferById(req: AuthenticatedRequest, res: Response): Promise<void> {
   const id = req.params.id as string;
   try {
-    const transfer = await transferService.getTransferById(id);
+    const roleName = await getRoleNameFromRequest(req);
+    const transfer = await transferService.getTransferById(
+      id,
+      req.user!.storeId,
+      roleName === 'Manager Magasin',
+    );
     res.status(200).json({ success: true, transfer });
   } catch (error) {
-    if (error instanceof Error && error.message === 'TRANSFER_NOT_FOUND') {
-      return void res.status(404).json({ success: false, message: 'Transfert introuvable.' });
+    if (error instanceof Error) {
+      if (error.message === 'TRANSFER_NOT_FOUND') {
+        return void res.status(404).json({ success: false, message: 'Transfert introuvable.' });
+      }
+      if (error.message === 'FORBIDDEN_TRANSFER_ACCESS') {
+        return void res.status(403).json({ success: false, message: 'Ce transfert n’appartient pas à votre magasin.' });
+      }
     }
     console.error('Erreur getTransferById:', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
@@ -126,17 +169,29 @@ export async function confirmTransfer(req: AuthenticatedRequest, res: Response):
   const ip = extractIp(req);
 
   try {
+    const roleName = await getRoleNameFromRequest(req);
     const [actorName, actorStoreName] = await Promise.all([
       resolveActorName(actorId),
       resolveStoreName(actorStoreId),
     ]);
 
-    const transfer = await transferService.confirmTransfer(id, actorId, actorName, actorStoreId, actorStoreName, ip);
+    const transfer = await transferService.confirmTransfer(
+      id,
+      actorId,
+      actorName,
+      actorStoreId,
+      actorStoreName,
+      ip,
+      actorStoreId,
+      roleName === 'Manager Magasin',
+    );
     res.status(200).json({ success: true, transfer });
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === 'TRANSFER_NOT_FOUND')
         return void res.status(404).json({ success: false, message: 'Transfert introuvable.' });
+      if (error.message === 'FORBIDDEN_TRANSFER_ACCESS')
+        return void res.status(403).json({ success: false, message: 'Ce transfert n’appartient pas à votre magasin.' });
       if (error.message === 'TRANSFER_NOT_CONFIRMABLE')
         return void res.status(409).json({ success: false, message: 'Seuls les transferts PENDING peuvent être confirmés.' });
       if (error.message === 'INSUFFICIENT_STOCK')
@@ -154,17 +209,29 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
   const ip = extractIp(req);
 
   try {
+    const roleName = await getRoleNameFromRequest(req);
     const [actorName, actorStoreName] = await Promise.all([
       resolveActorName(actorId),
       resolveStoreName(actorStoreId),
     ]);
 
-    const transfer = await transferService.cancelTransfer(id, actorId, actorName, actorStoreId, actorStoreName, ip);
+    const transfer = await transferService.cancelTransfer(
+      id,
+      actorId,
+      actorName,
+      actorStoreId,
+      actorStoreName,
+      ip,
+      actorStoreId,
+      roleName === 'Manager Magasin',
+    );
     res.status(200).json({ success: true, transfer });
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === 'TRANSFER_NOT_FOUND')
         return void res.status(404).json({ success: false, message: 'Transfert introuvable.' });
+      if (error.message === 'FORBIDDEN_TRANSFER_ACCESS')
+        return void res.status(403).json({ success: false, message: 'Ce transfert n’appartient pas à votre magasin.' });
       if (error.message === 'TRANSFER_NOT_CANCELLABLE')
         return void res.status(409).json({ success: false, message: 'Seuls les transferts PENDING peuvent être annulés.' });
     }
@@ -175,8 +242,17 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
 
 export async function listTransferDestinationStores(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const stores = await transferService.listDestinationStores(req.user!.storeId);
-    res.status(200).json({ success: true, stores });
+    const roleName = await getRoleNameFromRequest(req);
+    const sourceStores = await authService.getAccessibleStores(
+      req.user!.userId,
+      roleName === 'Super Administrateur',
+    );
+    const destinationStores = await transferService.listDestinationStores();
+    res.status(200).json({
+      success: true,
+      source_stores: sourceStores,
+      destination_stores: destinationStores,
+    });
   } catch (error) {
     console.error('Erreur listTransferDestinationStores:', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });

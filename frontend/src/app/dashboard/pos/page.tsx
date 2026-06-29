@@ -12,38 +12,38 @@ import {
   extractApiError,
 } from '@/lib/pos';
 import type { PaymentMethod } from '@/lib/pos';
-
-
-// ---------------------------------------------------------------------------
-// TYPES
-// ---------------------------------------------------------------------------
+import TransactionsList from '@/components/pos/TransactionsList';
 
 type SortKey = 'name' | 'price' | 'stock';
 type SortDir = 'asc' | 'desc';
 
-type Product = {
-  id:        string;
-  name:      string;
-  sku:       string;
-  price:     string;
-  unit:      string;
-  is_active: boolean;
+type InventoryProductRow = {
+  product_id: string;
+  stock_physical: number;
+  product: {
+    id: string;
+    name: string;
+    sku: string;
+    price: string;
+    unit: string;
+    is_active: boolean;
+  };
 };
 
-type InventoryRow = {
-  product_id:     string;
-  stock_physical: number;
+type PackagingFormat = {
+  id: string;
+  label: string;
+  units_per_package: number;
+  is_base_unit: boolean;
 };
 
 type CartItem = {
-  product: Product;
-  qty:     number;
+  product: InventoryProductRow['product'];
+  stock: number;
+  qtyInput: string;
+  selectedFormatId: string;
+  formats: PackagingFormat[];
 };
-
-
-// ---------------------------------------------------------------------------
-// CONSTANTS
-// ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 30;
 
@@ -52,39 +52,90 @@ const inputCls =
   'focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary';
 
 const SORT_LABELS: Record<SortKey, string> = {
-  name:  'Nom',
+  name: 'Nom',
   price: 'Prix',
   stock: 'Stock',
 };
 
+function sanitizePositiveIntegerInput(value: string): string {
+  if (value.trim() === '') return '';
+  const digitsOnly = value.replace(/\D/g, '');
+  if (digitsOnly === '') return '';
+  return String(Math.max(1, Math.trunc(Number(digitsOnly))));
+}
+
+function getFormatForItem(item: CartItem): PackagingFormat | undefined {
+  return item.formats.find((format) => format.id === item.selectedFormatId);
+}
+
+function getRequestedUnits(item: CartItem): number {
+  const amount = Number(item.qtyInput || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const selectedFormat = getFormatForItem(item);
+  return selectedFormat ? amount * selectedFormat.units_per_package : amount;
+}
+
+function getMaxAmountForItem(item: CartItem): number {
+  const selectedFormat = getFormatForItem(item);
+  if (!selectedFormat) return item.stock;
+  return Math.floor(item.stock / selectedFormat.units_per_package);
+}
 
 // ---------------------------------------------------------------------------
-// PAGE COMPONENT
+// CLIENT FIELD VALIDATION
 // ---------------------------------------------------------------------------
+
+const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]+$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^[\+\d\s\-\(\)\.]+$/;
+
+function validateClientName(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed === '') return null;
+  if (trimmed.length < 2) return 'Le nom du client doit contenir au moins 2 caractères.';
+  if (/^\d+$/.test(trimmed)) return 'Le nom du client ne peut pas contenir uniquement des chiffres.';
+  if (!NAME_REGEX.test(trimmed)) return 'Le nom contient des caractères non autorisés.';
+  return null;
+}
+
+function validateClientPhone(phone: string): string | null {
+  const trimmed = phone.trim();
+  if (trimmed === '') return null;
+  if (!PHONE_REGEX.test(trimmed)) return 'Le téléphone ne doit contenir que des chiffres, espaces, +, -, ( ou ).';
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length < 8) return 'Le numéro de téléphone semble trop court.';
+  return null;
+}
+
+function validateClientEmail(email: string): string | null {
+  const trimmed = email.trim();
+  if (trimmed === '') return null;
+  if (!EMAIL_REGEX.test(trimmed)) return 'Adresse email invalide (ex : client@exemple.com).';
+  return null;
+}
 
 export default function PosPage() {
   const router = useRouter();
   const { user, isLoading } = useSession();
 
-  // ── Data
-  const [products, setProducts]   = useState<Product[]>([]);
-  const [stockMap, setStockMap]   = useState<Map<string, number>>(new Map());
-
-  // ── Cart
-  const [cart, setCart]                     = useState<CartItem[]>([]);
-  const [paymentMethod, setPaymentMethod]   = useState<PaymentMethod>('CASH');
-
-  // ── Catalog controls
-  const [search, setSearch]   = useState('');
+  const [inventoryRows, setInventoryRows] = useState<InventoryProductRow[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [page, setPage]       = useState(1);
+  const [page, setPage] = useState(1);
 
-  // ── UI state
-  const [isBootLoading, setIsBootLoading]   = useState(true);
-  const [isSubmitting, setIsSubmitting]     = useState(false);
-  const [bootError, setBootError]           = useState<string | null>(null);
-  const [submitError, setSubmitError]       = useState<string | null>(null);
+  const [clientName, setClientName] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
+  const [clientErrors, setClientErrors] = useState<{ name?: string | null; phone?: string | null; email?: string | null }>({});
+
+  const [isBootLoading, setIsBootLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadingFormatIds, setLoadingFormatIds] = useState<string[]>([]);
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const canAccess = !isLoading && user !== null &&
@@ -94,22 +145,29 @@ export default function PosPage() {
     if (!isLoading && !canAccess) router.replace('/dashboard');
   }, [canAccess, isLoading, router]);
 
-  // ── Load catalog + stock in parallel
   const loadData = useCallback(async () => {
     if (!user) return;
     setIsBootLoading(true);
     setBootError(null);
     try {
-      const [productsRes, inventoryRes] = await Promise.all([
-        apiClient.get<{ success: boolean; products: Product[] }>('/api/products'),
-        apiClient.get<{ success: boolean; inventory: InventoryRow[] }>('/api/inventory', {
-          params: { store_id: user.storeId },
-        }),
-      ]);
-      setProducts((productsRes.data?.products ?? []).filter((p) => p.is_active));
-      setStockMap(new Map(
-        (inventoryRes.data?.inventory ?? []).map((r) => [r.product_id, r.stock_physical]),
-      ));
+      const inventoryRes = await apiClient.get<{ success: boolean; inventory: InventoryProductRow[] }>('/api/inventory', {
+        params: { store_id: user.storeId },
+      });
+      const rows = (inventoryRes.data?.inventory ?? []).filter((row) => row.product.is_active);
+      setInventoryRows(rows);
+      setCart((current) => current
+        .map((item) => {
+          const nextRow = rows.find((row) => row.product_id === item.product.id);
+          if (!nextRow || nextRow.stock_physical <= 0) return null;
+          const nextItem = { ...item, stock: nextRow.stock_physical };
+          const maxAmount = getMaxAmountForItem(nextItem);
+          if (maxAmount <= 0) return null;
+          return {
+            ...nextItem,
+            qtyInput: String(Math.min(Number(nextItem.qtyInput || 1), maxAmount)),
+          };
+        })
+        .filter((item): item is CartItem => item !== null));
     } catch (err) {
       setBootError(extractApiError(err, 'Impossible de charger le catalogue.'));
     } finally {
@@ -119,79 +177,171 @@ export default function PosPage() {
 
   useEffect(() => {
     if (!canAccess || !user) return;
-    void loadData();
+    const timer = setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [canAccess, user, loadData]);
 
-  // ── Reset page when filter or sort changes
-  useEffect(() => { setPage(1); }, [search, sortKey, sortDir]);
-
-  // ── Derived: filter + sort + paginate
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = q
-      ? products.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
-      : products;
+      ? inventoryRows.filter((row) => row.product.name.toLowerCase().includes(q) || row.product.sku.toLowerCase().includes(q))
+      : inventoryRows;
 
-    return [...base].sort((a, b) => {
-      let cmp = 0;
-      if (sortKey === 'name')  cmp = a.name.localeCompare(b.name, 'fr');
-      if (sortKey === 'price') cmp = Number(a.price) - Number(b.price);
-      if (sortKey === 'stock') cmp = (stockMap.get(a.id) ?? 0) - (stockMap.get(b.id) ?? 0);
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [products, search, sortKey, sortDir, stockMap]);
+    return [...base]
+      .filter((row) => row.stock_physical > 0)
+      .sort((a, b) => {
+        let cmp = 0;
+        if (sortKey === 'name') cmp = a.product.name.localeCompare(b.product.name, 'fr');
+        if (sortKey === 'price') cmp = Number(a.product.price) - Number(b.product.price);
+        if (sortKey === 'stock') cmp = a.stock_physical - b.stock_physical;
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+  }, [inventoryRows, search, sortKey, sortDir]);
 
-  const totalPages     = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
-  const safePage       = Math.min(page, totalPages);
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
   const visibleProducts = filteredProducts.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  // ── Cart total
   const cartTotal = useMemo(
-    () => cart.reduce((sum, item) => sum + Number(item.product.price) * item.qty, 0),
+    () => cart.reduce((sum, item) => sum + Number(item.product.price) * getRequestedUnits(item), 0),
     [cart],
   );
 
-  // ── Cart actions
-  function addToCart(product: Product): void {
-    setCart((prev) => {
-      const existing = prev.find((i) => i.product.id === product.id);
-      if (existing) return prev.map((i) => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { product, qty: 1 }];
-    });
-    setSubmitError(null);
-    setSuccessMessage(null);
+  async function loadFormats(productId: string): Promise<PackagingFormat[]> {
+    setLoadingFormatIds((current) => [...current, productId]);
+    try {
+      const { data } = await apiClient.get<{ success: boolean; formats: PackagingFormat[] }>(`/api/products/${productId}/packaging-formats`);
+      return data.formats ?? [];
+    } finally {
+      setLoadingFormatIds((current) => current.filter((id) => id !== productId));
+    }
   }
 
-  function updateCartQty(productId: string, qty: number): void {
-    if (qty <= 0) { removeFromCart(productId); return; }
-    setCart((prev) => prev.map((i) => i.product.id === productId ? { ...i, qty } : i));
+  async function addToCart(row: InventoryProductRow): Promise<void> {
+    if (row.stock_physical <= 0) return;
+    if (cart.some((item) => item.product.id === row.product.id)) return;
+
+    try {
+      const formats = await loadFormats(row.product.id);
+      const baseFormat = formats.find((format) => format.is_base_unit) ?? formats[0];
+      const nextItem: CartItem = {
+        product: row.product,
+        stock: row.stock_physical,
+        qtyInput: '1',
+        selectedFormatId: baseFormat?.id ?? '',
+        formats,
+      };
+
+      if (getMaxAmountForItem(nextItem) <= 0) {
+        setSubmitError('Le format choisi ne peut pas être vendu avec le stock disponible.');
+        return;
+      }
+
+      setCart((current) => [...current, nextItem]);
+      setSubmitError(null);
+      setSuccessMessage(null);
+    } catch (err) {
+      setSubmitError(extractApiError(err, 'Impossible de charger les formats du produit.'));
+    }
+  }
+
+  function updateCartItem(productId: string, updater: (item: CartItem) => CartItem): void {
+    setCart((current) => current.map((item) => {
+      if (item.product.id !== productId) return item;
+      const nextItem = updater(item);
+      const maxAmount = getMaxAmountForItem(nextItem);
+      return {
+        ...nextItem,
+        qtyInput: String(Math.min(Number(nextItem.qtyInput || 1), Math.max(maxAmount, 1))),
+      };
+    }));
   }
 
   function removeFromCart(productId: string): void {
-    setCart((prev) => prev.filter((i) => i.product.id !== productId));
+    setCart((current) => current.filter((item) => item.product.id !== productId));
   }
 
   function clearCart(): void {
     setCart([]);
     setPaymentMethod('CASH');
+    setClientName('');
+    setClientPhone('');
+    setClientEmail('');
+    setClientErrors({});
   }
 
-  // ── Submit sale
+  function validateClientFields(): boolean {
+    const trimmedName = clientName.trim();
+    const trimmedPhone = clientPhone.trim();
+    const trimmedEmail = clientEmail.trim();
+    const hasAnyField = trimmedName !== '' || trimmedPhone !== '' || trimmedEmail !== '';
+
+    const errors = {
+      name: validateClientName(clientName),
+      phone: validateClientPhone(clientPhone),
+      email: validateClientEmail(clientEmail),
+    };
+
+    if (hasAnyField && trimmedName === '') {
+      errors.name = 'Le nom du client est requis.';
+    }
+
+    if (trimmedName !== '' && trimmedPhone === '' && trimmedEmail === '') {
+      errors.phone = 'Ajoutez au moins un téléphone ou un email.';
+    }
+
+    setClientErrors(errors);
+    return !errors.name && !errors.phone && !errors.email;
+  }
+
   async function submitSale(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (cart.length === 0) return;
     setSubmitError(null);
     setSuccessMessage(null);
+
+    const invalidLine = cart.find((item) => {
+      const maxAmount = getMaxAmountForItem(item);
+      return Number(item.qtyInput) < 1 || Number(item.qtyInput) > maxAmount || getRequestedUnits(item) > item.stock;
+    });
+    if (invalidLine) {
+      setSubmitError(`La quantité saisie pour ${invalidLine.product.name} dépasse le stock disponible.`);
+      return;
+    }
+
+    const hasClientFields = [clientName, clientPhone, clientEmail].some((value) => value.trim() !== '');
+    if (hasClientFields && !validateClientFields()) {
+      setSubmitError('Veuillez corriger les informations client.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await apiClient.post('/api/transactions', {
         payment_method: paymentMethod,
-        items: cart.map((item) => ({
-          product_id:    item.product.id,
-          qty:           item.qty,
-          price_at_sale: Number(item.product.price),
-        })),
+        client: hasClientFields
+          ? { name: clientName.trim(), phone: clientPhone.trim() || undefined, email: clientEmail.trim() || undefined }
+          : undefined,
+        items: cart.map((item) => {
+          const selectedFormat = getFormatForItem(item);
+          if (selectedFormat) {
+            return {
+              product_id: item.product.id,
+              packaging_format_id: selectedFormat.id,
+              packages_count: Number(item.qtyInput),
+              price_at_sale: Number(item.product.price),
+            };
+          }
+          return {
+            product_id: item.product.id,
+            qty: Number(item.qtyInput),
+            price_at_sale: Number(item.product.price),
+          };
+        }),
       });
+
       const total = formatPrice(cartTotal);
       clearCart();
       await loadData();
@@ -202,11 +352,6 @@ export default function PosPage() {
       setIsSubmitting(false);
     }
   }
-
-
-  // ---------------------------------------------------------------------------
-  // RENDER
-  // ---------------------------------------------------------------------------
 
   if (isLoading || !canAccess) {
     return (
@@ -233,11 +378,7 @@ export default function PosPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4 items-start">
-
-        {/* ── CATALOGUE ────────────────────────────────────────────────────── */}
         <div className="bg-surface border border-borderLight space-y-3 p-4">
-
-          {/* Title + count */}
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium text-textMain">Catalogue</h2>
             {!isBootLoading && (
@@ -247,86 +388,81 @@ export default function PosPage() {
             )}
           </div>
 
-          {/* Search + sort toolbar */}
           <div className="flex items-center gap-2">
             <input
               type="search"
               placeholder="Rechercher par nom ou SKU…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
               className={`${inputCls} flex-1 min-w-0`}
               aria-label="Rechercher un produit"
               autoFocus
             />
             <select
               value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              onChange={(e) => {
+                setSortKey(e.target.value as SortKey);
+                setPage(1);
+              }}
               className={`${inputCls} shrink-0`}
               aria-label="Trier par"
             >
-              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
-                <option key={k} value={k}>{SORT_LABELS[k]}</option>
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+                <option key={key} value={key}>{SORT_LABELS[key]}</option>
               ))}
             </select>
             <button
               type="button"
-              onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
+              onClick={() => {
+                setSortDir((current) => current === 'asc' ? 'desc' : 'asc');
+                setPage(1);
+              }}
               className="shrink-0 px-2 py-2 border border-borderLight rounded text-textMuted hover:text-textMain hover:border-primary transition-colors"
               aria-label={sortDir === 'asc' ? 'Tri croissant — passer en décroissant' : 'Tri décroissant — passer en croissant'}
             >
-              {sortDir === 'asc' ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 5v14M5 12l7 7 7-7" />
-                </svg>
-              )}
+              {sortDir === 'asc' ? '↑' : '↓'}
             </button>
           </div>
 
-          {/* Product grid */}
           {isBootLoading ? (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-24 bg-borderLight rounded animate-pulse" />
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="h-24 bg-borderLight rounded animate-pulse" />
               ))}
             </div>
           ) : visibleProducts.length === 0 ? (
             <p className="text-sm text-textMuted py-4 text-center">Aucun produit trouvé.</p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {visibleProducts.map((product) => {
-                const stock      = stockMap.get(product.id) ?? 0;
-                const inCart     = cart.find((i) => i.product.id === product.id);
-                const outOfStock = stock <= 0;
+              {visibleProducts.map((row) => {
+                const outOfStock = row.stock_physical <= 0;
+                const inCart = cart.some((item) => item.product.id === row.product.id);
+                const isLoadingFormats = loadingFormatIds.includes(row.product.id);
                 return (
                   <button
-                    key={product.id}
+                    key={row.product_id}
                     type="button"
-                    onClick={() => !outOfStock && addToCart(product)}
-                    disabled={outOfStock}
-                    aria-label={`Ajouter ${product.name} au panier`}
+                    onClick={() => void addToCart(row)}
+                    disabled={outOfStock || inCart || isLoadingFormats}
+                    aria-label={`Ajouter ${row.product.name} au panier`}
                     className={[
                       'flex flex-col gap-1 p-3 border rounded text-left transition-colors',
                       outOfStock
                         ? 'border-borderLight bg-background opacity-50 cursor-not-allowed'
                         : inCart
-                          ? 'border-primary bg-primary/10 cursor-pointer'
+                          ? 'border-primary bg-primary/10 cursor-not-allowed'
                           : 'border-borderLight bg-background hover:border-primary hover:bg-primary/10 cursor-pointer',
                     ].join(' ')}
                   >
-                    <span className="text-sm font-medium text-textMain leading-tight line-clamp-2">
-                      {product.name}
-                    </span>
-                    <span className="text-xs text-textMuted">{product.sku}</span>
+                    <span className="text-sm font-medium text-textMain leading-tight line-clamp-2">{row.product.name}</span>
+                    <span className="text-xs text-textMuted">{row.product.sku}</span>
                     <div className="flex items-center justify-between mt-1">
-                      <span className="text-sm font-semibold text-primary">
-                        {formatPrice(product.price)} F
-                      </span>
+                      <span className="text-sm font-semibold text-primary">{formatPrice(row.product.price)} F</span>
                       <span className={`text-xs ${outOfStock ? 'text-red-500' : 'text-textMuted'}`}>
-                        {outOfStock ? 'Rupture' : `Stock ${stock}`}
+                        {isLoadingFormats ? 'Formats…' : outOfStock ? 'Rupture' : `Stock ${row.stock_physical}`}
                       </span>
                     </div>
                   </button>
@@ -335,12 +471,11 @@ export default function PosPage() {
             </div>
           )}
 
-          {/* Pagination */}
           {!isBootLoading && totalPages > 1 && (
             <div className="flex items-center justify-between gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
                 disabled={safePage === 1}
                 className="px-3 py-1.5 text-xs border border-borderLight rounded text-textMuted hover:text-textMain hover:border-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
@@ -348,37 +483,35 @@ export default function PosPage() {
               </button>
 
               <div className="flex items-center gap-1">
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
-                  .reduce<(number | '…')[]>((acc, p, idx, arr) => {
-                    if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push('…');
-                    acc.push(p);
+                {Array.from({ length: totalPages }, (_, index) => index + 1)
+                  .filter((item) => item === 1 || item === totalPages || Math.abs(item - safePage) <= 1)
+                  .reduce<(number | '…')[]>((acc, item, index, arr) => {
+                    if (index > 0 && item - (arr[index - 1] as number) > 1) acc.push('…');
+                    acc.push(item);
                     return acc;
                   }, [])
-                  .map((p, i) =>
-                    p === '…' ? (
-                      <span key={`ell-${i}`} className="px-1 text-xs text-textMuted select-none">…</span>
-                    ) : (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setPage(p as number)}
-                        className={[
-                          'w-7 h-7 text-xs rounded border transition-colors',
-                          safePage === p
-                            ? 'bg-primary text-white border-primary font-medium'
-                            : 'border-borderLight text-textMuted hover:text-textMain hover:border-primary',
-                        ].join(' ')}
-                      >
-                        {p}
-                      </button>
-                    ),
-                  )}
+                  .map((item, index) => item === '…' ? (
+                    <span key={`ellipsis-${index}`} className="px-1 text-xs text-textMuted select-none">…</span>
+                  ) : (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setPage(item as number)}
+                      className={[
+                        'w-7 h-7 text-xs rounded border transition-colors',
+                        safePage === item
+                          ? 'bg-primary text-white border-primary font-medium'
+                          : 'border-borderLight text-textMuted hover:text-textMain hover:border-primary',
+                      ].join(' ')}
+                    >
+                      {item}
+                    </button>
+                  ))}
               </div>
 
               <button
                 type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                 disabled={safePage === totalPages}
                 className="px-3 py-1.5 text-xs border border-borderLight rounded text-textMuted hover:text-textMain hover:border-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
@@ -388,7 +521,6 @@ export default function PosPage() {
           )}
         </div>
 
-        {/* ── PANIER ───────────────────────────────────────────────────────── */}
         <div className="bg-surface border border-borderLight p-4 space-y-4 sticky top-4">
           <h2 className="text-lg font-medium text-textMain">Panier</h2>
 
@@ -404,50 +536,151 @@ export default function PosPage() {
             </div>
           )}
 
+          <div className="rounded border border-borderLight bg-background p-3 space-y-3">
+            <p className="text-sm font-medium text-textMain">Client</p>
+
+            <div className="grid gap-2">
+              <div>
+                <input
+                  id="client-name"
+                  type="text"
+                  value={clientName}
+                  onChange={(e) => {
+                    setClientName(e.target.value);
+                    if (clientErrors.name) {
+                      setClientErrors((current) => ({ ...current, name: undefined }));
+                    }
+                  }}
+                  placeholder="Nom du client"
+                  className={`${inputCls} w-full ${clientErrors.name ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  aria-invalid={Boolean(clientErrors.name)}
+                  aria-describedby={clientErrors.name ? 'client-name-error' : undefined}
+                />
+                {clientErrors.name && (
+                  <p id="client-name-error" className="text-xs text-red-600 mt-1">{clientErrors.name}</p>
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <input
+                    id="client-phone"
+                    type="tel"
+                    value={clientPhone}
+                    onChange={(e) => {
+                      setClientPhone(e.target.value);
+                      if (clientErrors.phone) {
+                        setClientErrors((current) => ({ ...current, phone: undefined }));
+                      }
+                    }}
+                    placeholder="+229 01 XX XX XX XX"
+                    className={`${inputCls} w-full ${clientErrors.phone ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                    aria-invalid={Boolean(clientErrors.phone)}
+                    aria-describedby={clientErrors.phone ? 'client-phone-error' : undefined}
+                  />
+                  {clientErrors.phone && (
+                    <p id="client-phone-error" className="text-xs text-red-600 mt-1">{clientErrors.phone}</p>
+                  )}
+                </div>
+                <div>
+                  <input
+                    id="client-email"
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => {
+                      setClientEmail(e.target.value);
+                      if (clientErrors.email) {
+                        setClientErrors((current) => ({ ...current, email: undefined }));
+                      }
+                    }}
+                    placeholder="client@exemple.com"
+                    className={`${inputCls} w-full ${clientErrors.email ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                    aria-invalid={Boolean(clientErrors.email)}
+                    aria-describedby={clientErrors.email ? 'client-email-error' : undefined}
+                  />
+                  {clientErrors.email && (
+                    <p id="client-email-error" className="text-xs text-red-600 mt-1">{clientErrors.email}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {cart.length === 0 ? (
-            <p className="text-sm text-textMuted py-4 text-center">
-              Cliquez sur un produit pour l'ajouter.
-            </p>
+            <p className="text-sm text-textMuted py-4 text-center">Cliquez sur un produit pour l&apos;ajouter.</p>
           ) : (
             <>
-              <ul className="space-y-2" aria-label="Articles dans le panier">
+              <ul className="space-y-3" aria-label="Articles dans le panier">
                 {cart.map((item) => {
-                  const lineTotal = Number(item.product.price) * item.qty;
-                  const maxQty    = stockMap.get(item.product.id) ?? 0;
+                  const selectedFormat = getFormatForItem(item);
+                  const maxAmount = getMaxAmountForItem(item);
+                  const requestedUnits = getRequestedUnits(item);
+                  const lineTotal = Number(item.product.price) * requestedUnits;
                   return (
-                    <li
-                      key={item.product.id}
-                      className="flex items-center gap-2 py-2 border-b border-borderLight last:border-0"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-textMain truncate">{item.product.name}</p>
-                        <p className="text-xs text-textMuted">
-                          {formatPrice(item.product.price)} F/{item.product.unit}
-                        </p>
+                    <li key={item.product.id} className="border border-borderLight rounded p-3 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-textMain">{item.product.name}</p>
+                          <p className="text-xs text-textMuted">
+                            {formatPrice(item.product.price)} F/{item.product.unit} · stock {item.stock}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeFromCart(item.product.id)}
+                          className="text-textMuted hover:text-red-600 transition-colors"
+                          aria-label={`Retirer ${item.product.name}`}
+                        >
+                          ×
+                        </button>
                       </div>
-                      <input
-                        type="number"
-                        min={1}
-                        max={maxQty}
-                        value={item.qty}
-                        onChange={(e) => updateCartQty(item.product.id, Number(e.target.value))}
-                        className={`${inputCls} w-16 text-right`}
-                        aria-label={`Quantité ${item.product.name}`}
-                      />
-                      <span className="text-sm font-medium text-textMain w-20 text-right shrink-0">
-                        {formatPrice(lineTotal)} F
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeFromCart(item.product.id)}
-                        aria-label={`Retirer ${item.product.name}`}
-                        className="text-textMuted hover:text-red-600 transition-colors shrink-0"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
+
+                      <div className="grid gap-2 sm:grid-cols-[1fr_110px]">
+                        <select
+                          value={item.selectedFormatId}
+                          onChange={(e) => updateCartItem(item.product.id, (current) => ({
+                            ...current,
+                            selectedFormatId: e.target.value,
+                            qtyInput: '1',
+                          }))}
+                          className={`${inputCls} w-full`}
+                        >
+                          {item.formats.length === 0 ? <option value="">Unité simple</option> : null}
+                          {item.formats.map((format) => {
+                            const maxForFormat = Math.floor(item.stock / format.units_per_package);
+                            return (
+                              <option key={format.id} value={format.id} disabled={maxForFormat <= 0}>
+                                {format.label} {format.units_per_package > 1 ? `(x${format.units_per_package})` : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+
+                        <input
+                          type="number"
+                          min={1}
+                          max={Math.max(maxAmount, 1)}
+                          value={item.qtyInput}
+                          onChange={(e) => updateCartItem(item.product.id, (current) => ({
+                            ...current,
+                            qtyInput: sanitizePositiveIntegerInput(e.target.value),
+                          }))}
+                          className={`${inputCls} w-full text-right`}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-textMuted">
+                          {selectedFormat ? `${item.qtyInput || 0} ${selectedFormat.label.toLowerCase()} → ${requestedUnits} unités` : `${requestedUnits} unités`}
+                        </span>
+                        <span className={requestedUnits > item.stock ? 'text-red-600' : 'text-textMuted'}>
+                          max {maxAmount}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-textMuted">Sous-total</span>
+                        <span className="text-sm font-semibold text-textMain">{formatPrice(lineTotal)} F</span>
+                      </div>
                     </li>
                   );
                 })}
@@ -474,7 +707,7 @@ export default function PosPage() {
                 </select>
               </div>
 
-              <form onSubmit={submitSale} className="space-y-2">
+              <form onSubmit={submitSale} className="space-y-2" noValidate>
                 <Button type="submit" className="w-full" isLoading={isSubmitting} disabled={cart.length === 0}>
                   Valider la vente
                 </Button>
@@ -486,6 +719,10 @@ export default function PosPage() {
           )}
         </div>
       </div>
+
+      <hr className="border-borderLight" />
+
+      <TransactionsList />
     </section>
   );
 }

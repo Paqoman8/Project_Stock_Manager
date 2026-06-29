@@ -41,6 +41,7 @@ type PurchaseOrderStatus = 'DRAFT' | 'SENT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' 
 interface ReceptionItemRow {
   id: string;
   reception_id: string;
+  order_item_id: string | null;
   product_id: string;
   received_qty: number;
   stock_units_added: number;
@@ -247,7 +248,7 @@ function CreateReceptionModal({
         for (const reception of res.data.receptions ?? []) {
           if (reception.status !== 'CONFIRMED') continue;
           for (const item of reception.items) {
-            const key = `${item.product_id}|${item.packaging_format_id ?? ''}`;
+            const key = item.order_item_id ?? `${item.product_id}|${item.packaging_format_id ?? ''}`;
             map.set(key, (map.get(key) ?? 0) + item.stock_units_added);
           }
         }
@@ -407,7 +408,7 @@ function CreateReceptionModal({
                     const totalUnits     = oi.ordered_qty * fmt.units_per_package;
 
                     // Avancement confirmé pour cette ligne de commande
-                    const histKey         = `${product.id}|${fmt.id}`;
+                      const histKey         = oi.id;
                     const confirmedUnits  = confirmedBaseUnits.get(histKey) ?? 0;
                     const confirmedOrders = fmt.units_per_package > 0 ? Math.round(confirmedUnits / fmt.units_per_package) : 0;
                     const remainingOrders = Math.max(0, oi.ordered_qty - confirmedOrders);
@@ -608,7 +609,7 @@ function OrderReceptionsModal({
     for (const reception of receptions) {
       if (reception.status !== 'CONFIRMED') continue;
       for (const item of reception.items) {
-        const key = `${item.product_id}|${item.packaging_format_id ?? ''}`;
+        const key = item.order_item_id ?? `${item.product_id}|${item.packaging_format_id ?? ''}`;
         confirmedBaseUnits.set(key, (confirmedBaseUnits.get(key) ?? 0) + item.stock_units_added);
       }
     }
@@ -616,7 +617,7 @@ function OrderReceptionsModal({
     return order.items.map((oi) => {
       const product        = oi.supplier_product.product;
       const fmt            = oi.supplier_product.packaging_format;
-      const key            = `${product.id}|${fmt.id}`;
+      const key            = oi.id;
       const expectedUnits  = oi.ordered_qty * fmt.units_per_package;
       const receivedUnits  = confirmedBaseUnits.get(key) ?? 0;
       // Reconvertir en unités de commande pour l'affichage (toujours entier)

@@ -6,6 +6,7 @@ import {
   listTransactions,
   getSummary,
   refundTransaction,
+  searchTransactionClients,
 } from '../controllers/transactionController';
 
 
@@ -34,6 +35,9 @@ const POS_ROLES = [
 
 // GET /summary — daily sales summary for dashboard
 transactionRouter.get('/summary', requireAuth, requireRole(...POS_ROLES), getSummary);
+
+// GET /clients/search — reusable clients for POS
+transactionRouter.get('/clients/search', requireAuth, requireRole(...POS_ROLES), searchTransactionClients);
 
 // GET / — list all transactions for store
 transactionRouter.get('/',        requireAuth, requireRole(...POS_ROLES), listTransactions);

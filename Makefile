@@ -4,6 +4,7 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 .PHONY: setup start stop restart \
+        dev dev-db dev-backend dev-frontend \
         rebuild rebuild-backend rebuild-frontend \
         logs logs-back logs-front \
         status health \
@@ -47,6 +48,26 @@ start:
 	@echo "$(CYAN)▶️  Démarrage des containers...$(RESET)"
 	docker compose up -d
 	@echo "$(GREEN)✅ Containers démarrés → http://localhost:3000$(RESET)"
+
+## dev            : 💻 Lancer backend + frontend en local via npm, avec PostgreSQL Docker
+dev:
+	@echo "$(CYAN)💻 Démarrage du mode développement local...$(RESET)"
+	npm run dev
+
+## dev-db         : 🐘 Démarrer uniquement PostgreSQL pour le dev local
+dev-db:
+	@echo "$(CYAN)🐘 Démarrage de PostgreSQL pour le dev local...$(RESET)"
+	npm run dev:db
+
+## dev-backend    : 🔧 Lancer uniquement le backend en local
+dev-backend:
+	@echo "$(CYAN)🔧 Démarrage du backend local...$(RESET)"
+	npm run dev:backend
+
+## dev-frontend   : 🎨 Lancer uniquement le frontend en local
+dev-frontend:
+	@echo "$(CYAN)🎨 Démarrage du frontend local...$(RESET)"
+	npm run dev:frontend
 
 ## stop           : ⏹️  Arrêter les containers (données conservées)
 stop:
@@ -228,7 +249,7 @@ help:
 	@echo "$(CYAN)══════════════════════════════════════$(RESET)"
 	@echo ""
 	@echo "$(BOLD)  DÉMARRAGE & ARRÊT$(RESET)"
-	@grep -E '^## (setup|start|stop|restart)' Makefile | sed 's/^## /    make /'
+	@grep -E '^## (setup|start|stop|restart|dev|dev-db|dev-backend|dev-frontend)' Makefile | sed 's/^## /    make /'
 	@echo ""
 	@echo "$(BOLD)  BUILD & MISE À JOUR DU CODE$(RESET)"
 	@grep -E '^## rebuild' Makefile | sed 's/^## /    make /'

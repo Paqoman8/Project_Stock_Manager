@@ -117,11 +117,12 @@ export async function createSupplierProduct(
   }
 
   // Si is_preferred = true : retirer le flag des autres entrées du même produit
-  if (data.is_preferred === true) {
-    await supplierProductRepo.clearPreferred(data.product_id);
-  }
-
-  const row = await supplierProductRepo.create(data);
+  const row = await prisma.$transaction(async (tx) => {
+    if (data.is_preferred === true) {
+      await supplierProductRepo.clearPreferred(data.product_id, tx);
+    }
+    return supplierProductRepo.create(data, tx);
+  });
 
   // Audit — non-bloquant
   try {
@@ -185,11 +186,12 @@ export async function updateSupplierProduct(
   }
 
   // Si is_preferred = true : retirer le flag des autres entrées du même produit
-  if (data.is_preferred === true) {
-    await supplierProductRepo.clearPreferred(existing.product_id);
-  }
-
-  const row = await supplierProductRepo.update(id, data);
+  const row = await prisma.$transaction(async (tx) => {
+    if (data.is_preferred === true) {
+      await supplierProductRepo.clearPreferred(existing.product_id, tx);
+    }
+    return supplierProductRepo.update(id, data, tx);
+  });
 
   // Audit — non-bloquant
   try {

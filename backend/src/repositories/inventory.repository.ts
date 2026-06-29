@@ -20,7 +20,14 @@ export interface InventoryRow {
   stock_min:      number;
   stock_reorder:  number;
   store:   { id: string; name: string; color: string };
-  product: { id: string; name: string; sku: string; unit: string };
+  product: {
+    id: string;
+    name: string;
+    sku: string;
+    unit: string;
+    price: string;
+    is_active: boolean;
+  };
 }
 
 export interface InventoryFilters {
@@ -41,7 +48,7 @@ export interface UpdateThresholdsData {
 
 const INVENTORY_INCLUDE = {
   store:   { select: { id: true, name: true, color: true } },
-  product: { select: { id: true, name: true, sku: true, unit: true } },
+  product: { select: { id: true, name: true, sku: true, unit: true, price: true, is_active: true } },
 } as const;
 
 // ---------------------------------------------------------------------------

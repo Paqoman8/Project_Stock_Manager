@@ -269,6 +269,8 @@ docker compose restart backend
 docker compose down -v
 ```
 
+> Si `docker compose build` échoue, `docker compose up -d` relance simplement la dernière image qui avait été construite avec succès. C'est la raison classique d'un vieux frontend ou backend qui réapparaît après un redémarrage.
+
 ---
 
 ## 5. Variables d'environnement

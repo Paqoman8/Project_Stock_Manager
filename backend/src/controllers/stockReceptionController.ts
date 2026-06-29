@@ -172,6 +172,13 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
       });
       return;
     }
+    if (error instanceof Error && error.message === 'RECEPTION_QTY_EXCEEDS_REMAINING') {
+      res.status(409).json({
+        success: false,
+        message: 'La quantité reçue dépasse le reliquat autorisé pour au moins une ligne de commande.',
+      });
+      return;
+    }
 
     console.error('Erreur lors de la création de la réception :', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
@@ -216,6 +223,13 @@ export async function confirmReception(req: AuthenticatedRequest, res: Response)
       res.status(422).json({
         success: false,
         message: 'Seule une réception en statut PENDING peut être confirmée.',
+      });
+      return;
+    }
+    if (error instanceof Error && error.message === 'RECEPTION_QTY_EXCEEDS_REMAINING') {
+      res.status(409).json({
+        success: false,
+        message: 'La confirmation dépasserait la quantité commandée sur au moins une ligne.',
       });
       return;
     }

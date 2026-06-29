@@ -12,11 +12,11 @@ const TRANSFER_ROLES = ['Super Administrateur', 'Administrateur', 'Manager Magas
 
 type TransferStatus = 'PENDING' | 'DONE' | 'CANCEL';
 
-type DestinationStore = { id: string; name: string };
+type StoreOption = { id: string; name: string };
 type SourceInventoryRow = {
   product_id: string;
   stock_physical: number;
-  product: { id: string; name: string; sku: string; unit: string };
+  product: { id: string; name: string; sku: string; unit: string; price: string; is_active: boolean };
 };
 type PackagingFormat = {
   id: string;
@@ -45,13 +45,20 @@ type TransferRow = {
 
 type DraftItem = { product_id: string; qty: string; packaging_format_id: string; packages_count: string };
 
+const TRANSFER_PAGE_SIZE = 10;
+
+// PostgreSQL accepte n'importe quel format UUID (v1-v5 et UUID nil). La validation
+// Zod .uuid() par défaut exige un UUID v4, ce qui rejetterait les identifiants
+// historiques non v4 encore présents en base. On accepte donc tout UUID valide.
+const UUID_ANY_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const createTransferSchema = z.object({
-  to_store_id: z.string().uuid('Sélectionnez un établissement de destination valide.'),
+  to_store_id: z.string().regex(UUID_ANY_REGEX, 'Sélectionnez un établissement de destination valide.'),
   items: z.array(
     z.object({
-      product_id: z.string().uuid('Produit invalide.'),
+      product_id: z.string().regex(UUID_ANY_REGEX, 'Produit invalide.'),
       qty: z.number().int().positive('La quantité doit être > 0.').optional(),
-      packaging_format_id: z.string().uuid('Format invalide.').optional(),
+      packaging_format_id: z.string().regex(UUID_ANY_REGEX, 'Format invalide.').optional(),
       packages_count: z.number().int().positive('Le nombre de colis doit être > 0.').optional(),
     }),
   ).min(1, 'Ajoutez au moins un produit.')
@@ -71,6 +78,28 @@ function statusLabel(status: TransferStatus): string {
   return 'Annulé';
 }
 
+function StatusBadge({ status }: { status: TransferStatus }): React.JSX.Element {
+  if (status === 'DONE') {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+        Confirmé
+      </span>
+    );
+  }
+  if (status === 'PENDING') {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
+        En attente
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+      Annulé
+    </span>
+  );
+}
+
 function extractApiError(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err)) return err.response?.data?.message ?? fallback;
   return fallback;
@@ -84,29 +113,78 @@ function sanitizePositiveIntegerInput(value: string): string {
   return String(Math.max(0, Math.trunc(asNumber)));
 }
 
+function formatZodIssues(issues: Array<{ path?: PropertyKey[]; message: string }>): string {
+  const messages = issues.map((issue) => {
+    const path = issue.path?.length ? `${issue.path.join('.')}: ` : '';
+    return `${path}${issue.message}`;
+  });
+  return Array.from(new Set(messages)).join(' ; ');
+}
+
+function getDraftItemError(
+  item: DraftItem,
+  inventory: SourceInventoryRow[],
+  formatsByProduct: Record<string, PackagingFormat[]>,
+): string | null {
+  if (!item.product_id.trim()) return null;
+  const row = inventory.find((r) => r.product_id === item.product_id);
+  if (!row) return 'Produit non disponible dans le stock source.';
+
+  if (item.packaging_format_id.trim()) {
+    const format = formatsByProduct[item.product_id]?.find((f) => f.id === item.packaging_format_id);
+    if (!format) return null;
+    const packagesCount = Number(item.packages_count);
+    if (!packagesCount || packagesCount <= 0) return null;
+    const requestedUnits = packagesCount * format.units_per_package;
+    if (requestedUnits > row.stock_physical) {
+      const maxPackages = Math.floor(row.stock_physical / format.units_per_package);
+      return `Stock insuffisant : max ${maxPackages} ${format.label} (×${format.units_per_package}) soit ${row.stock_physical} unité(s).`;
+    }
+  } else {
+    const qty = Number(item.qty);
+    if (!qty || qty <= 0) return null;
+    if (qty > row.stock_physical) {
+      return `Stock insuffisant : max ${row.stock_physical} unité(s).`;
+    }
+  }
+  return null;
+}
+
 export default function TransfersPage() {
   const router = useRouter();
   const { user, isLoading } = useSession();
 
-  const [destinationStores, setDestinationStores] = useState<DestinationStore[]>([]);
+  const [sourceStores, setSourceStores] = useState<StoreOption[]>([]);
+  const [destinationStores, setDestinationStores] = useState<StoreOption[]>([]);
   const [sourceInventory, setSourceInventory] = useState<SourceInventoryRow[]>([]);
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
 
+  const [fromStoreId, setFromStoreId] = useState('');
   const [toStoreId, setToStoreId] = useState('');
   const [draftItems, setDraftItems] = useState<DraftItem[]>([{ product_id: '', qty: '', packaging_format_id: '', packages_count: '' }]);
   const [formatsByProduct, setFormatsByProduct] = useState<Record<string, PackagingFormat[]>>({});
 
   const [isBootLoading, setIsBootLoading] = useState(true);
+  const [isTransfersLoading, setIsTransfersLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isActionLoadingId, setIsActionLoadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState<TransferStatus | ''>('');
+  const [transferPage, setTransferPage] = useState(1);
+  const [transferTotalPages, setTransferTotalPages] = useState(1);
+
   const canAccess = !isLoading && user !== null && TRANSFER_ROLES.includes(user.roleName as (typeof TRANSFER_ROLES)[number]);
 
   const productOptions = useMemo(
-    () => sourceInventory.filter((row) => row.stock_physical > 0),
+    () => sourceInventory.filter((row) => row.stock_physical > 0 && row.product.is_active),
     [sourceInventory],
+  );
+  const filteredDestinationStores = useMemo(
+    () => destinationStores.filter((store) => store.id !== fromStoreId),
+    [destinationStores, fromStoreId],
   );
   const hasAtLeastOneCompleteRow = useMemo(
     () => draftItems.some((item) => (
@@ -118,6 +196,13 @@ export default function TransfersPage() {
     )),
     [draftItems],
   );
+  const itemErrors = useMemo(
+    () => draftItems.map((item) => getDraftItemError(item, sourceInventory, formatsByProduct)),
+    [draftItems, sourceInventory, formatsByProduct],
+  );
+  const hasQuantityErrors = useMemo(() => itemErrors.some((err) => err !== null), [itemErrors]);
+
+  const hasActiveFilters = search.trim() !== '' || filterStatus !== '';
 
   useEffect(() => {
     if (isLoading) return;
@@ -126,23 +211,46 @@ export default function TransfersPage() {
     }
   }, [canAccess, isLoading, router]);
 
-  async function loadBootstrap(): Promise<void> {
+  async function loadStores(): Promise<void> {
     if (!user) return;
-    setIsBootLoading(true);
+    try {
+      const storesRes = await apiClient.get('/api/transfers/options/stores');
+      const nextSourceStores = storesRes.data?.source_stores ?? [];
+      const nextDestinationStores = storesRes.data?.destination_stores ?? [];
+
+      setSourceStores(nextSourceStores);
+      setDestinationStores(nextDestinationStores);
+
+      setFromStoreId((current) => {
+        if (current && nextSourceStores.some((store: StoreOption) => store.id === current)) return current;
+        if (nextSourceStores.some((store: StoreOption) => store.id === user.storeId)) return user.storeId;
+        return nextSourceStores[0]?.id ?? '';
+      });
+    } catch (err) {
+      setError(extractApiError(err, 'Impossible de charger les établissements.'));
+    }
+  }
+
+  async function loadTransfers(page = transferPage, searchQuery = search, statusFilter = filterStatus): Promise<void> {
+    if (!user) return;
+    setIsTransfersLoading(true);
     setError(null);
     try {
-      const [storesRes, inventoryRes, transfersRes] = await Promise.all([
-        apiClient.get('/api/transfers/options/stores'),
-        apiClient.get('/api/inventory', { params: { store_id: user.storeId } }),
-        apiClient.get('/api/transfers'),
-      ]);
-
-      setDestinationStores(storesRes.data?.stores ?? []);
-      setSourceInventory(inventoryRes.data?.inventory ?? []);
-      setTransfers(transfersRes.data?.transfers ?? []);
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('limit', String(TRANSFER_PAGE_SIZE));
+      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      if (statusFilter) params.set('status', statusFilter);
+      const res = await apiClient.get<{ success: boolean; transfers: TransferRow[]; total: number; page: number; totalPages: number }>(
+        `/api/transfers?${params.toString()}`,
+      );
+      setTransfers(res.data?.transfers ?? []);
+      setTransferPage(res.data?.page ?? page);
+      setTransferTotalPages(res.data?.totalPages ?? 1);
     } catch (err) {
       setError(extractApiError(err, 'Impossible de charger les transferts.'));
     } finally {
+      setIsTransfersLoading(false);
       setIsBootLoading(false);
     }
   }
@@ -150,11 +258,27 @@ export default function TransfersPage() {
   useEffect(() => {
     if (!canAccess || !user) return;
     const timer = setTimeout(() => {
-      void loadBootstrap();
+      void (async () => {
+        await loadStores();
+        await loadTransfers(1, search, filterStatus);
+      })();
     }, 0);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAccess, user?.id]);
+
+  useEffect(() => {
+    if (!canAccess || !user || fromStoreId.trim() === '') return;
+    apiClient
+      .get('/api/inventory', { params: { store_id: fromStoreId } })
+      .then(({ data }) => {
+        setSourceInventory(data?.inventory ?? []);
+      })
+      .catch((err) => {
+        setError(extractApiError(err, 'Impossible de charger le stock source.'));
+        setSourceInventory([]);
+      });
+  }, [canAccess, user, fromStoreId]);
 
   function addDraftItem(): void {
     setDraftItems((prev) => [...prev, { product_id: '', qty: '', packaging_format_id: '', packages_count: '' }]);
@@ -211,28 +335,33 @@ export default function TransfersPage() {
       return;
     }
 
+    if (hasQuantityErrors) {
+      setFormError('Corrigez les quantités supérieures au stock disponible.');
+      return;
+    }
+
     const parsed = createTransferSchema.safeParse({
       to_store_id: toStoreId,
       items: parsedItems,
     });
 
     if (!parsed.success) {
-      const first = parsed.error.issues[0]?.message ?? 'Vérifiez le formulaire.';
-      setFormError(first);
+      setFormError(formatZodIssues(parsed.error.issues));
       return;
     }
 
     setIsSubmitting(true);
     try {
       await apiClient.post('/api/transfers', {
-        from_store_id: user.storeId,
+        from_store_id: fromStoreId,
         to_store_id: parsed.data.to_store_id,
         items: parsed.data.items,
       });
 
+      setFromStoreId((current) => current);
       setToStoreId('');
       setDraftItems([{ product_id: '', qty: '', packaging_format_id: '', packages_count: '' }]);
-      await loadBootstrap();
+      await loadTransfers(1);
     } catch (err) {
       setFormError(extractApiError(err, 'Échec de création du transfert.'));
     } finally {
@@ -244,7 +373,7 @@ export default function TransfersPage() {
     setIsActionLoadingId(transferId);
     try {
       await apiClient.put(`/api/transfers/${transferId}/confirm`);
-      await loadBootstrap();
+      await loadTransfers();
     } catch (err) {
       setError(extractApiError(err, 'Échec de confirmation du transfert.'));
     } finally {
@@ -256,7 +385,7 @@ export default function TransfersPage() {
     setIsActionLoadingId(transferId);
     try {
       await apiClient.put(`/api/transfers/${transferId}/cancel`);
-      await loadBootstrap();
+      await loadTransfers();
     } catch (err) {
       setError(extractApiError(err, 'Échec d\'annulation du transfert.'));
     } finally {
@@ -278,7 +407,7 @@ export default function TransfersPage() {
       <header>
         <h1 className="text-2xl font-semibold text-textMain">Transferts inter-magasins</h1>
         <p className="text-sm text-textMuted mt-1">
-          Magasin source: <span className="font-medium text-textMain">{user?.storeName}</span>
+          Choisissez la source parmi vos magasins autorisés, puis la destination cible.
         </p>
       </header>
 
@@ -294,14 +423,34 @@ export default function TransfersPage() {
           <Button
             type="submit"
             form="transfer-form"
-            disabled={isSubmitting || !hasAtLeastOneCompleteRow || toStoreId.trim() === ''}
+            disabled={isSubmitting || !hasAtLeastOneCompleteRow || hasQuantityErrors || toStoreId.trim() === '' || fromStoreId.trim() === ''}
             className="min-w-[200px]"
           >
             {isSubmitting ? 'Création...' : 'Créer le transfert'}
           </Button>
         </div>
         <form id="transfer-form" className="space-y-4" onSubmit={submitTransfer}>
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 items-end">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr_220px] gap-4 items-end">
+            <div className="space-y-1">
+              <label htmlFor="source-store" className="text-xs font-medium text-textMuted">
+                Magasin source
+              </label>
+              <select
+                id="source-store"
+                className={inputCls}
+                value={fromStoreId}
+                onChange={(e) => {
+                  const nextStoreId = e.target.value;
+                  setFromStoreId(nextStoreId);
+                  if (toStoreId === nextStoreId) setToStoreId('');
+                }}
+              >
+                <option value="">Sélectionnez un magasin</option>
+                {sourceStores.map((store) => (
+                  <option key={store.id} value={store.id}>{store.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="space-y-1">
               <label htmlFor="destination-store" className="text-xs font-medium text-textMuted">
                 Magasin destination
@@ -313,7 +462,7 @@ export default function TransfersPage() {
                 onChange={(e) => setToStoreId(e.target.value)}
               >
                 <option value="">Sélectionnez un magasin</option>
-                {destinationStores.map((store) => (
+                {filteredDestinationStores.map((store) => (
                   <option key={store.id} value={store.id}>{store.name}</option>
                 ))}
               </select>
@@ -400,6 +549,9 @@ export default function TransfersPage() {
                         : { qty: sanitizePositiveIntegerInput(e.target.value) },
                     )}
                   />
+                  {itemErrors[idx] && (
+                    <p className="text-xs text-red-700">{itemErrors[idx]}</p>
+                  )}
                 </div>
 
                 <button
@@ -441,6 +593,53 @@ export default function TransfersPage() {
           <h2 className="text-lg font-medium text-textMain">Transferts</h2>
         </div>
 
+        <div className="p-3 border-b border-borderLight">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              placeholder="Rechercher (date, source, destination, produit…)"
+              value={search}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSearch(value);
+                void loadTransfers(1, value, filterStatus);
+              }}
+              className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textMain focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary flex-1 min-w-48"
+              aria-label="Rechercher dans les transferts"
+            />
+
+            <select
+              value={filterStatus}
+              onChange={(e) => {
+                const value = e.target.value as TransferStatus | '';
+                setFilterStatus(value);
+                void loadTransfers(1, search, value);
+              }}
+              className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textMain focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary shrink-0 w-auto"
+              aria-label="Filtrer par statut"
+            >
+              <option value="">Tous les statuts</option>
+              <option value="PENDING">En attente</option>
+              <option value="DONE">Confirmé</option>
+              <option value="CANCEL">Annulé</option>
+            </select>
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('');
+                  setFilterStatus('');
+                  void loadTransfers(1, '', '');
+                }}
+                className="shrink-0 px-3 py-2 text-xs border border-borderLight rounded text-textMuted hover:text-red-600 hover:border-red-300 transition-colors"
+              >
+                Réinitialiser
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-background text-textMuted">
@@ -449,19 +648,23 @@ export default function TransfersPage() {
                 <th className="text-left px-4 py-2 font-medium">Statut</th>
                 <th className="text-left px-4 py-2 font-medium">Source</th>
                 <th className="text-left px-4 py-2 font-medium">Destination</th>
-                <th className="text-left px-4 py-2 font-medium">Lignes</th>
+                <th className="text-left px-4 py-2 font-medium">Produit</th>
+                <th className="text-left px-4 py-2 font-medium">Format</th>
+                <th className="text-left px-4 py-2 font-medium">Qté</th>
                 <th className="text-left px-4 py-2 font-medium">Qté totale</th>
                 <th className="text-right px-4 py-2 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {isBootLoading ? (
+              {isBootLoading || isTransfersLoading ? (
                 <tr>
-                  <td className="px-4 py-4 text-textMuted" colSpan={7}>Chargement...</td>
+                  <td className="px-4 py-4 text-textMuted" colSpan={9}>Chargement...</td>
                 </tr>
               ) : transfers.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-4 text-textMuted" colSpan={7}>Aucun transfert.</td>
+                  <td className="px-4 py-4 text-textMuted" colSpan={9}>
+                    {hasActiveFilters ? 'Aucun transfert ne correspond aux filtres.' : 'Aucun transfert.'}
+                  </td>
                 </tr>
               ) : (
                 transfers.map((transfer) => {
@@ -469,13 +672,37 @@ export default function TransfersPage() {
                   const isPending = transfer.status === 'PENDING';
                   return (
                     <tr key={transfer.id} className="border-t border-borderLight">
-                      <td className="px-4 py-3 text-textMain">{new Date(transfer.created_at).toLocaleString('fr-FR')}</td>
-                      <td className="px-4 py-3 text-textMain">{statusLabel(transfer.status)}</td>
-                      <td className="px-4 py-3 text-textMain">{transfer.from_store.name}</td>
-                      <td className="px-4 py-3 text-textMain">{transfer.to_store.name}</td>
-                      <td className="px-4 py-3 text-textMain">{transfer.items.length}</td>
-                      <td className="px-4 py-3 text-textMain">{totalQty}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 text-textMain align-top">{new Date(transfer.created_at).toLocaleString('fr-FR')}</td>
+                      <td className="px-4 py-3 align-top"><StatusBadge status={transfer.status} /></td>
+                      <td className="px-4 py-3 text-textMain align-top">{transfer.from_store.name}</td>
+                      <td className="px-4 py-3 text-textMain align-top">{transfer.to_store.name}</td>
+                      <td className="px-4 py-3 text-textMain align-top">
+                        <div className="space-y-1">
+                          {transfer.items.map((item) => (
+                            <div key={`${transfer.id}-${item.product_id}`}>{item.product.name}</div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-textMain align-top">
+                        <div className="space-y-1">
+                          {transfer.items.map((item) => (
+                            <div key={`${transfer.id}-${item.product_id}-fmt`}>
+                              {item.packaging_format?.label ?? 'Unité de base'}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-textMain align-top">
+                        <div className="space-y-1">
+                          {transfer.items.map((item) => (
+                            <div key={`${transfer.id}-${item.product_id}-qty`}>
+                              {item.packaging_format ? `${item.packages_count} ${item.packaging_format.label}` : item.qty}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-textMain align-top">{totalQty}</td>
+                      <td className="px-4 py-3 align-top">
                         <div className="flex items-center justify-end gap-2">
                           <Button
                             type="button"
@@ -502,6 +729,40 @@ export default function TransfersPage() {
             </tbody>
           </table>
         </div>
+
+        {transferTotalPages > 1 && (
+          <div className="px-4 py-3 border-t border-borderLight flex items-center justify-between">
+            <p className="text-xs text-textMuted">
+              Page {transferPage} / {transferTotalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = Math.max(1, transferPage - 1);
+                  setTransferPage(next);
+                  void loadTransfers(next);
+                }}
+                disabled={transferPage === 1}
+                className="px-3 py-1.5 text-xs border border-borderLight rounded text-textMuted hover:text-textMain hover:border-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                ← Précédent
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = Math.min(transferTotalPages, transferPage + 1);
+                  setTransferPage(next);
+                  void loadTransfers(next);
+                }}
+                disabled={transferPage === transferTotalPages}
+                className="px-3 py-1.5 text-xs border border-borderLight rounded text-textMuted hover:text-textMain hover:border-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Suivant →
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

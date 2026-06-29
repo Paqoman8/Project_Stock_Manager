@@ -45,6 +45,24 @@ model User {
   @@map("users")
 }
 
+model Client {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id         String        @db.Uuid
+  name             String
+  email            String?
+  phone            String?
+  normalized_email String?
+  normalized_phone String?
+  created_at       DateTime      @default(now())
+  updated_at       DateTime      @updatedAt
+  store            Store         @relation(fields: [store_id], references: [id])
+  transactions     Transaction[]
+
+  @@unique([store_id, normalized_email])
+  @@unique([store_id, normalized_phone])
+  @@map("clients")
+}
+
 
 // ---------------------------------------------------------------------------
 // STORES & ACCESS CONTROL                                                  
@@ -61,6 +79,7 @@ model Store {
   phone            String?           @db.VarChar(20)
   description      String?
   is_protected     Boolean           @default(false)
+  clients            Client[]
   user_access        UserStoreAccess[]
   sessions           SessionLog[]
   inventories        Inventory[]
@@ -237,6 +256,10 @@ model Transfer {
   to_store      Store          @relation("TransfersTo", fields: [to_store_id], references: [id])
   items         TransferItem[]
 
+  @@index([status])
+  @@index([created_at])
+  @@index([from_store_id])
+  @@index([to_store_id])
   @@map("transfers")
 }
 
@@ -252,6 +275,9 @@ model TransferItem {
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
   @@id([transfer_id, product_id])
+  @@index([transfer_id])
+  @@index([product_id])
+  @@index([packaging_format_id])
   @@map("transfer_items")
 }
 
@@ -278,6 +304,7 @@ model Transaction {
   id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   store_id       String            @db.Uuid
   user_id        String            @db.Uuid
+  client_id      String?           @db.Uuid
   type           TransactionType
   payment_method PaymentMethod     @default(CASH)
   total_amount   Decimal           @db.Decimal(10, 2)
@@ -285,10 +312,16 @@ model Transaction {
   created_at     DateTime          @default(now())
   store          Store             @relation(fields: [store_id], references: [id])
   user           User              @relation(fields: [user_id], references: [id])
+  client         Client?           @relation(fields: [client_id], references: [id])
   refund_of      Transaction?      @relation("TransactionRefunds", fields: [refund_of_id], references: [id])
   refunds        Transaction[]     @relation("TransactionRefunds")
   items          TransactionItem[]
 
+  @@index([store_id])
+  @@index([type])
+  @@index([payment_method])
+  @@index([created_at])
+  @@index([client_id])
   @@map("transactions")
 }
 
@@ -296,14 +329,20 @@ model Transaction {
 model TransactionItem {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   transaction_id      String           @db.Uuid
+  original_transaction_item_id String? @db.Uuid
   product_id          String           @db.Uuid
   qty                 Int
   price_at_sale       Decimal          @db.Decimal(10, 2)
   packaging_format_id String?          @db.Uuid
+  packages_count      Int?
   transaction         Transaction      @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
   product             Product          @relation(fields: [product_id], references: [id])
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
+  @@index([transaction_id])
+  @@index([product_id])
+  @@index([packaging_format_id])
+  @@index([original_transaction_item_id])
   @@map("transaction_items")
 }
 
@@ -516,6 +555,7 @@ model PurchaseOrderItem {
   order               PurchaseOrder    @relation(fields: [order_id], references: [id], onDelete: Cascade)
   supplier_product    SupplierProduct  @relation(fields: [supplier_product_id], references: [id])
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  reception_items     ReceptionItem[]
 
   @@unique([order_id, supplier_product_id])
   @@map("purchase_order_items")
@@ -552,12 +592,14 @@ model StockReception {
 model ReceptionItem {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reception_id        String           @db.Uuid
+  order_item_id       String?          @db.Uuid
   product_id          String           @db.Uuid
   received_qty        Int              // Qty received in order units
   stock_units_added   Int              // = received_qty × units_per_order (denormalized)
   packaging_format_id String?          @db.Uuid // Packaging format received (optional)
   packages_received   Int?             // = received_qty if format set (denormalized for breakdown)
   reception           StockReception   @relation(fields: [reception_id], references: [id], onDelete: Cascade)
+  order_item          PurchaseOrderItem? @relation(fields: [order_item_id], references: [id])
   product             Product          @relation(fields: [product_id], references: [id])
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 

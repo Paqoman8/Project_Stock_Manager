@@ -36,6 +36,16 @@ type NormalizedTransferItem = {
   packages_count?: number;
 };
 
+function aggregateRequestedQuantities(
+  items: Array<{ product_id: string; qty: number }>,
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    totals.set(item.product_id, (totals.get(item.product_id) ?? 0) + item.qty);
+  }
+  return totals;
+}
+
 async function normalizeTransferItems(items: CreateTransferInput['items']): Promise<NormalizedTransferItem[]> {
   const normalized: NormalizedTransferItem[] = [];
   for (const item of items) {
@@ -65,18 +75,30 @@ async function normalizeTransferItems(items: CreateTransferInput['items']): Prom
 }
 
 async function ensureEnoughSourceStock(sourceStoreId: string, items: NormalizedTransferItem[]): Promise<void> {
+  const requestedByProduct = aggregateRequestedQuantities(items);
   const inventoryRows = await prisma.inventory.findMany({
     where: {
       store_id: sourceStoreId,
-      product_id: { in: items.map((i) => i.product_id) },
+      product_id: { in: [...requestedByProduct.keys()] },
     },
     select: { product_id: true, stock_physical: true },
   });
 
   const byProduct = new Map(inventoryRows.map((r) => [r.product_id, r.stock_physical]));
-  for (const item of items) {
-    const available = byProduct.get(item.product_id) ?? 0;
-    if (available < item.qty) throw new Error('INSUFFICIENT_STOCK');
+  for (const [productId, requestedQty] of requestedByProduct.entries()) {
+    const available = byProduct.get(productId) ?? 0;
+    if (available < requestedQty) throw new Error('INSUFFICIENT_STOCK');
+  }
+}
+
+function assertTransferStoreAccess(
+  transfer: { from_store_id: string; to_store_id: string },
+  requesterStoreId?: string,
+  enforceRequesterScope?: boolean,
+): void {
+  if (!enforceRequesterScope || !requesterStoreId) return;
+  if (transfer.from_store_id !== requesterStoreId && transfer.to_store_id !== requesterStoreId) {
+    throw new Error('FORBIDDEN_TRANSFER_ACCESS');
   }
 }
 
@@ -124,16 +146,35 @@ export async function createTransfer(
   return transfer;
 }
 
-export async function listTransfers(filters: { status?: TransferStatus; requesterStoreId?: string; forceRequesterScope?: boolean }): Promise<transferRepo.TransferRow[]> {
-  return transferRepo.listTransfers({
-    status: filters.status,
-    store_id: filters.forceRequesterScope ? filters.requesterStoreId : undefined,
+export type ListTransfersOptions = {
+  status?: TransferStatus;
+  requesterStoreId?: string;
+  forceRequesterScope?: boolean;
+  search?: string;
+  page: number;
+  limit: number;
+};
+
+export type ListTransfersResult = transferRepo.TransferPaginationResult;
+
+export async function listTransfers(options: ListTransfersOptions): Promise<ListTransfersResult> {
+  return transferRepo.listTransfersPaginated({
+    status: options.status,
+    store_id: options.forceRequesterScope ? options.requesterStoreId : undefined,
+    search: options.search,
+    page: options.page,
+    limit: options.limit,
   });
 }
 
-export async function getTransferById(id: string): Promise<transferRepo.TransferRow> {
+export async function getTransferById(
+  id: string,
+  requesterStoreId?: string,
+  enforceRequesterScope?: boolean,
+): Promise<transferRepo.TransferRow> {
   const transfer = await transferRepo.getTransferById(id);
   if (!transfer) throw new Error('TRANSFER_NOT_FOUND');
+  assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
   return transfer;
 }
 
@@ -144,6 +185,8 @@ export async function confirmTransfer(
   actorStoreId?: string,
   actorStoreName?: string,
   ipAddress?: string,
+  requesterStoreId?: string,
+  enforceRequesterScope?: boolean,
 ): Promise<transferRepo.TransferRow> {
   const result = await prisma.$transaction(async (tx) => {
     const transfer = await tx.transfer.findUnique({
@@ -154,20 +197,22 @@ export async function confirmTransfer(
     });
 
     if (!transfer) throw new Error('TRANSFER_NOT_FOUND');
+    assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
     if (transfer.status !== 'PENDING') throw new Error('TRANSFER_NOT_CONFIRMABLE');
 
+    const requestedByProduct = aggregateRequestedQuantities(transfer.items);
     const inventoryRows = await tx.inventory.findMany({
       where: {
         store_id: transfer.from_store_id,
-        product_id: { in: transfer.items.map((it) => it.product_id) },
+        product_id: { in: [...requestedByProduct.keys()] },
       },
       select: { product_id: true, stock_physical: true },
     });
 
     const stockByProduct = new Map(inventoryRows.map((r) => [r.product_id, r.stock_physical]));
-    for (const item of transfer.items) {
-      const available = stockByProduct.get(item.product_id) ?? 0;
-      if (available < item.qty) throw new Error('INSUFFICIENT_STOCK');
+    for (const [productId, requestedQty] of requestedByProduct.entries()) {
+      const available = stockByProduct.get(productId) ?? 0;
+      if (available < requestedQty) throw new Error('INSUFFICIENT_STOCK');
     }
 
     for (const item of transfer.items) {
@@ -261,9 +306,12 @@ export async function cancelTransfer(
   actorStoreId?: string,
   actorStoreName?: string,
   ipAddress?: string,
+  requesterStoreId?: string,
+  enforceRequesterScope?: boolean,
 ): Promise<transferRepo.TransferRow> {
   const transfer = await transferRepo.getTransferById(id);
   if (!transfer) throw new Error('TRANSFER_NOT_FOUND');
+  assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
   if (transfer.status !== 'PENDING') throw new Error('TRANSFER_NOT_CANCELLABLE');
 
   const updated = await transferRepo.updateTransferStatus(id, 'CANCEL');
@@ -283,6 +331,6 @@ export async function cancelTransfer(
   return updated;
 }
 
-export async function listDestinationStores(userStoreId: string): Promise<Array<{ id: string; name: string }>> {
-  return transferRepo.listDestinationStoresForUserStore(userStoreId);
+export async function listDestinationStores(excludedStoreId?: string): Promise<Array<{ id: string; name: string }>> {
+  return transferRepo.listDestinationStoresForUserStore(excludedStoreId);
 }

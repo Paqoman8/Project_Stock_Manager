@@ -32,6 +32,46 @@ export interface CreateReceptionInput {
   }>;
 }
 
+type ConfirmedReceptionSnapshot = {
+  items: Array<{
+    order_item_id?: string | null;
+    received_qty: number;
+  }>;
+};
+
+function assertReceptionDoesNotExceedRemaining(
+  orderItems: Array<{ id: string; ordered_qty: number }>,
+  requestedItems: Array<{ order_item_id: string; received_qty: number }>,
+  confirmedReceptions: ConfirmedReceptionSnapshot[],
+): void {
+  const confirmedQtyByOrderItem = new Map<string, number>();
+  for (const reception of confirmedReceptions) {
+    for (const item of reception.items) {
+      if (!item.order_item_id) continue;
+      confirmedQtyByOrderItem.set(
+        item.order_item_id,
+        (confirmedQtyByOrderItem.get(item.order_item_id) ?? 0) + item.received_qty,
+      );
+    }
+  }
+
+  const requestedQtyByOrderItem = new Map<string, number>();
+  for (const item of requestedItems) {
+    requestedQtyByOrderItem.set(
+      item.order_item_id,
+      (requestedQtyByOrderItem.get(item.order_item_id) ?? 0) + item.received_qty,
+    );
+  }
+
+  for (const orderItem of orderItems) {
+    const confirmedQty = confirmedQtyByOrderItem.get(orderItem.id) ?? 0;
+    const requestedQty = requestedQtyByOrderItem.get(orderItem.id) ?? 0;
+    if (confirmedQty + requestedQty > orderItem.ordered_qty) {
+      throw new Error('RECEPTION_QTY_EXCEEDS_REMAINING');
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fonctions du service
 // ---------------------------------------------------------------------------
@@ -116,6 +156,22 @@ export async function createReception(
     throw new Error('INVALID_ORDER_STATUS');
   }
 
+  const confirmedReceptions = await prisma.stockReception.findMany({
+    where: {
+      order_id: input.order_id,
+      status: 'CONFIRMED',
+    },
+    select: {
+      items: {
+        select: {
+          order_item_id: true,
+          received_qty: true,
+        },
+      },
+    },
+  });
+  assertReceptionDoesNotExceedRemaining(order.items, input.items, confirmedReceptions);
+
   // Construire un index order_item_id → { product_id, unitsPerPackage, packaging_format_id }
   // Clé par ligne de commande (et non par produit) pour traiter correctement un même
   // produit commandé sous plusieurs formats différents.
@@ -139,6 +195,7 @@ export async function createReception(
       throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
     }
     return {
+      order_item_id:       item.order_item_id,
       product_id:          info.product_id,
       received_qty:        item.received_qty,
       stock_units_added:   item.received_qty * info.unitsPerPackage,

@@ -12,6 +12,7 @@
 // Must be defined before any module imports                               
 // ---------------------------------------------------------------------------
 
+/// <reference types="jest" />
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const mockProductFindMany      = jest.fn() as jest.Mock<any>;
@@ -19,6 +20,12 @@ const mockInventoryFindMany    = jest.fn() as jest.Mock<any>;
 const mockInventoryUpdate      = jest.fn() as jest.Mock<any>;
 const mockInventoryUpsert      = jest.fn() as jest.Mock<any>;
 const mockMovementCreate       = jest.fn() as jest.Mock<any>;
+const mockPackagingFindUnique  = jest.fn() as jest.Mock<any>;
+const mockClientFindMany       = jest.fn() as jest.Mock<any>;
+const mockClientFindUnique     = jest.fn() as jest.Mock<any>;
+const mockClientCreate         = jest.fn() as jest.Mock<any>;
+const mockClientUpdate         = jest.fn() as jest.Mock<any>;
+const mockTransactionFindMany  = jest.fn() as jest.Mock<any>;
 const mockTxFindFirst          = jest.fn() as jest.Mock<any>;
 const mockTransactionAggregate = jest.fn() as jest.Mock<any>;
 const mockPrismaTransaction    = jest.fn() as jest.Mock<any>;
@@ -26,13 +33,24 @@ const mockPrismaTransaction    = jest.fn() as jest.Mock<any>;
 jest.mock('../config/database', () => ({
   prisma: {
     product:       { findMany: mockProductFindMany },
+    packagingFormat: { findUnique: mockPackagingFindUnique },
+    client: {
+      findMany: mockClientFindMany,
+      findUnique: mockClientFindUnique,
+      create: mockClientCreate,
+      update: mockClientUpdate,
+    },
     inventory:     {
       findMany: mockInventoryFindMany,
       update:   mockInventoryUpdate,
       upsert:   mockInventoryUpsert,
     },
     stockMovement: { create: mockMovementCreate },
-    transaction:   { findFirst: mockTxFindFirst, aggregate: mockTransactionAggregate },
+    transaction:   {
+      findFirst: mockTxFindFirst,
+      findMany: mockTransactionFindMany,
+      aggregate: mockTransactionAggregate,
+    },
     $transaction:  mockPrismaTransaction,
   },
 }));
@@ -43,11 +61,13 @@ jest.mock('../config/database', () => ({
 
 const mockCreateTransaction  = jest.fn() as jest.Mock<any>;
 const mockListTransactions   = jest.fn() as jest.Mock<any>;
+const mockListTransactionsPaginated = jest.fn() as jest.Mock<any>;
 const mockGetTransactionById = jest.fn() as jest.Mock<any>;
 
 jest.mock('../repositories/transaction.repository', () => ({
   createTransaction:  mockCreateTransaction,
   listTransactions:   mockListTransactions,
+  listTransactionsPaginated: mockListTransactionsPaginated,
   getTransactionById: mockGetTransactionById,
 }));
 
@@ -221,6 +241,41 @@ describe('createSale', () => {
     expect(mockPrismaTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it('throws INSUFFICIENT_STOCK when duplicate lines exceed available stock in aggregate', async () => {
+    mockProductFindMany.mockResolvedValue([{ id: 'prod-001' }]);
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory: {
+          findMany: jest.fn().mockResolvedValue([
+            { product_id: 'prod-001', stock_physical: 5 },
+          ]),
+          update: jest.fn().mockResolvedValue({}),
+          upsert: jest.fn().mockResolvedValue({}),
+        },
+        stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        client: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue(null) },
+      };
+      return callback(fakeTx);
+    });
+
+    await expect(
+      transactionService.createSale(
+        {
+          payment_method: 'CASH',
+          items: [
+            { product_id: 'prod-001', qty: 3, price_at_sale: 500 },
+            { product_id: 'prod-001', qty: 3, price_at_sale: 500 },
+          ],
+        },
+        ACTOR_ID,
+        ACTOR_NAME,
+        STORE_ID,
+      ),
+    ).rejects.toThrow('INSUFFICIENT_STOCK');
+
+    expect(mockCreateTransaction).not.toHaveBeenCalled();
+  });
+
   it('propagates DB errors when the Prisma transaction rolls back', async () => {
     setupAllProductsFound();
     setupAdequateStock();
@@ -232,6 +287,137 @@ describe('createSale', () => {
 
     // Repository create must NOT have been called inside the failed transaction
     expect(mockCreateTransaction).not.toHaveBeenCalled();
+  });
+
+  it('converts packages_count to base quantity and persists packaging metadata', async () => {
+    mockProductFindMany.mockResolvedValue([{ id: 'prod-001' }]);
+    mockPackagingFindUnique.mockResolvedValue({
+      id: 'fmt-001',
+      product_id: 'prod-001',
+      units_per_package: 12,
+    });
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory: {
+          findMany: jest.fn().mockResolvedValue([{ product_id: 'prod-001', stock_physical: 48 }]),
+          update: jest.fn().mockResolvedValue({}),
+          upsert: jest.fn().mockResolvedValue({}),
+        },
+        stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        client: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(null) },
+      };
+      return callback(fakeTx);
+    });
+    mockCreateTransaction.mockResolvedValue(MOCK_TRANSACTION);
+
+    await transactionService.createSale(
+      {
+        payment_method: 'CASH',
+        items: [
+          {
+            product_id: 'prod-001',
+            packaging_format_id: 'fmt-001',
+            packages_count: 2,
+            price_at_sale: 500,
+          },
+        ],
+      },
+      ACTOR_ID,
+      ACTOR_NAME,
+      STORE_ID,
+    );
+
+    expect(mockCreateTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            product_id: 'prod-001',
+            qty: 24,
+            packaging_format_id: 'fmt-001',
+            packages_count: 2,
+          }),
+        ],
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('reuses an existing client matched by normalized phone before creating a sale', async () => {
+    setupAllProductsFound();
+    setupAdequateStock();
+    mockClientFindMany.mockResolvedValue([
+      {
+        id: 'client-001',
+        name: 'Alice',
+        phone: '+22997000000',
+        email: 'alice@example.com',
+        normalized_email: 'alice@example.com',
+        normalized_phone: '22997000000',
+      },
+    ]);
+    mockClientUpdate.mockResolvedValue({
+      id: 'client-001',
+      name: 'Alice',
+      phone: '+22997000000',
+      email: 'alice@example.com',
+    });
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory: {
+          findMany: jest.fn().mockResolvedValue([
+            { product_id: 'prod-001', stock_physical: 10 },
+            { product_id: 'prod-002', stock_physical: 5 },
+          ]),
+          update: jest.fn().mockResolvedValue({}),
+          upsert: jest.fn().mockResolvedValue({}),
+        },
+        stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        client: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'client-001',
+              name: 'Alice',
+              phone: '+22997000000',
+              email: 'alice@example.com',
+              normalized_email: 'alice@example.com',
+              normalized_phone: '22997000000',
+            },
+          ]),
+          findUnique: jest.fn().mockResolvedValue(null),
+          update: jest.fn().mockResolvedValue({
+            id: 'client-001',
+            name: 'Alice',
+            phone: '+22997000000',
+            email: 'alice@example.com',
+          }),
+          create: jest.fn().mockResolvedValue({}),
+        },
+      };
+      return callback(fakeTx);
+    });
+    mockCreateTransaction.mockResolvedValue(MOCK_TRANSACTION);
+
+    await transactionService.createSale(
+      {
+        ...SALE_INPUT,
+        client: {
+          name: 'Alice',
+          phone: '97 00 00 00',
+          email: 'alice@example.com',
+        },
+      },
+      ACTOR_ID,
+      ACTOR_NAME,
+      STORE_ID,
+    );
+
+    expect(mockCreateTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client_id: 'client-001',
+      }),
+      expect.anything(),
+    );
+    expect(mockClientCreate).not.toHaveBeenCalled();
   });
 });
 
@@ -260,7 +446,24 @@ describe('refundSale', () => {
 
   it('throws TRANSACTION_ALREADY_REFUNDED when a refund already exists', async () => {
     mockGetTransactionById.mockResolvedValue({ ...MOCK_TRANSACTION, store_id: STORE_ID });
-    mockTxFindFirst.mockResolvedValue({ id: 'existing-refund' });
+    mockTransactionFindMany.mockResolvedValue([
+      {
+        items: [
+          {
+            product_id: 'prod-001',
+            packaging_format_id: null,
+            packages_count: null,
+            qty: 2,
+          },
+          {
+            product_id: 'prod-002',
+            packaging_format_id: null,
+            packages_count: null,
+            qty: 1,
+          },
+        ],
+      },
+    ]);
 
     await expect(
       transactionService.refundSale(MOCK_TRANSACTION.id, ACTOR_ID, ACTOR_NAME, STORE_ID),
@@ -269,7 +472,7 @@ describe('refundSale', () => {
 
   it('creates a REFUND transaction when all checks pass', async () => {
     mockGetTransactionById.mockResolvedValue({ ...MOCK_TRANSACTION, store_id: STORE_ID });
-    mockTxFindFirst.mockResolvedValue(null);
+    mockTransactionFindMany.mockResolvedValue([]);
 
     const refundTx = { ...MOCK_TRANSACTION, id: 'tx-refund-001', type: 'REFUND' as const };
     mockPrismaTransaction.mockImplementation(async (callback: any) => {
@@ -288,6 +491,106 @@ describe('refundSale', () => {
     expect(result.type).toBe('REFUND');
     expect(mockPrismaTransaction).toHaveBeenCalledTimes(1);
     expect(mockCreateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a partial refund for selected full lines only', async () => {
+    mockGetTransactionById.mockResolvedValue({ ...MOCK_TRANSACTION, store_id: STORE_ID });
+    mockTransactionFindMany.mockResolvedValue([]);
+    const refundTx = { ...MOCK_TRANSACTION, id: 'tx-refund-002', type: 'REFUND' as const };
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory: { upsert: jest.fn().mockResolvedValue({}) },
+        stockMovement: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(fakeTx);
+    });
+    mockCreateTransaction.mockResolvedValue(refundTx);
+
+    await transactionService.refundSale(
+      MOCK_TRANSACTION.id,
+      ACTOR_ID,
+      ACTOR_NAME,
+      STORE_ID,
+      undefined,
+      undefined,
+      [MOCK_TRANSACTION.items[0].id],
+    );
+
+    expect(mockCreateTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        total_amount: 1000,
+        items: [
+          expect.objectContaining({
+            product_id: 'prod-001',
+            qty: 2,
+          }),
+        ],
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('allows refunding the second identical line when only the first identical line was already refunded', async () => {
+    const duplicatedTransaction = {
+      ...MOCK_TRANSACTION,
+      store_id: STORE_ID,
+      items: [
+        {
+          id: 'item-dup-001',
+          product_id: 'prod-001',
+          qty: 2,
+          price_at_sale: '500',
+          packaging_format_id: null,
+          packages_count: null,
+          product: { id: 'prod-001', name: 'Produit A', sku: 'SKU-A', unit: 'PIECE' },
+          packaging_format: null,
+        },
+        {
+          id: 'item-dup-002',
+          product_id: 'prod-001',
+          qty: 2,
+          price_at_sale: '500',
+          packaging_format_id: null,
+          packages_count: null,
+          product: { id: 'prod-001', name: 'Produit A', sku: 'SKU-A', unit: 'PIECE' },
+          packaging_format: null,
+        },
+      ],
+    };
+    mockGetTransactionById.mockResolvedValue(duplicatedTransaction);
+    mockTransactionFindMany.mockResolvedValue([
+      {
+        items: [
+          {
+            original_transaction_item_id: 'item-dup-001',
+            product_id: 'prod-001',
+            packaging_format_id: null,
+            packages_count: null,
+            qty: 2,
+          },
+        ],
+      },
+    ]);
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory: { upsert: jest.fn().mockResolvedValue({}) },
+        stockMovement: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(fakeTx);
+    });
+    mockCreateTransaction.mockResolvedValue({ ...MOCK_TRANSACTION, id: 'tx-refund-003', type: 'REFUND' as const });
+
+    await expect(
+      transactionService.refundSale(
+        duplicatedTransaction.id,
+        ACTOR_ID,
+        ACTOR_NAME,
+        STORE_ID,
+        undefined,
+        undefined,
+        ['item-dup-002'],
+      ),
+    ).resolves.toMatchObject({ type: 'REFUND' });
   });
 });
 
@@ -321,5 +624,76 @@ describe('getDailySummary', () => {
     const summary = await transactionService.getDailySummary(STORE_ID, target);
 
     expect(summary.date).toBe('2026-06-02');
+  });
+});
+
+// ── listTransactionsForStore Tests
+describe('listTransactionsForStore', () => {
+  it('returns paginated transactions with default page and limit', async () => {
+    mockListTransactionsPaginated.mockResolvedValue({
+      transactions: [{ id: 'tx-001' }],
+      total: 1,
+      page: 1,
+      totalPages: 1,
+    });
+
+    const result = await transactionService.listTransactionsForStore({
+      storeId: STORE_ID,
+      page: 1,
+      limit: 10,
+    });
+
+    expect(result.transactions).toHaveLength(1);
+    expect(result.page).toBe(1);
+    expect(result.totalPages).toBe(1);
+    expect(mockListTransactionsPaginated).toHaveBeenCalledWith(
+      expect.objectContaining({ store_id: STORE_ID, page: 1, limit: 10 }),
+    );
+  });
+
+  it('forwards search, type and payment_method filters to the repository', async () => {
+    mockListTransactionsPaginated.mockResolvedValue({
+      transactions: [],
+      total: 0,
+      page: 2,
+      totalPages: 0,
+    });
+
+    await transactionService.listTransactionsForStore({
+      storeId: STORE_ID,
+      search: 'caissier',
+      type: 'SALE',
+      paymentMethod: 'CASH',
+      page: 2,
+      limit: 5,
+    });
+
+    expect(mockListTransactionsPaginated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_id: STORE_ID,
+        search: 'caissier',
+        type: 'SALE',
+        payment_method: 'CASH',
+        page: 2,
+        limit: 5,
+      }),
+    );
+  });
+
+  it('computes totalPages from repository result', async () => {
+    mockListTransactionsPaginated.mockResolvedValue({
+      transactions: [],
+      total: 25,
+      page: 1,
+      totalPages: 3,
+    });
+
+    const result = await transactionService.listTransactionsForStore({
+      storeId: STORE_ID,
+      page: 1,
+      limit: 10,
+    });
+
+    expect(result.totalPages).toBe(3);
   });
 });

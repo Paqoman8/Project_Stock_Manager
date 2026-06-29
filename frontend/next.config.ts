@@ -1,10 +1,14 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const nextConfig: NextConfig = {
   experimental: {
     // Requis pour activer forbidden() et le fichier forbidden.tsx
     // Voir : next/dist/docs/01-app/03-api-reference/04-functions/forbidden.md
     authInterrupts: true,
+  },
+  turbopack: {
+    root: path.join(__dirname),
   },
   allowedDevOrigins: ['192.168.2.22', 'localhost'],
   async rewrites() {

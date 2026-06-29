@@ -20,6 +20,7 @@ import { prisma } from '../config/database';
 export interface ReceptionItemRow {
   id: string;
   reception_id: string;
+  order_item_id: string | null;
   product_id: string;
   received_qty: number;
   stock_units_added: number;
@@ -49,6 +50,7 @@ export interface CreateReceptionData {
   received_by_id: string;
   notes?: string;
   items: Array<{
+    order_item_id?: string;
     product_id: string;
     received_qty: number;
     stock_units_added: number;
@@ -119,6 +121,7 @@ export async function create(data: CreateReceptionData): Promise<StockReceptionR
       items: {
         create: data.items.map((item) => ({
           product_id:          item.product_id,
+          order_item_id:       item.order_item_id ?? null,
           received_qty:        item.received_qty,
           stock_units_added:   item.stock_units_added,
           packaging_format_id: item.packaging_format_id ?? null,
@@ -213,51 +216,40 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
       include: { items: true },
     });
 
-    // b) Agréger les stock_units_added par produit sur toutes les réceptions CONFIRMED
-    const receivedByProduct = new Map<string, number>();
+    // b) Agréger les réceptions confirmées par ligne de commande si possible.
+    const receivedByOrderItem = new Map<string, number>();
     for (const r of confirmedReceptions) {
       for (const item of r.items) {
-        const current = receivedByProduct.get(item.product_id) ?? 0;
-        receivedByProduct.set(item.product_id, current + item.stock_units_added);
+        const itemExt = item as unknown as { order_item_id?: string | null };
+        if (!itemExt.order_item_id) continue;
+        const current = receivedByOrderItem.get(itemExt.order_item_id) ?? 0;
+        receivedByOrderItem.set(itemExt.order_item_id, current + item.received_qty);
       }
     }
 
-    // c) Charger les lignes de la commande avec les détails du supplier_product
+    // c) Charger les lignes de la commande avec les détails nécessaires dès la première requête.
     const orderItems = await tx.purchaseOrderItem.findMany({
       where:   { order_id: orderId },
       include: {
         supplier_product: {
           select: {
+            product_id: true,
             packaging_format: { select: { units_per_package: true } },
           },
         },
       },
     });
 
-    // d) Calculer ce qui était attendu (ordered_qty × units_per_package) par produit
-    const orderedByProduct = new Map<string, number>();
-    for (const oi of orderItems) {
-      const sp = await tx.supplierProduct.findUnique({
-        where:  { id: oi.supplier_product_id },
-        select: {
-          product_id:      true,
-          packaging_format: { select: { units_per_package: true } },
-        },
-      });
-      if (sp) {
-        const expected = oi.ordered_qty * sp.packaging_format.units_per_package;
-        const current  = orderedByProduct.get(sp.product_id) ?? 0;
-        orderedByProduct.set(sp.product_id, current + expected);
-      }
-    }
-
-    // e) Vérifier si toutes les lignes commandées sont couvertes
+    // d) Vérifier que chaque ligne commandée reste dans sa quantité attendue,
+    //    puis déduire le statut global sans mélanger différents formats du même produit.
     let fullyReceived = true;
-    for (const [productId, expectedUnits] of orderedByProduct.entries()) {
-      const receivedUnits = receivedByProduct.get(productId) ?? 0;
-      if (receivedUnits < expectedUnits) {
+    for (const oi of orderItems) {
+      const confirmedQty = receivedByOrderItem.get(oi.id) ?? 0;
+      if (confirmedQty > oi.ordered_qty) {
+        throw new Error('RECEPTION_QTY_EXCEEDS_REMAINING');
+      }
+      if (confirmedQty < oi.ordered_qty) {
         fullyReceived = false;
-        break;
       }
     }
 

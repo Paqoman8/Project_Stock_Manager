@@ -147,3 +147,4 @@ Docs/CDC.docx
 backups/
 
 .hidden/
+.playwright-cli/
