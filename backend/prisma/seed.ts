@@ -95,7 +95,20 @@ async function main() {
     console.log(`Accès au Hub accordé à l'Admin.`);
   }
 
-  // 4. Création des catégories et sous-catégories
+  // 4. Création des formats de produit de référence
+  // upsert sur le label (unique) — idempotent
+  const formatLabels = ['Unité', 'Carton', 'Boîte'];
+
+  for (const label of formatLabels) {
+    await prisma.productFormat.upsert({
+      where:  { label },
+      update: {},
+      create: { label },
+    });
+    console.log(`Format créé/vérifié: ${label}`);
+  }
+
+  // 5. Création des catégories et sous-catégories
   // findFirst + create conditonnel (idempotent sans contrainte unique sur name+parent_id)
   // const categoriesTree = [
   //   {

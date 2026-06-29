@@ -1,19 +1,22 @@
 // src/app/dashboard/catalogue/page.tsx
-// Page de gestion du catalogue — deux onglets : Catégories et Produits.
+// Page de gestion du catalogue — trois onglets : Produits, Catégories, Formats.
 //
 // Architecture :
 //   - Client Component (interactions, état local, appels API)
-//   - Chargement : GET /api/categories au montage (partagé entre les deux onglets),
-//     GET /api/products au montage
+//   - Chargement parallèle au montage : GET /api/categories, /api/products, /api/product-formats
 //   - Filtrage produits 100% client-side via useMemo (nom/SKU, catégorie, statut)
 //   - Modales inline : CategoryFormModal, DeleteCategoryModal,
+//     FormatFormModal, DeleteFormatModal,
 //     ProductFormModal, DeactivateProductModal, ReactivateProductModal
+//   - FormatCombobox : combobox searchable réutilisé dans ProductFormModal
+//     et PackagingFormatsModal
 //
 // Sécurité UI :
 //   - Vérification de rôle après hydratation → router.replace('/dashboard')
 //     si rôle inconnu (ni SA ni Admin).
 //   - SA : accès complet (création, édition, actions par ligne visibles).
-//   - Admin : lecture seule (boutons d'action absents du DOM).
+//   - Admin : accès aux produits + formats (lecture + édition).
+//     Catégories : lecture seule.
 
 'use client';
 
@@ -49,21 +52,18 @@ interface CategoryRow {
   _count: { products: number; children: number };
 }
 
-type ProductUnit = 'PIECE' | 'KG' | 'G' | 'L' | 'CL' | 'ML' | 'BOUTEILLE' | 'SACHET' | 'BOITE';
+type ProductUnit = 'PIECE' | 'KG' | 'G' | 'L' | 'CL' | 'ML';
 
 const UNIT_LABELS: Record<ProductUnit, string> = {
-  PIECE:    'Pièce',
-  KG:       'Kilogramme (kg)',
-  G:        'Gramme (g)',
-  L:        'Litre (L)',
-  CL:       'Centilitre (cL)',
-  ML:       'Millilitre (mL)',
-  BOUTEILLE:'Bouteille',
-  SACHET:   'Sachet',
-  BOITE:    'Boîte',
+  PIECE: 'Pièce',
+  KG:    'Kilogramme (kg)',
+  G:     'Gramme (g)',
+  L:     'Litre (L)',
+  CL:    'Centilitre (cL)',
+  ML:    'Millilitre (mL)',
 };
 
-const PRODUCT_UNITS: ProductUnit[] = ['PIECE', 'KG', 'G', 'L', 'CL', 'ML', 'BOUTEILLE', 'SACHET', 'BOITE'];
+const PRODUCT_UNITS: ProductUnit[] = ['PIECE', 'KG', 'G', 'L', 'CL', 'ML'];
 
 interface ProductRow {
   id: string;
@@ -80,7 +80,13 @@ interface ProductRow {
   _count: { inventories: number };
 }
 
-type ActiveTab = 'categories' | 'products';
+interface ProductFormatRow {
+  id: string;
+  label: string;
+  createdAt: string;
+}
+
+type ActiveTab = 'categories' | 'products' | 'formats';
 
 // ---------------------------------------------------------------------------
 // Classes communes
@@ -154,6 +160,442 @@ function formatPrice(price: string): string {
 }
 
 // ===========================================================================
+// FORMAT COMBOBOX
+// Combobox searchable réutilisable pour sélectionner un libellé de format.
+// Supporte : filtrage en temps réel, navigation clavier (↑/↓/Enter/Escape),
+// fermeture au clic extérieur, ouverture vers le haut ou le bas.
+// ===========================================================================
+
+function FormatCombobox({
+  id,
+  formats,
+  value,
+  onChange,
+  hasError = false,
+  placeholder = 'Rechercher ou saisir…',
+  dropUp = false,
+}: {
+  id: string;
+  formats: ProductFormatRow[];
+  value: string;
+  onChange: (v: string) => void;
+  hasError?: boolean;
+  placeholder?: string;
+  /** Ouvre le dropdown vers le haut — utile quand le champ est près du bas d'un conteneur scrollable */
+  dropUp?: boolean;
+}) {
+  const [isOpen, setIsOpen]               = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const listboxId  = `${id}-listbox`;
+
+  // Filtrage des options
+  const filtered = useMemo(
+    () =>
+      value.trim() === ''
+        ? formats
+        : formats.filter((f) =>
+            f.label.toLowerCase().includes(value.trim().toLowerCase())
+          ),
+    [formats, value]
+  );
+
+  // Fermeture au clic extérieur
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+        setHighlightedIndex(-1);
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [isOpen]);
+
+  // Réinitialiser la sélection clavier quand les options changent
+  useEffect(() => {
+    setHighlightedIndex(-1);
+  }, [value]);
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    onChange(e.target.value);
+    setIsOpen(true);
+  }
+
+  function handleSelect(label: string) {
+    onChange(label);
+    setIsOpen(false);
+    setHighlightedIndex(-1);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') {
+      setIsOpen(false);
+      setHighlightedIndex(-1);
+      return;
+    }
+    if (!isOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setIsOpen(true);
+        setHighlightedIndex(filtered.length > 0 ? 0 : -1);
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIndex((i) => (i < filtered.length - 1 ? i + 1 : i));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex((i) => (i > 0 ? i - 1 : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (highlightedIndex >= 0 && filtered[highlightedIndex]) {
+        handleSelect(filtered[highlightedIndex].label);
+      }
+    }
+  }
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <input
+        id={id}
+        type="text"
+        value={value}
+        onChange={handleInputChange}
+        onFocus={() => setIsOpen(true)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        autoComplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-activedescendant={
+          isOpen && highlightedIndex >= 0
+            ? `${listboxId}-opt-${highlightedIndex}`
+            : undefined
+        }
+        className={inputCls + (hasError ? ' border-danger' : '')}
+      />
+      {isOpen && (
+        <ul
+          id={listboxId}
+          role="listbox"
+          aria-label="Formats disponibles"
+          className={[
+            'absolute z-20 w-full max-h-48 overflow-y-auto',
+            'bg-surface border border-borderLight rounded shadow-lg py-1',
+            dropUp ? 'bottom-full mb-1' : 'top-full mt-1',
+          ].join(' ')}
+        >
+          {formats.length === 0 ? (
+            <li className="px-3 py-2 text-xs text-textMuted italic">
+              Aucun format disponible — créez-en un dans l&apos;onglet Formats.
+            </li>
+          ) : filtered.length === 0 ? (
+            <li className="px-3 py-2 text-xs text-textMuted italic">
+              Aucun format ne correspond à &quot;{value}&quot;.
+            </li>
+          ) : (
+            filtered.map((f, index) => (
+              <li
+                key={f.id}
+                id={`${listboxId}-opt-${index}`}
+                role="option"
+                aria-selected={f.label === value}
+                onMouseDown={(e) => {
+                  // Prevent input blur before click registers
+                  e.preventDefault();
+                  handleSelect(f.label);
+                }}
+                className={[
+                  'px-3 py-2 text-sm cursor-pointer transition-colors',
+                  index === highlightedIndex
+                    ? 'bg-primary/10 text-primary'
+                    : f.label === value
+                      ? 'bg-background text-primary font-medium'
+                      : 'text-textMain hover:bg-background',
+                ].join(' ')}
+              >
+                {f.label}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ===========================================================================
+// MODALES — FORMATS DE PRODUIT
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Modale : Formulaire Format (création + édition)
+// ---------------------------------------------------------------------------
+
+function FormatFormModal({
+  isOpen,
+  format,
+  onClose,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  format: ProductFormatRow | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const isEdit = format !== null;
+
+  const [label, setLabel]           = useState('');
+  const [labelError, setLabelError] = useState<string | null>(null);
+  const [apiError, setApiError]     = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const firstInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setLabel(isEdit && format ? format.label : '');
+    setLabelError(null);
+    setApiError(null);
+    setTimeout(() => firstInputRef.current?.focus(), 50);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, format?.id]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isOpen, onClose]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLabelError(null);
+    setApiError(null);
+
+    if (!label.trim()) {
+      setLabelError('Le libellé est requis.');
+      firstInputRef.current?.focus();
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      if (isEdit && format) {
+        await apiClient.put(`/api/product-formats/${format.id}`, { label: label.trim() });
+      } else {
+        await apiClient.post('/api/product-formats', { label: label.trim() });
+      }
+      onSuccess();
+      onClose();
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        if (status === 409) {
+          setLabelError('Ce libellé est déjà utilisé par un autre format.');
+        } else {
+          setApiError(err.response?.data?.message ?? 'Une erreur est survenue.');
+        }
+      } else {
+        setApiError('Une erreur inattendue est survenue.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="format-form-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="format-form-title" className="text-base font-medium text-textMain">
+            {isEdit ? 'Modifier le format' : 'Créer un format'}
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="px-6 py-5 flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="fmt-label" className="text-xs font-medium text-textSecondary">
+                Libellé <span className="text-danger" aria-hidden="true">*</span>
+              </label>
+              <input
+                ref={firstInputRef}
+                id="fmt-label"
+                type="text"
+                value={label}
+                onChange={(e) => {
+                  setLabel(e.target.value);
+                  if (labelError) setLabelError(null);
+                }}
+                placeholder="Ex : Pièce, Carton, Palette…"
+                className={inputCls + (labelError ? ' border-danger' : '')}
+                aria-required="true"
+                aria-describedby={labelError ? 'fmt-label-err' : undefined}
+              />
+              {labelError && (
+                <p id="fmt-label-err" role="alert" className="text-xs text-danger">
+                  {labelError}
+                </p>
+              )}
+            </div>
+
+            {apiError && (
+              <p role="alert" className="text-sm text-danger">{apiError}</p>
+            )}
+          </div>
+
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+              Annuler
+            </Button>
+            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
+              {isEdit ? 'Enregistrer' : 'Créer'}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modale : Confirmation de suppression de format
+// ---------------------------------------------------------------------------
+
+function DeleteFormatModal({
+  format,
+  onClose,
+  onSuccess,
+}: {
+  format: ProductFormatRow | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [apiError, setApiError]         = useState<string | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!format) return;
+    setApiError(null);
+    setTimeout(() => confirmBtnRef.current?.focus(), 50);
+  }, [format]);
+
+  useEffect(() => {
+    if (!format) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [format, onClose]);
+
+  async function handleConfirm() {
+    if (!format) return;
+    setIsSubmitting(true);
+    setApiError(null);
+    try {
+      await apiClient.delete(`/api/product-formats/${format.id}`);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        if (status === 409) {
+          setApiError(
+            'Ce format est utilisé par des produits et ne peut pas être supprimé.'
+          );
+        } else {
+          setApiError(err.response?.data?.message ?? 'Une erreur est survenue.');
+        }
+      } else {
+        setApiError('Une erreur inattendue est survenue.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (!format) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-format-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-sm mx-4 bg-surface border border-borderLight rounded shadow-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight">
+          <h2 id="delete-format-title" className="text-base font-medium text-textMain">
+            Supprimer le format
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="text-textMuted hover:text-textMain transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <div className="px-6 py-5 flex flex-col gap-3">
+          <p className="text-sm text-textMuted">
+            Voulez-vous supprimer définitivement le format{' '}
+            <strong className="text-textMain">{format.label}</strong> ?
+          </p>
+          <p className="text-sm text-textMuted">
+            Cette action est irréversible.
+          </p>
+          {apiError && (
+            <p role="alert" className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+              {apiError}
+            </p>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button
+            ref={confirmBtnRef}
+            type="button"
+            variant="danger"
+            size="sm"
+            isLoading={isSubmitting}
+            onClick={handleConfirm}
+          >
+            Supprimer
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
 // MODALES — CATÉGORIES
 // ===========================================================================
 
@@ -183,7 +625,6 @@ function CategoryFormModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialiser le formulaire à l'ouverture
   useEffect(() => {
     if (!isOpen) return;
     if (isEdit && category) {
@@ -199,7 +640,6 @@ function CategoryFormModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, category?.id]);
 
-  // Fermeture par Escape
   useEffect(() => {
     if (!isOpen) return;
     function handleKey(e: KeyboardEvent) {
@@ -209,7 +649,6 @@ function CategoryFormModal({
     return () => document.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
 
-  // Catégories disponibles comme parent : toutes sauf la catégorie en cours d'édition
   const parentOptions = useMemo(
     () => categories.filter((c) => c.id !== category?.id),
     [categories, category?.id]
@@ -227,7 +666,6 @@ function CategoryFormModal({
     }
 
     setIsSubmitting(true);
-    // Ne pas inclure parent_id si vide — Zod rejette null sur un champ .optional()
     const payload: { name: string; parent_id?: string } = { name: name.trim() };
     if (parentId) payload.parent_id = parentId;
 
@@ -277,7 +715,6 @@ function CategoryFormModal({
         <form onSubmit={handleSubmit} noValidate>
           <div className="px-6 py-5 flex flex-col gap-4">
 
-            {/* Nom */}
             <div className="flex flex-col gap-1">
               <label htmlFor="cat-name" className="text-xs font-medium text-textSecondary">
                 Nom <span className="text-danger" aria-hidden="true">*</span>
@@ -302,7 +739,6 @@ function CategoryFormModal({
               )}
             </div>
 
-            {/* Catégorie parente */}
             <div className="flex flex-col gap-1">
               <label htmlFor="cat-parent" className="text-xs font-medium text-textSecondary">
                 Catégorie parente
@@ -322,7 +758,6 @@ function CategoryFormModal({
               </select>
             </div>
 
-            {/* Erreur API */}
             {apiError && (
               <p role="alert" className="text-sm text-danger">{apiError}</p>
             )}
@@ -457,7 +892,9 @@ function DeleteCategoryModal({
 }
 
 // ===========================================================================
-// MODALE — FORMATS DE CONDITIONNEMENT
+// MODALE — FORMATS DE CONDITIONNEMENT (par produit)
+// Mise à jour : accepte `productFormats` pour alimenter le combobox du
+// champ "Libellé" dans les formulaires d'ajout et d'édition inline.
 // ===========================================================================
 
 interface PackagingFormatRow {
@@ -470,9 +907,12 @@ interface PackagingFormatRow {
 
 function PackagingFormatsModal({
   product,
+  productFormats,
   onClose,
 }: {
   product: ProductRow | null;
+  /** Liste des formats globaux — alimente les comboboxes de libellé */
+  productFormats: ProductFormatRow[];
   onClose: () => void;
 }) {
   const [formats,       setFormats]       = useState<PackagingFormatRow[]>([]);
@@ -564,7 +1004,6 @@ function PackagingFormatsModal({
       setFormats((prev) =>
         prev.map((f) => {
           if (f.id === editId) return data.format as PackagingFormatRow;
-          // Si ce format est devenu la nouvelle unité de base, désactiver les autres
           if ((data.format as PackagingFormatRow).is_base_unit && f.is_base_unit) {
             return { ...f, is_base_unit: false };
           }
@@ -657,13 +1096,17 @@ function PackagingFormatsModal({
                       /* Ligne en mode édition */
                       <div className="px-4 py-3 flex flex-col gap-2">
                         <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={editLabel}
-                            onChange={(e) => setEditLabel(e.target.value)}
-                            className={inputCls + ' flex-1'}
-                            placeholder="Libellé…"
-                          />
+                          {/* Libellé — combobox depuis les formats globaux */}
+                          <div className="flex-1">
+                            <FormatCombobox
+                              id={`pf-edit-label-${editId}`}
+                              formats={productFormats}
+                              value={editLabel}
+                              onChange={(v) => setEditLabel(v)}
+                              placeholder="Libellé…"
+                              dropUp={false}
+                            />
+                          </div>
                           <input
                             type="number"
                             min={1}
@@ -671,6 +1114,7 @@ function PackagingFormatsModal({
                             onChange={(e) => setEditUnits(e.target.value)}
                             className={inputCls + ' w-24'}
                             placeholder="Coeff."
+                            aria-label="Coefficient (unités par conditionnement)"
                           />
                         </div>
                         {editIsBase ? (
@@ -749,19 +1193,29 @@ function PackagingFormatsModal({
             </p>
             <form onSubmit={handleAdd} className="flex flex-col gap-3">
               <div className="flex gap-2">
+                {/* Libellé — combobox depuis les formats globaux, ouverture vers le haut */}
                 <div className="flex flex-col gap-1 flex-1">
-                  <label className="text-xs text-textSecondary">Libellé</label>
-                  <input
-                    type="text"
+                  <label htmlFor="pf-add-label" className="text-xs text-textSecondary">
+                    Libellé
+                  </label>
+                  <FormatCombobox
+                    id="pf-add-label"
+                    formats={productFormats}
                     value={addLabel}
-                    onChange={(e) => setAddLabel(e.target.value)}
-                    className={inputCls}
+                    onChange={(v) => {
+                      setAddLabel(v);
+                      if (addError) setAddError(null);
+                    }}
                     placeholder="ex. Carton, Pack ×6, Palette…"
+                    dropUp={true}
                   />
                 </div>
                 <div className="flex flex-col gap-1 w-28">
-                  <label className="text-xs text-textSecondary">Coefficient</label>
+                  <label htmlFor="pf-add-units" className="text-xs text-textSecondary">
+                    Coefficient
+                  </label>
                   <input
+                    id="pf-add-units"
                     type="number"
                     min={1}
                     value={addUnits}
@@ -802,6 +1256,8 @@ function PackagingFormatsModal({
 
 // ---------------------------------------------------------------------------
 // Modale : Formulaire Produit (création + édition)
+// Mise à jour : le champ "Format de base" est un combobox searchable qui
+// se nourrit de la liste des formats globaux (`productFormats`).
 // ---------------------------------------------------------------------------
 
 interface ProductFormData {
@@ -818,12 +1274,15 @@ function ProductFormModal({
   isOpen,
   product,
   categories,
+  productFormats,
   onClose,
   onSuccess,
 }: {
   isOpen: boolean;
   product: ProductRow | null;
   categories: CategoryRow[];
+  /** Liste des formats globaux — alimente le combobox "Format de base" */
+  productFormats: ProductFormatRow[];
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -904,11 +1363,8 @@ function ProductFormModal({
       unit:        form.unit,
       category_id: form.category_id,
     };
-    // Champs optionnels — omis si vides (Zod rejette null sur .optional())
     if (form.description.trim()) payload.description = form.description.trim();
-    // SKU uniquement en création (immuable en édition)
     if (!isEdit) payload.sku = form.sku.trim();
-    // Format de base — obligatoire en création (validé dans validate())
     if (!isEdit) {
       payload.initial_format = { label: form.base_format_label.trim() };
     }
@@ -983,7 +1439,7 @@ function ProductFormModal({
                 type="text"
                 value={form.sku}
                 onChange={(e) => {
-                  if (isEdit) return; // immuable en édition
+                  if (isEdit) return;
                   setForm((f) => ({ ...f, sku: e.target.value }));
                   if (errors.sku) setErrors((prev) => ({ ...prev, sku: undefined }));
                 }}
@@ -1088,16 +1544,12 @@ function ProductFormModal({
               >
                 <option value="">— Sélectionner une catégorie —</option>
                 {(() => {
-                  // Catégories racines avec sous-catégories → optgroup (non sélectionnables)
-                  // Catégories racines sans enfants → option sélectionnable
-                  // Sous-catégories → regroupées dans l'optgroup de leur parent
                   const roots    = categories.filter((c) => c.parent_id === null);
                   const children = categories.filter((c) => c.parent_id !== null);
 
                   return roots.map((root) => {
                     const subs = children.filter((c) => c.parent_id === root.id);
                     if (subs.length > 0) {
-                      // Catégorie parente → repère visuel, sous-catégories sélectionnables
                       return (
                         <optgroup key={root.id} label={root.name}>
                           {subs.map((sub) => (
@@ -1106,7 +1558,6 @@ function ProductFormModal({
                         </optgroup>
                       );
                     }
-                    // Catégorie feuille (pas d'enfants) → sélectionnable directement
                     return <option key={root.id} value={root.id}>{root.name}</option>;
                   });
                 })()}
@@ -1133,25 +1584,28 @@ function ProductFormModal({
               />
             </div>
 
-            {/* Format de base — création uniquement, obligatoire */}
+            {/* Format de base — création uniquement, combobox searchable */}
             {!isEdit && (
               <div className="flex flex-col gap-2 pt-2 border-t border-borderLight">
                 <div className="flex flex-col gap-1">
                   <label htmlFor="prod-base-format" className="text-xs font-medium text-textSecondary">
                     Format de base <span className="text-danger" aria-hidden="true">*</span>
                   </label>
-                  <input
+                  {/*
+                    dropUp=true : le champ est en bas de la modale scrollable.
+                    Le dropdown s'ouvre vers le haut pour éviter le clipping par overflow-y-auto.
+                  */}
+                  <FormatCombobox
                     id="prod-base-format"
-                    type="text"
+                    formats={productFormats}
                     value={form.base_format_label}
-                    onChange={(e) => {
-                      setForm((f) => ({ ...f, base_format_label: e.target.value }));
+                    onChange={(v) => {
+                      setForm((f) => ({ ...f, base_format_label: v }));
                       if (errors.base_format_label) setErrors((prev) => ({ ...prev, base_format_label: undefined }));
                     }}
+                    hasError={!!errors.base_format_label}
                     placeholder="Ex : Pièce, Unité, Kg…"
-                    className={inputCls + (errors.base_format_label ? ' border-danger' : '')}
-                    aria-required="true"
-                    aria-describedby={errors.base_format_label ? 'prod-base-format-err' : undefined}
+                    dropUp={true}
                   />
                   {errors.base_format_label && (
                     <p id="prod-base-format-err" role="alert" className="text-xs text-danger">
@@ -1165,7 +1619,6 @@ function ProductFormModal({
               </div>
             )}
 
-            {/* Erreur API générique */}
             {apiError && (
               <p role="alert" className="text-sm text-danger">{apiError}</p>
             )}
@@ -1397,6 +1850,157 @@ function ReactivateProductModal({
 }
 
 // ===========================================================================
+// ONGLET FORMATS DE PRODUIT
+// Gestion CRUD des formats globaux (GET/POST/PUT/DELETE /api/product-formats).
+// Visible par SA et Admin — les deux peuvent créer, modifier et supprimer.
+// ===========================================================================
+
+function FormatsTab({
+  formats,
+  isLoading,
+  fetchError,
+  canManageFormats,
+  onReload,
+}: {
+  formats: ProductFormatRow[];
+  isLoading: boolean;
+  fetchError: string | null;
+  /** true si SA ou Admin (les deux peuvent gérer les formats) */
+  canManageFormats: boolean;
+  onReload: () => void;
+}) {
+  const [modalCreate, setModalCreate]         = useState(false);
+  const [formatToEdit, setFormatToEdit]       = useState<ProductFormatRow | null>(null);
+  const [formatToDelete, setFormatToDelete]   = useState<ProductFormatRow | null>(null);
+
+  const colCount = canManageFormats ? 2 : 1; // Libellé [+ Actions]
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* En-tête onglet */}
+      {canManageFormats && (
+        <div className="flex justify-end">
+          <Button variant="primary" size="md" onClick={() => setModalCreate(true)}>
+            Ajouter un format
+          </Button>
+        </div>
+      )}
+
+      {/* Compteur */}
+      {!isLoading && !fetchError && (
+        <p className="text-xs text-textMuted -mt-2">
+          {formats.length === 0
+            ? 'Aucun format.'
+            : `${formats.length} format${formats.length > 1 ? 's' : ''}`}
+        </p>
+      )}
+
+      {/* Erreur de chargement */}
+      {fetchError && (
+        <p role="alert" className="text-sm text-danger">{fetchError}</p>
+      )}
+
+      {/* Tableau */}
+      <div className="bg-surface border border-borderLight rounded overflow-x-auto">
+        <table
+          className="w-full text-sm"
+          role="table"
+          aria-label="Liste des formats de produit"
+        >
+          <thead>
+            <tr className="bg-background border-b border-borderLight">
+              {['Libellé', ...(canManageFormats ? ['Actions'] : [])].map((col) => (
+                <th
+                  key={col}
+                  scope="col"
+                  className="px-4 py-3 text-left text-xs font-medium text-textMuted uppercase tracking-wide whitespace-nowrap"
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              <SkeletonRows cols={colCount} />
+            ) : formats.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={colCount}
+                  className="px-4 py-10 text-center text-sm text-textMuted"
+                >
+                  Aucun format trouvé.{' '}
+                  {canManageFormats && (
+                    <button
+                      onClick={() => setModalCreate(true)}
+                      className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors"
+                    >
+                      Créez le premier format.
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ) : (
+              formats.map((fmt) => (
+                <tr
+                  key={fmt.id}
+                  className="border-b border-borderLight hover:bg-background/50 transition-colors"
+                >
+                  <td className="px-4 py-3 font-medium text-textMain">
+                    {fmt.label}
+                  </td>
+                  {canManageFormats && (
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setFormatToEdit(fmt)}
+                          aria-label={`Modifier ${fmt.label}`}
+                        >
+                          Modifier
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setFormatToDelete(fmt)}
+                          aria-label={`Supprimer ${fmt.label}`}
+                        >
+                          Supprimer
+                        </Button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modales formats */}
+      <FormatFormModal
+        isOpen={modalCreate}
+        format={null}
+        onClose={() => setModalCreate(false)}
+        onSuccess={onReload}
+      />
+      <FormatFormModal
+        isOpen={formatToEdit !== null}
+        format={formatToEdit}
+        onClose={() => setFormatToEdit(null)}
+        onSuccess={onReload}
+      />
+      <DeleteFormatModal
+        format={formatToDelete}
+        onClose={() => setFormatToDelete(null)}
+        onSuccess={onReload}
+      />
+    </div>
+  );
+}
+
+// ===========================================================================
 // ONGLET CATÉGORIES
 // ===========================================================================
 
@@ -1419,7 +2023,6 @@ function CategoriesTab({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* En-tête onglet */}
       {isSA && (
         <div className="flex justify-end">
           <Button variant="primary" size="md" onClick={() => setModalCreate(true)}>
@@ -1428,7 +2031,6 @@ function CategoriesTab({
         </div>
       )}
 
-      {/* Compteur */}
       {!isLoading && !fetchError && (
         <p className="text-xs text-textMuted -mt-2">
           {categories.length === 0
@@ -1437,12 +2039,10 @@ function CategoriesTab({
         </p>
       )}
 
-      {/* Erreur */}
       {fetchError && (
         <p role="alert" className="text-sm text-danger">{fetchError}</p>
       )}
 
-      {/* Tableau */}
       <div className="bg-surface border border-borderLight rounded overflow-x-auto">
         <table
           className="w-full text-sm"
@@ -1529,7 +2129,6 @@ function CategoriesTab({
         </table>
       </div>
 
-      {/* Modales catégories */}
       <CategoryFormModal
         isOpen={modalCreate}
         category={null}
@@ -1560,6 +2159,7 @@ function CategoriesTab({
 function ProductsTab({
   products,
   categories,
+  productFormats,
   isLoading,
   fetchError,
   isSA,
@@ -1568,6 +2168,8 @@ function ProductsTab({
 }: {
   products: ProductRow[];
   categories: CategoryRow[];
+  /** Liste des formats globaux — passée aux modales qui utilisent le combobox */
+  productFormats: ProductFormatRow[];
   isLoading: boolean;
   fetchError: string | null;
   isSA: boolean;
@@ -1593,8 +2195,6 @@ function ProductsTab({
     return () => clearTimeout(timer);
   }, [search]);
 
-  // IDs valides pour le filtre catégorie :
-  // si une catégorie parente est sélectionnée, inclure aussi ses sous-catégories.
   const validCategoryIds = useMemo(() => {
     if (!filterCategory) return null;
     const childIds = categories
@@ -1603,7 +2203,6 @@ function ProductsTab({
     return new Set([filterCategory, ...childIds]);
   }, [filterCategory, categories]);
 
-  // Filtrage client-side
   const filteredProducts = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
     return products.filter((p) => {
@@ -1627,12 +2226,10 @@ function ProductsTab({
     setFilterStatus('');
   }
 
-  const colCount = canEditProducts ? 7 : 6;  // SKU Nom Catégorie Unité Prix Statut [Actions]
-  // Note : isSA ajoute le bouton "Formats" dans la colonne Actions existante
+  const colCount = canEditProducts ? 7 : 6;
 
   return (
     <div className="flex flex-col gap-6">
-      {/* En-tête onglet */}
       {canEditProducts && (
         <div className="flex justify-end">
           <Button variant="primary" size="md" onClick={() => setModalCreate(true)}>
@@ -1643,7 +2240,6 @@ function ProductsTab({
 
       {/* Barre de filtres */}
       <div className="flex flex-wrap items-end gap-3 p-4 bg-surface border border-borderLight rounded">
-        {/* Recherche */}
         <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
           <label htmlFor="search-products" className="text-xs font-medium text-textSecondary">
             Recherche
@@ -1658,7 +2254,6 @@ function ProductsTab({
           />
         </div>
 
-        {/* Filtre catégorie */}
         <div className="flex flex-col gap-1">
           <label htmlFor="filter-cat" className="text-xs font-medium text-textSecondary">
             Catégorie
@@ -1676,7 +2271,6 @@ function ProductsTab({
           </select>
         </div>
 
-        {/* Filtre statut */}
         <div className="flex flex-col gap-1">
           <label htmlFor="filter-status-prod" className="text-xs font-medium text-textSecondary">
             Statut
@@ -1693,7 +2287,6 @@ function ProductsTab({
           </select>
         </div>
 
-        {/* Réinitialiser */}
         {hasActiveFilters && (
           <Button
             type="button"
@@ -1719,7 +2312,6 @@ function ProductsTab({
         </p>
       )}
 
-      {/* Erreur */}
       {fetchError && (
         <p role="alert" className="text-sm text-danger">{fetchError}</p>
       )}
@@ -1793,16 +2385,14 @@ function ProductsTab({
                         >
                           Modifier
                         </Button>
-                        {canEditProducts && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => setProductForFormats(product)}
-                            aria-label={`Formats de conditionnement — ${product.name}`}
-                          >
-                            Formats
-                          </Button>
-                        )}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setProductForFormats(product)}
+                          aria-label={`Formats de conditionnement — ${product.name}`}
+                        >
+                          Formats
+                        </Button>
                         {isSA && product.is_active && (
                           <Button
                             variant="secondary"
@@ -1838,6 +2428,7 @@ function ProductsTab({
         isOpen={modalCreate}
         product={null}
         categories={categories}
+        productFormats={productFormats}
         onClose={() => setModalCreate(false)}
         onSuccess={onReload}
       />
@@ -1845,6 +2436,7 @@ function ProductsTab({
         isOpen={productToEdit !== null}
         product={productToEdit}
         categories={categories}
+        productFormats={productFormats}
         onClose={() => setProductToEdit(null)}
         onSuccess={onReload}
       />
@@ -1860,6 +2452,7 @@ function ProductsTab({
       />
       <PackagingFormatsModal
         product={productForFormats}
+        productFormats={productFormats}
         onClose={() => setProductForFormats(null)}
       />
     </div>
@@ -1891,15 +2484,21 @@ export default function CataloguePage() {
   // Onglet actif — Produits par défaut
   const [activeTab, setActiveTab] = useState<ActiveTab>('products');
 
-  // Données
-  const [categories, setCategories]   = useState<CategoryRow[]>([]);
-  const [products, setProducts]       = useState<ProductRow[]>([]);
-  const [catsLoading, setCatsLoading] = useState(true);
-  const [prodsLoading, setProdsLoading] = useState(true);
-  const [catsError, setCatsError]     = useState<string | null>(null);
-  const [prodsError, setProdsError]   = useState<string | null>(null);
+  // Données — catégories
+  const [categories, setCategories]     = useState<CategoryRow[]>([]);
+  const [catsLoading, setCatsLoading]   = useState(true);
+  const [catsError, setCatsError]       = useState<string | null>(null);
 
-  // Chargement des catégories (partagé entre les deux onglets)
+  // Données — produits
+  const [products, setProducts]         = useState<ProductRow[]>([]);
+  const [prodsLoading, setProdsLoading] = useState(true);
+  const [prodsError, setProdsError]     = useState<string | null>(null);
+
+  // Données — formats de produit (partagés entre FormatsTab, ProductFormModal, PackagingFormatsModal)
+  const [formats, setFormats]             = useState<ProductFormatRow[]>([]);
+  const [formatsLoading, setFormatsLoading] = useState(true);
+  const [formatsError, setFormatsError]   = useState<string | null>(null);
+
   const loadCategories = useCallback(async () => {
     setCatsLoading(true);
     setCatsError(null);
@@ -1919,7 +2518,6 @@ export default function CataloguePage() {
     }
   }, []);
 
-  // Chargement des produits
   const loadProducts = useCallback(async () => {
     setProdsLoading(true);
     setProdsError(null);
@@ -1939,15 +2537,33 @@ export default function CataloguePage() {
     }
   }, []);
 
+  const loadFormats = useCallback(async () => {
+    setFormatsLoading(true);
+    setFormatsError(null);
+    try {
+      const res = await apiClient.get<{ success: boolean; formats: ProductFormatRow[] }>('/api/product-formats');
+      setFormats(Array.isArray(res.data.formats) ? res.data.formats : []);
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        setFormatsError(err.response?.data?.message ?? 'Impossible de charger les formats.');
+      } else {
+        setFormatsError('Une erreur inattendue est survenue.');
+      }
+    } finally {
+      setFormatsLoading(false);
+    }
+  }, []);
+
+  // Chargement parallèle des trois listes au montage
   useEffect(() => {
     if (sessionLoading) return;
     if (!sessionUser) return;
     const role = sessionUser.roleName;
     if (role !== ROLE_SA && role !== ROLE_ADMIN) return;
-    // Chargement parallèle au montage
     loadCategories();
     loadProducts();
-  }, [sessionLoading, sessionUser, loadCategories, loadProducts]);
+    loadFormats();
+  }, [sessionLoading, sessionUser, loadCategories, loadProducts, loadFormats]);
 
   // ---------------------------------------------------------------------------
   // Garde de rendu — session en cours ou rôle non autorisé
@@ -1976,6 +2592,12 @@ export default function CataloguePage() {
   // Rendu principal
   // ---------------------------------------------------------------------------
 
+  const tabs: { id: ActiveTab; label: string }[] = [
+    { id: 'products',   label: 'Produits'   },
+    { id: 'categories', label: 'Catégories' },
+    { id: 'formats',    label: 'Formats'    },
+  ];
+
   return (
     <div className="flex flex-col gap-6">
 
@@ -1990,12 +2612,7 @@ export default function CataloguePage() {
         aria-label="Sections du catalogue"
         className="flex gap-1 border-b border-borderLight"
       >
-        {(
-          [
-            { id: 'products',   label: 'Produits'   },
-            { id: 'categories', label: 'Catégories' },
-          ] as { id: ActiveTab; label: string }[]
-        ).map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             role="tab"
@@ -2029,10 +2646,19 @@ export default function CataloguePage() {
             isSA={isSA}
             onReload={loadCategories}
           />
+        ) : activeTab === 'formats' ? (
+          <FormatsTab
+            formats={formats}
+            isLoading={formatsLoading}
+            fetchError={formatsError}
+            canManageFormats={canEditProducts}
+            onReload={loadFormats}
+          />
         ) : (
           <ProductsTab
             products={products}
             categories={categories}
+            productFormats={formats}
             isLoading={prodsLoading}
             fetchError={prodsError}
             isSA={isSA}

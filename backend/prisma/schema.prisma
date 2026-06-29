@@ -175,6 +175,18 @@ model Product {
 }
 
 
+// Product format reference list — catalog of reusable packaging label names.
+// Managed by admins; labels are reused as-is in PackagingFormat.label.
+model ProductFormat {
+  id        String   @id @default(uuid())
+  label     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("product_formats")
+}
+
+
 // Packaging formats — product-level packaging definitions
 // Examples: Unit ×1, Pack ×6, Carton ×24, Pallet ×240
 // Defined at catalog level; per-store availability managed in InventoryBreakdown.
