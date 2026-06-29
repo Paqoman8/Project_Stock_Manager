@@ -200,6 +200,17 @@ function FormatCombobox({
     [formats, value]
   );
 
+  // Option saisie libre : visible quand le texte ne correspond à aucun format existant
+  const showFreeText = useMemo(
+    () =>
+      value.trim() !== '' &&
+      !formats.some((f) => f.label.toLowerCase() === value.trim().toLowerCase()),
+    [formats, value]
+  );
+
+  // Nombre total d'options navigables au clavier
+  const totalOptions = filtered.length + (showFreeText ? 1 : 0);
+
   // Fermeture au clic extérieur
   useEffect(() => {
     if (!isOpen) return;
@@ -239,20 +250,25 @@ function FormatCombobox({
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setIsOpen(true);
-        setHighlightedIndex(filtered.length > 0 ? 0 : -1);
+        setHighlightedIndex(totalOptions > 0 ? 0 : -1);
       }
       return;
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlightedIndex((i) => (i < filtered.length - 1 ? i + 1 : i));
+      setHighlightedIndex((i) => (i < totalOptions - 1 ? i + 1 : i));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setHighlightedIndex((i) => (i > 0 ? i - 1 : 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (highlightedIndex >= 0 && filtered[highlightedIndex]) {
-        handleSelect(filtered[highlightedIndex].label);
+      if (highlightedIndex >= 0) {
+        if (highlightedIndex < filtered.length) {
+          handleSelect(filtered[highlightedIndex].label);
+        } else if (showFreeText) {
+          // Option saisie libre sélectionnée au clavier
+          handleSelect(value.trim());
+        }
       }
     }
   }
@@ -273,7 +289,7 @@ function FormatCombobox({
         aria-expanded={isOpen}
         aria-controls={isOpen ? listboxId : undefined}
         aria-activedescendant={
-          isOpen && highlightedIndex >= 0
+          isOpen && highlightedIndex >= 0 && highlightedIndex < totalOptions
             ? `${listboxId}-opt-${highlightedIndex}`
             : undefined
         }
@@ -290,38 +306,54 @@ function FormatCombobox({
             dropUp ? 'bottom-full mb-1' : 'top-full mt-1',
           ].join(' ')}
         >
-          {formats.length === 0 ? (
+          {formats.length === 0 && !showFreeText ? (
             <li className="px-3 py-2 text-xs text-textMuted italic">
               Aucun format disponible — créez-en un dans l&apos;onglet Formats.
             </li>
-          ) : filtered.length === 0 ? (
-            <li className="px-3 py-2 text-xs text-textMuted italic">
-              Aucun format ne correspond à &quot;{value}&quot;.
-            </li>
           ) : (
-            filtered.map((f, index) => (
-              <li
-                key={f.id}
-                id={`${listboxId}-opt-${index}`}
-                role="option"
-                aria-selected={f.label === value}
-                onMouseDown={(e) => {
-                  // Prevent input blur before click registers
-                  e.preventDefault();
-                  handleSelect(f.label);
-                }}
-                className={[
-                  'px-3 py-2 text-sm cursor-pointer transition-colors',
-                  index === highlightedIndex
-                    ? 'bg-primary/10 text-primary'
-                    : f.label === value
-                      ? 'bg-background text-primary font-medium'
-                      : 'text-textMain hover:bg-background',
-                ].join(' ')}
-              >
-                {f.label}
-              </li>
-            ))
+            <>
+              {filtered.map((f, index) => (
+                <li
+                  key={f.id}
+                  id={`${listboxId}-opt-${index}`}
+                  role="option"
+                  aria-selected={f.label === value}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSelect(f.label);
+                  }}
+                  className={[
+                    'px-3 py-2 text-sm cursor-pointer transition-colors',
+                    index === highlightedIndex
+                      ? 'bg-primary/10 text-primary'
+                      : f.label === value
+                        ? 'bg-background text-primary font-medium'
+                        : 'text-textMain hover:bg-background',
+                  ].join(' ')}
+                >
+                  {f.label}
+                </li>
+              ))}
+              {showFreeText && (
+                <li
+                  id={`${listboxId}-opt-${filtered.length}`}
+                  role="option"
+                  aria-selected={false}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSelect(value.trim());
+                  }}
+                  className={[
+                    'px-3 py-2 text-sm cursor-pointer transition-colors border-t border-borderLight',
+                    highlightedIndex === filtered.length
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-textMuted hover:bg-background',
+                  ].join(' ')}
+                >
+                  Utiliser &laquo;&nbsp;{value.trim()}&nbsp;&raquo;
+                </li>
+              )}
+            </>
           )}
         </ul>
       )}
@@ -1093,29 +1125,36 @@ function PackagingFormatsModal({
                 {formats.map((fmt) => (
                   <div key={fmt.id} className="bg-background">
                     {editId === fmt.id ? (
-                      /* Ligne en mode édition */
-                      <div className="px-4 py-3 flex flex-col gap-2">
+                      /* Ligne en mode édition — même esthétique que le formulaire d'ajout */
+                      <div className="px-4 py-3 flex flex-col gap-3">
                         <div className="flex gap-2">
-                          {/* Libellé — combobox depuis les formats globaux */}
-                          <div className="flex-1">
+                          <div className="flex flex-col gap-1 flex-1">
+                            <label htmlFor={`pf-edit-label-${editId}`} className="text-xs text-textSecondary">
+                              Libellé
+                            </label>
                             <FormatCombobox
                               id={`pf-edit-label-${editId}`}
                               formats={productFormats}
                               value={editLabel}
                               onChange={(v) => setEditLabel(v)}
-                              placeholder="Libellé…"
+                              placeholder="ex. Carton, Pack ×6, Palette…"
                               dropUp={false}
                             />
                           </div>
-                          <input
-                            type="number"
-                            min={1}
-                            value={editUnits}
-                            onChange={(e) => setEditUnits(e.target.value)}
-                            className={inputCls + ' w-24'}
-                            placeholder="Coeff."
-                            aria-label="Coefficient (unités par conditionnement)"
-                          />
+                          <div className="flex flex-col gap-1 w-28">
+                            <label htmlFor={`pf-edit-units-${editId}`} className="text-xs text-textSecondary">
+                              Coefficient
+                            </label>
+                            <input
+                              id={`pf-edit-units-${editId}`}
+                              type="number"
+                              min={1}
+                              value={editUnits}
+                              onChange={(e) => setEditUnits(e.target.value)}
+                              className={inputCls}
+                              placeholder="ex. 24"
+                            />
+                          </div>
                         </div>
                         {editIsBase ? (
                           <p className="text-xs text-primary flex items-center gap-1.5">
@@ -1134,7 +1173,9 @@ function PackagingFormatsModal({
                           </label>
                         )}
                         {editError && (
-                          <p className="text-xs text-danger">{editError}</p>
+                          <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
+                            {editError}
+                          </p>
                         )}
                         <div className="flex gap-2 justify-end">
                           <Button variant="secondary" size="sm" onClick={() => setEditId(null)}>
