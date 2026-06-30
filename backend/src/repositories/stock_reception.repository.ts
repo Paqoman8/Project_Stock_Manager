@@ -240,14 +240,11 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
       },
     });
 
-    // d) Vérifier que chaque ligne commandée reste dans sa quantité attendue,
-    //    puis déduire le statut global sans mélanger différents formats du même produit.
+    // d) Déduire le statut global de la commande.
+    //    Un surplus (confirmedQty > ordered_qty) est autorisé et compte comme "reçu".
     let fullyReceived = true;
     for (const oi of orderItems) {
       const confirmedQty = receivedByOrderItem.get(oi.id) ?? 0;
-      if (confirmedQty > oi.ordered_qty) {
-        throw new Error('RECEPTION_QTY_EXCEEDS_REMAINING');
-      }
       if (confirmedQty < oi.ordered_qty) {
         fullyReceived = false;
       }

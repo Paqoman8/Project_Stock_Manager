@@ -1486,14 +1486,16 @@ export default function ReceptionsPage() {
                   {/* Actions */}
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => setOrderToReceive(order)}
-                        aria-label={`Enregistrer une réception pour la commande ${order.reference}`}
-                      >
-                        Réceptionner
-                      </Button>
+                      {sessionUser?.storeId === order.destination_store_id && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => setOrderToReceive(order)}
+                          aria-label={`Enregistrer une réception pour la commande ${order.reference}`}
+                        >
+                          Réceptionner
+                        </Button>
+                      )}
                       <Button
                         variant="secondary"
                         size="sm"

@@ -226,14 +226,6 @@ export async function confirmReception(req: AuthenticatedRequest, res: Response)
       });
       return;
     }
-    if (error instanceof Error && error.message === 'RECEPTION_QTY_EXCEEDS_REMAINING') {
-      res.status(409).json({
-        success: false,
-        message: 'La confirmation dépasserait la quantité commandée sur au moins une ligne.',
-      });
-      return;
-    }
-
     console.error('Erreur lors de la confirmation de la réception :', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
   }
