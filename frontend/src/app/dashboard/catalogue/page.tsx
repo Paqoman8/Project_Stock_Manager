@@ -934,6 +934,7 @@ interface PackagingFormatRow {
   product_id:        string;
   label:             string;
   units_per_package: number;
+  price:             string | null; // null = product.price × coefficient
   is_base_unit:      boolean;
 }
 
@@ -954,6 +955,7 @@ function PackagingFormatsModal({
   // Formulaire ajout
   const [addLabel,      setAddLabel]      = useState('');
   const [addUnits,      setAddUnits]      = useState('');
+  const [addPrice,      setAddPrice]      = useState('');
   const [addSaving,     setAddSaving]     = useState(false);
   const [addError,      setAddError]      = useState<string | null>(null);
 
@@ -961,6 +963,7 @@ function PackagingFormatsModal({
   const [editId,        setEditId]        = useState<string | null>(null);
   const [editLabel,     setEditLabel]     = useState('');
   const [editUnits,     setEditUnits]     = useState('');
+  const [editPrice,     setEditPrice]     = useState('');
   const [editIsBase,    setEditIsBase]    = useState(false);
   const [editSaving,    setEditSaving]    = useState(false);
   const [editError,     setEditError]     = useState<string | null>(null);
@@ -994,9 +997,11 @@ function PackagingFormatsModal({
 
     setAddSaving(true);
     try {
+      const parsedPrice = parseFloat(addPrice);
       const { data } = await apiClient.post(`/api/products/${product!.id}/packaging-formats`, {
         label:             addLabel.trim(),
         units_per_package: units,
+        price:             addPrice.trim() && !isNaN(parsedPrice) && parsedPrice > 0 ? parsedPrice : null,
         is_base_unit:      false,
       });
       setFormats((prev) => [...prev, data.format as PackagingFormatRow].sort(
@@ -1004,6 +1009,7 @@ function PackagingFormatsModal({
       ));
       setAddLabel('');
       setAddUnits('');
+      setAddPrice('');
     } catch (err) {
       if (axios.isAxiosError(err)) setAddError(err.response?.data?.message ?? 'Erreur.');
       else setAddError('Erreur inattendue.');
@@ -1016,6 +1022,7 @@ function PackagingFormatsModal({
     setEditId(fmt.id);
     setEditLabel(fmt.label);
     setEditUnits(String(fmt.units_per_package));
+    setEditPrice(fmt.price ? String(parseFloat(fmt.price)) : '');
     setEditIsBase(fmt.is_base_unit);
     setEditError(null);
   }
@@ -1029,9 +1036,15 @@ function PackagingFormatsModal({
 
     setEditSaving(true);
     try {
+      const parsedEditPrice = parseFloat(editPrice);
       const { data } = await apiClient.put(
         `/api/products/${product!.id}/packaging-formats/${editId}`,
-        { label: editLabel.trim(), units_per_package: units, is_base_unit: editIsBase },
+        {
+          label:             editLabel.trim(),
+          units_per_package: units,
+          price:             editPrice.trim() && !isNaN(parsedEditPrice) && parsedEditPrice > 0 ? parsedEditPrice : null,
+          is_base_unit:      editIsBase,
+        },
       );
       setFormats((prev) =>
         prev.map((f) => {
@@ -1074,7 +1087,7 @@ function PackagingFormatsModal({
       className="fixed inset-0 z-50 flex items-center justify-center"
     >
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-10 w-full max-w-lg mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+      <div className="relative z-10 w-full max-w-2xl mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
         {/* En-tête */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
           <div>
@@ -1156,6 +1169,29 @@ function PackagingFormatsModal({
                           </div>
                         </div>
                         {editIsBase ? (
+                          <p className="text-xs text-textMuted bg-surface border border-borderLight rounded px-3 py-2 italic">
+                            Le prix de l&apos;unité de base est celui du produit. Modifiez-le depuis les informations du produit.
+                          </p>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            <label htmlFor={`pf-edit-price-${editId}`} className="text-xs text-textSecondary">
+                              Prix de vente (XOF) <span className="font-normal text-textMuted">(optionnel)</span>
+                            </label>
+                            <input
+                              id={`pf-edit-price-${editId}`}
+                              type="number"
+                              value={editPrice}
+                              onChange={(e) => setEditPrice(e.target.value)}
+                              className={inputCls}
+                              placeholder={
+                                product && editUnits && parseInt(editUnits) >= 1
+                                  ? `ex. ${Math.round(parseFloat(product.price) * parseInt(editUnits)).toLocaleString('fr-FR')} XOF`
+                                  : 'ex. 5 000 XOF'
+                              }
+                            />
+                          </div>
+                        )}
+                        {editIsBase ? (
                           <p className="text-xs text-primary flex items-center gap-1.5">
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded font-medium bg-primary/10 border border-primary/20">Base</span>
                             Unité de base — ne peut pas être retirée directement. Modifiez le libellé si nécessaire.
@@ -1198,6 +1234,12 @@ function PackagingFormatsModal({
                               Base
                             </span>
                           )}
+                          <span className="ml-2 text-xs font-medium text-textMain">
+                            {fmt.price
+                              ? `${parseFloat(fmt.price).toLocaleString('fr-FR')} XOF`
+                              : <span className="font-normal text-textMuted italic">{Math.round(parseFloat(product!.price) * fmt.units_per_package).toLocaleString('fr-FR')} XOF*</span>
+                            }
+                          </span>
                         </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           <Button
@@ -1263,6 +1305,23 @@ function PackagingFormatsModal({
                     placeholder="ex. 24"
                   />
                 </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="pf-add-price" className="text-xs text-textSecondary">
+                  Prix de vente (XOF) <span className="font-normal text-textMuted">(optionnel)</span>
+                </label>
+                <input
+                  id="pf-add-price"
+                  type="number"
+                  value={addPrice}
+                  onChange={(e) => setAddPrice(e.target.value)}
+                  className={inputCls}
+                  placeholder={
+                    product && addUnits && parseInt(addUnits) >= 1
+                      ? `ex. ${Math.round(parseFloat(product.price) * parseInt(addUnits)).toLocaleString('fr-FR')} XOF`
+                      : 'ex. 5 000 XOF'
+                  }
+                />
               </div>
               {addError && (
                 <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">
