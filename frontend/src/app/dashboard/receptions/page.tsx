@@ -690,30 +690,28 @@ function OrderReceptionsModal({
                       className="flex flex-col gap-1 p-3 bg-background border border-borderLight rounded"
                     >
                       {/* Ligne principale : nom + chiffres */}
-                      <div className="flex items-center justify-between gap-4 flex-wrap">
-                        <div className="flex flex-col gap-0">
-                          <span className="text-sm font-medium text-textMain">
-                            {product.name}
-                            <span className="ml-1.5 text-xs font-normal text-textMuted">({orderUnit})</span>
-                          </span>
+                      <div className="flex items-start justify-between gap-3 min-w-0">
+                        <div className="flex flex-col gap-0 min-w-0">
+                          <span className="text-sm font-medium text-textMain truncate">{product.name}</span>
                           <span className="text-xs text-textMuted font-mono">{product.sku}</span>
+                          <span className="text-xs text-textMuted">{orderUnit}</span>
                         </div>
-                        <div className="flex items-center gap-4 text-xs text-textMuted whitespace-nowrap">
-                          <span>
+                        <div className="flex flex-col gap-0.5 text-xs text-textMuted items-end shrink-0">
+                          <span className="whitespace-nowrap">
                             Commandé&nbsp;:&nbsp;
-                            <strong className="text-textMain">{ordered}</strong> {orderUnit}
+                            <strong className="text-textMain">{ordered}</strong>
                           </span>
-                          <span>
+                          <span className="whitespace-nowrap">
                             Reçu&nbsp;:&nbsp;
                             <strong className={isComplete ? 'text-green-700' : hasStarted ? 'text-orange-600' : 'text-textMuted'}>
                               {received}
-                            </strong> {orderUnit}
+                            </strong>
                           </span>
-                          <span>
+                          <span className="whitespace-nowrap">
                             Restant&nbsp;:&nbsp;
                             <strong className={remaining === 0 ? 'text-green-700' : 'text-textMain'}>
                               {remaining}
-                            </strong> {orderUnit}
+                            </strong>
                           </span>
                         </div>
                       </div>

@@ -598,7 +598,7 @@ function StockMovementModal({
                   Nombre de colis{selectedFormat ? ` (${selectedFormat.label})` : ''}
                 </label>
                 <input
-                  type="number" min={1} value={packagesCount}
+                  type="number" value={packagesCount}
                   onChange={(e) => setPackagesCount(e.target.value)}
                   className={inputCls} placeholder="ex. 2"
                 />
@@ -613,7 +613,7 @@ function StockMovementModal({
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-textSecondary">Quantité (unités de base)</label>
                 <input
-                  type="number" min={1} value={qty}
+                  type="number" value={qty}
                   onChange={(e) => setQty(e.target.value)}
                   className={inputCls} placeholder="ex. 50"
                 />
@@ -784,7 +784,7 @@ function FormatConversionModal({
                 <label className="text-xs font-medium text-textSecondary">
                   Nombre de colis à convertir ({fromFmt?.label}) <span className="text-red-500">*</span>
                 </label>
-                <input type="number" min={1} max={fromBd?.quantity} value={fromPackages}
+                <input type="number" value={fromPackages}
                   onChange={(e) => setFromPackages(e.target.value)} className={inputCls} placeholder="ex. 1" />
                 {fromFmt && fromPackages && !isNaN(parseInt(fromPackages)) && (
                   <p className="text-xs text-textMuted">
@@ -813,7 +813,7 @@ function FormatConversionModal({
                 <label className="text-xs font-medium text-textSecondary">
                   Nombre de colis obtenus ({toFmt?.label}) <span className="text-red-500">*</span>
                 </label>
-                <input type="number" min={1} value={toPackages}
+                <input type="number" value={toPackages}
                   onChange={(e) => setToPackages(e.target.value)} className={inputCls} placeholder="calculé automatiquement" />
                 {toFmt && toPackages && !isNaN(parseInt(toPackages)) && (
                   <p className="text-xs text-textMuted">

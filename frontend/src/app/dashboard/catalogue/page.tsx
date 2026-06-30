@@ -1148,7 +1148,6 @@ function PackagingFormatsModal({
                             <input
                               id={`pf-edit-units-${editId}`}
                               type="number"
-                              min={1}
                               value={editUnits}
                               onChange={(e) => setEditUnits(e.target.value)}
                               className={inputCls}
@@ -1258,7 +1257,6 @@ function PackagingFormatsModal({
                   <input
                     id="pf-add-units"
                     type="number"
-                    min={1}
                     value={addUnits}
                     onChange={(e) => setAddUnits(e.target.value)}
                     className={inputCls}
