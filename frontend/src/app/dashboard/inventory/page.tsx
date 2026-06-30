@@ -708,6 +708,7 @@ function FormatConversionModal({
     const toCount   = parseInt(toPackages, 10);
     if (isNaN(fromCount) || fromCount <= 0) { setError('Nombre de colis source invalide.'); return; }
     if (isNaN(toCount)   || toCount   <= 0) { setError('Nombre de colis destination invalide.'); return; }
+    if (!reason.trim()) { setError('Le motif est obligatoire.'); return; }
 
     setSaving(true);
     try {
@@ -718,7 +719,7 @@ function FormatConversionModal({
         from_packages_count:      fromCount,
         to_packaging_format_id:   toFormatId,
         to_packages_count:        toCount,
-        reason: reason.trim() || undefined,
+        reason:                   reason.trim(),
       });
       onSaved();
     } catch (err) {
@@ -807,27 +808,34 @@ function FormatConversionModal({
               </select>
             </div>
 
-            {/* Qté destination */}
+            {/* Qté destination — calculée, non modifiable */}
             {toFormatId && (
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-textSecondary">
-                  Nombre de colis obtenus ({toFmt?.label}) <span className="text-red-500">*</span>
+                  Nombre de colis obtenus ({toFmt?.label})
                 </label>
-                <input type="number" value={toPackages}
-                  onChange={(e) => setToPackages(e.target.value)} className={inputCls} placeholder="calculé automatiquement" />
-                {toFmt && toPackages && !isNaN(parseInt(toPackages)) && (
-                  <p className="text-xs text-textMuted">
-                    = <span className="font-medium text-textMain">{parseInt(toPackages) * toFmt.units_per_package}</span> unités de base
+                {toPackages ? (
+                  <>
+                    <div className={inputCls + ' bg-background opacity-70 cursor-not-allowed select-none'}>
+                      {toPackages}
+                    </div>
+                    <p className="text-xs text-textMuted">
+                      = <span className="font-medium text-textMain">{parseInt(toPackages) * (toFmt?.units_per_package ?? 1)}</span> unités de base
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+                    Conversion impossible — les unités de base ne se divisent pas entièrement en {toFmt?.label}.
                   </p>
                 )}
               </div>
             )}
 
-            {/* Motif optionnel */}
+            {/* Motif obligatoire */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-textSecondary">Motif (optionnel)</label>
+              <label className="text-xs font-medium text-textSecondary">Motif <span className="text-red-500">*</span></label>
               <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
-                className={inputCls} placeholder="ex. Reconditionnnement en cartons…" />
+                className={inputCls} placeholder="ex. Reconditionnement en cartons…" />
             </div>
 
             {error && (
