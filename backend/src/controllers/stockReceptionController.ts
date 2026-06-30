@@ -172,10 +172,10 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
       });
       return;
     }
-    if (error instanceof Error && error.message === 'RECEPTION_QTY_EXCEEDS_REMAINING') {
-      res.status(409).json({
+    if (error instanceof Error && error.message === 'SURPLUS_REQUIRES_NOTE') {
+      res.status(422).json({
         success: false,
-        message: 'La quantité reçue dépasse le reliquat autorisé pour au moins une ligne de commande.',
+        message: 'Une note est obligatoire lorsque la quantité reçue dépasse la quantité commandée.',
       });
       return;
     }

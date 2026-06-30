@@ -275,6 +275,30 @@ function CreateReceptionModal({
     setReceivedQtys((prev) => new Map(prev).set(itemId, value));
   }
 
+  // Calcule le reliquat restant par order_item_id (en unités de commande)
+  const remainingByItemId = useMemo(() => {
+    if (!order) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const oi of order.items) {
+      const fmt = oi.supplier_product.packaging_format;
+      const confirmedUnits = confirmedBaseUnits.get(oi.id) ?? 0;
+      const confirmedOrders = fmt.units_per_package > 0
+        ? Math.round(confirmedUnits / fmt.units_per_package)
+        : 0;
+      map.set(oi.id, Math.max(0, oi.ordered_qty - confirmedOrders));
+    }
+    return map;
+  }, [order, confirmedBaseUnits]);
+
+  // Vrai si au moins un article dépasse le reliquat
+  const hasSurplus = useMemo(() => {
+    if (!order) return false;
+    return order.items.some((oi) => {
+      const qty = receivedQtys.get(oi.id) ?? 0;
+      return qty > (remainingByItemId.get(oi.id) ?? 0);
+    });
+  }, [order, receivedQtys, remainingByItemId]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!order) return;
@@ -294,6 +318,11 @@ function CreateReceptionModal({
 
     if (items.length === 0) {
       setApiError('Veuillez saisir au moins une quantité reçue supérieure à 0.');
+      return;
+    }
+
+    if (hasSurplus && !notes.trim()) {
+      setApiError('Une note est obligatoire pour justifier la réception au-delà de la quantité commandée.');
       return;
     }
 
@@ -408,11 +437,11 @@ function CreateReceptionModal({
                     const totalUnits     = oi.ordered_qty * fmt.units_per_package;
 
                     // Avancement confirmé pour cette ligne de commande
-                      const histKey         = oi.id;
-                    const confirmedUnits  = confirmedBaseUnits.get(histKey) ?? 0;
+                    const confirmedUnits  = confirmedBaseUnits.get(oi.id) ?? 0;
                     const confirmedOrders = fmt.units_per_package > 0 ? Math.round(confirmedUnits / fmt.units_per_package) : 0;
-                    const remainingOrders = Math.max(0, oi.ordered_qty - confirmedOrders);
+                    const remainingOrders = remainingByItemId.get(oi.id) ?? 0;
                     const confirmedPct    = totalUnits > 0 ? Math.min(100, Math.round((confirmedUnits / totalUnits) * 100)) : 0;
+                    const isSurplusLine   = qty > 0 && qty > remainingOrders;
 
                     return (
                       <div
@@ -465,24 +494,36 @@ function CreateReceptionModal({
                             Ligne entièrement reçue
                           </div>
                         ) : (
-                          <div className="flex items-center gap-3">
-                            <label
-                              htmlFor={`reception-qty-${oi.id}`}
-                              className="text-xs font-medium text-textSecondary whitespace-nowrap"
-                            >
-                              Quantité reçue ({fmt.label})
-                            </label>
-                            <input
-                              ref={index === 0 ? firstInputRef : undefined}
-                              id={`reception-qty-${oi.id}`}
-                              type="number"
-                              step={1}
-                              min={0}
-                              value={qty === 0 ? '' : qty}
-                              placeholder="0"
-                              onChange={(e) => handleQtyChange(oi.id, e.target.value)}
-                              className={inputCls + ' max-w-[120px]'}
-                            />
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-3">
+                              <label
+                                htmlFor={`reception-qty-${oi.id}`}
+                                className="text-xs font-medium text-textSecondary whitespace-nowrap"
+                              >
+                                Quantité reçue ({fmt.label})
+                              </label>
+                              <input
+                                ref={index === 0 ? firstInputRef : undefined}
+                                id={`reception-qty-${oi.id}`}
+                                type="number"
+                                step={1}
+                                min={0}
+                                value={qty === 0 ? '' : qty}
+                                placeholder="0"
+                                onChange={(e) => handleQtyChange(oi.id, e.target.value)}
+                                className={inputCls + ' max-w-[120px]'}
+                              />
+                            </div>
+                            {isSurplusLine && (
+                              <div className="flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5" aria-hidden="true">
+                                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                                </svg>
+                                <span>
+                                  Surplus de <strong>{qty - remainingOrders}</strong> {fmt.label} au-delà de la commande.
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -495,14 +536,19 @@ function CreateReceptionModal({
             {/* Notes */}
             <div className="flex flex-col gap-1">
               <label htmlFor="reception-notes" className="text-xs font-medium text-textSecondary">
-                Notes (optionnel)
+                Notes {hasSurplus ? <span className="text-red-500">*</span> : <span className="font-normal text-textMuted">(optionnel)</span>}
               </label>
+              {hasSurplus && (
+                <p className="text-xs text-amber-700">
+                  Obligatoire pour justifier le surplus sur au moins une ligne.
+                </p>
+              )}
               <textarea
                 id="reception-notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
-                placeholder="Observations, anomalies constatées…"
+                placeholder={hasSurplus ? 'Justifiez le surplus reçu…' : 'Observations, anomalies constatées…'}
                 className={inputCls + ' resize-none'}
               />
             </div>
@@ -550,6 +596,12 @@ function OrderReceptionsModal({
   const [receptions, setReceptions] = useState<StockReceptionRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Index order_item_id → ordered_qty pour afficher "X/Y reçu(s)"
+  const orderedQtyByItemId = useMemo(() => {
+    if (!order) return new Map<string, number>();
+    return new Map(order.items.map((oi) => [oi.id, oi.ordered_qty]));
+  }, [order]);
 
   useEffect(() => {
     if (!order) return;
@@ -822,20 +874,28 @@ function OrderReceptionsModal({
                         Articles
                       </h4>
                       <ul className="flex flex-col gap-1">
-                        {reception.items.map((item) => (
-                          <li key={item.id} className="text-xs text-textMuted">
-                            <span className="font-medium text-textMain">{item.product.name}</span>
-                            {item.packaging_format && (
-                              <span className="text-textMuted"> ({item.packaging_format.label})</span>
-                            )}
-                            {' — '}
-                            {item.received_qty} reçu(s)
-                            {' → '}
-                            <span className="text-green-700 font-medium">
-                              +{item.stock_units_added} {item.product.unit}
-                            </span>
-                          </li>
-                        ))}
+                        {reception.items.map((item) => {
+                          const orderedQty = item.order_item_id
+                            ? (orderedQtyByItemId.get(item.order_item_id) ?? null)
+                            : null;
+                          return (
+                            <li key={item.id} className="text-xs text-textMuted">
+                              <span className="font-medium text-textMain">{item.product.name}</span>
+                              {item.packaging_format && (
+                                <span className="text-textMuted"> ({item.packaging_format.label})</span>
+                              )}
+                              {' — '}
+                              <span className="font-medium text-textMain">{item.received_qty}</span>
+                              {orderedQty !== null && (
+                                <span>/{orderedQty}</span>
+                              )}
+                              {' reçu(s) → '}
+                              <span className="text-green-700 font-medium">
+                                +{item.stock_units_added} {item.product.unit}
+                              </span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
 

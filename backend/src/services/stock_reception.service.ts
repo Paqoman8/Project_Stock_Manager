@@ -39,10 +39,11 @@ type ConfirmedReceptionSnapshot = {
   }>;
 };
 
-function assertReceptionDoesNotExceedRemaining(
+function assertSurplusHasNote(
   orderItems: Array<{ id: string; ordered_qty: number }>,
   requestedItems: Array<{ order_item_id: string; received_qty: number }>,
   confirmedReceptions: ConfirmedReceptionSnapshot[],
+  notes: string | undefined,
 ): void {
   const confirmedQtyByOrderItem = new Map<string, number>();
   for (const reception of confirmedReceptions) {
@@ -55,20 +56,16 @@ function assertReceptionDoesNotExceedRemaining(
     }
   }
 
-  const requestedQtyByOrderItem = new Map<string, number>();
-  for (const item of requestedItems) {
-    requestedQtyByOrderItem.set(
-      item.order_item_id,
-      (requestedQtyByOrderItem.get(item.order_item_id) ?? 0) + item.received_qty,
-    );
-  }
+  const hasSurplus = requestedItems.some((item) => {
+    const orderItem = orderItems.find((oi) => oi.id === item.order_item_id);
+    if (!orderItem) return false;
+    const confirmedQty = confirmedQtyByOrderItem.get(item.order_item_id) ?? 0;
+    const remaining = Math.max(0, orderItem.ordered_qty - confirmedQty);
+    return item.received_qty > remaining;
+  });
 
-  for (const orderItem of orderItems) {
-    const confirmedQty = confirmedQtyByOrderItem.get(orderItem.id) ?? 0;
-    const requestedQty = requestedQtyByOrderItem.get(orderItem.id) ?? 0;
-    if (confirmedQty + requestedQty > orderItem.ordered_qty) {
-      throw new Error('RECEPTION_QTY_EXCEEDS_REMAINING');
-    }
+  if (hasSurplus && !notes?.trim()) {
+    throw new Error('SURPLUS_REQUIRES_NOTE');
   }
 }
 
@@ -170,7 +167,7 @@ export async function createReception(
       },
     },
   });
-  assertReceptionDoesNotExceedRemaining(order.items, input.items, confirmedReceptions);
+  assertSurplusHasNote(order.items, input.items, confirmedReceptions, input.notes);
 
   // Construire un index order_item_id → { product_id, unitsPerPackage, packaging_format_id }
   // Clé par ligne de commande (et non par produit) pour traiter correctement un même
