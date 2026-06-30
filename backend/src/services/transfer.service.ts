@@ -75,7 +75,29 @@ async function normalizeTransferItems(items: CreateTransferInput['items']): Prom
 }
 
 async function ensureEnoughSourceStock(sourceStoreId: string, items: NormalizedTransferItem[]): Promise<void> {
-  const requestedByProduct = aggregateRequestedQuantities(items);
+  // Items with a format: check the specific inventory_breakdowns entry
+  const formatItems = items.filter((i) => i.packaging_format_id && i.packages_count !== undefined);
+  for (const item of formatItems) {
+    const breakdown = await prisma.inventoryBreakdown.findUnique({
+      where: {
+        store_id_product_id_packaging_format_id: {
+          store_id:            sourceStoreId,
+          product_id:          item.product_id,
+          packaging_format_id: item.packaging_format_id!,
+        },
+      },
+      select: { quantity: true },
+    });
+    if (!breakdown || breakdown.quantity < item.packages_count!) {
+      throw new Error('INSUFFICIENT_STOCK');
+    }
+  }
+
+  // Items without a format: check global stock_physical
+  const plainItems = items.filter((i) => !i.packaging_format_id);
+  if (plainItems.length === 0) return;
+
+  const requestedByProduct = aggregateRequestedQuantities(plainItems);
   const inventoryRows = await prisma.inventory.findMany({
     where: {
       store_id: sourceStoreId,
@@ -200,22 +222,48 @@ export async function confirmTransfer(
     assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
     if (transfer.status !== 'PENDING') throw new Error('TRANSFER_NOT_CONFIRMABLE');
 
-    const requestedByProduct = aggregateRequestedQuantities(transfer.items);
-    const inventoryRows = await tx.inventory.findMany({
-      where: {
-        store_id: transfer.from_store_id,
-        product_id: { in: [...requestedByProduct.keys()] },
-      },
-      select: { product_id: true, stock_physical: true },
-    });
+    // Format-specific items: check inventory_breakdowns
+    for (const item of transfer.items) {
+      const itemExt = item as typeof item & { packaging_format_id: string | null; packages_count: number | null };
+      if (itemExt.packaging_format_id && itemExt.packages_count != null) {
+        const bd = await tx.inventoryBreakdown.findUnique({
+          where: {
+            store_id_product_id_packaging_format_id: {
+              store_id:            transfer.from_store_id,
+              product_id:          item.product_id,
+              packaging_format_id: itemExt.packaging_format_id,
+            },
+          },
+          select: { quantity: true },
+        });
+        if (!bd || bd.quantity < itemExt.packages_count) throw new Error('INSUFFICIENT_STOCK');
+      }
+    }
 
-    const stockByProduct = new Map(inventoryRows.map((r) => [r.product_id, r.stock_physical]));
-    for (const [productId, requestedQty] of requestedByProduct.entries()) {
-      const available = stockByProduct.get(productId) ?? 0;
-      if (available < requestedQty) throw new Error('INSUFFICIENT_STOCK');
+    // Plain items (no format): check global stock_physical
+    const plainItems = transfer.items.filter((i) => {
+      const e = i as typeof i & { packaging_format_id: string | null };
+      return !e.packaging_format_id;
+    });
+    if (plainItems.length > 0) {
+      const requestedByProduct = aggregateRequestedQuantities(plainItems);
+      const inventoryRows = await tx.inventory.findMany({
+        where: {
+          store_id: transfer.from_store_id,
+          product_id: { in: [...requestedByProduct.keys()] },
+        },
+        select: { product_id: true, stock_physical: true },
+      });
+      const stockByProduct = new Map(inventoryRows.map((r) => [r.product_id, r.stock_physical]));
+      for (const [productId, requestedQty] of requestedByProduct.entries()) {
+        const available = stockByProduct.get(productId) ?? 0;
+        if (available < requestedQty) throw new Error('INSUFFICIENT_STOCK');
+      }
     }
 
     for (const item of transfer.items) {
+      const itemExt = item as typeof item & { packaging_format_id: string | null; packages_count: number | null };
+
       await tx.inventory.upsert({
         where: {
           store_id_product_id: {
@@ -245,6 +293,38 @@ export async function confirmTransfer(
           stock_physical: item.qty,
         },
       });
+
+      // Update inventory_breakdowns for format-specific items
+      if (itemExt.packaging_format_id && itemExt.packages_count != null) {
+        // Debit source breakdown
+        await tx.inventoryBreakdown.update({
+          where: {
+            store_id_product_id_packaging_format_id: {
+              store_id:            transfer.from_store_id,
+              product_id:          item.product_id,
+              packaging_format_id: itemExt.packaging_format_id,
+            },
+          },
+          data: { quantity: { decrement: itemExt.packages_count } },
+        });
+        // Credit destination breakdown
+        await tx.inventoryBreakdown.upsert({
+          where: {
+            store_id_product_id_packaging_format_id: {
+              store_id:            transfer.to_store_id,
+              product_id:          item.product_id,
+              packaging_format_id: itemExt.packaging_format_id,
+            },
+          },
+          update: { quantity: { increment: itemExt.packages_count } },
+          create: {
+            store_id:            transfer.to_store_id,
+            product_id:          item.product_id,
+            packaging_format_id: itemExt.packaging_format_id,
+            quantity:            itemExt.packages_count,
+          },
+        });
+      }
 
       await tx.stockMovement.create({
         data: {

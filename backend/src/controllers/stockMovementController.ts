@@ -127,8 +127,74 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
         return void res.status(409).json({ success: false, message: 'Un stock initial existe déjà pour ce produit dans cet établissement.' });
       if (error.message === 'REASON_REQUIRED')
         return void res.status(400).json({ success: false, message: 'Un motif est obligatoire pour les ajustements.' });
+      if (error.message === 'INSUFFICIENT_FORMAT_STOCK')
+        return void res.status(409).json({ success: false, message: 'Stock insuffisant pour ce format de conditionnement.' });
     }
     console.error('Erreur création mouvement :', error);
+    res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Conversion inter-formats
+// ---------------------------------------------------------------------------
+
+const createConversionSchema = z.object({
+  store_id:                 z.string().uuid('UUID établissement invalide'),
+  product_id:               z.string().uuid('UUID produit invalide'),
+  from_packaging_format_id: z.string().uuid('UUID format source invalide'),
+  from_packages_count:      z.number().int().positive('Nombre de colis source invalide'),
+  to_packaging_format_id:   z.string().uuid('UUID format destination invalide'),
+  to_packages_count:        z.number().int().positive('Nombre de colis destination invalide'),
+  reason:                   z.string().optional(),
+});
+
+/**
+ * POST /api/stock-movements/convert
+ * Body : { store_id, product_id, from_packaging_format_id, from_packages_count,
+ *           to_packaging_format_id, to_packages_count, reason? }
+ */
+export async function createConversion(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const parseResult = createConversionSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ success: false, message: 'Données invalides.', errors: formatZodErrors(parseResult.error) });
+    return;
+  }
+
+  const actorId = req.user!.userId;
+  const storeId = req.user!.storeId;
+  const ip      = extractIp(req);
+
+  try {
+    const [actorName, storeName] = await Promise.all([
+      resolveActorName(actorId),
+      resolveStoreName(storeId),
+    ]);
+
+    const movement = await movementService.createConversion(
+      { ...parseResult.data, performed_by_id: actorId },
+      actorId,
+      actorName,
+      storeId,
+      storeName,
+      ip,
+    );
+
+    res.status(201).json({ success: true, message: 'Conversion inter-formats enregistrée.', movement });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === 'STORE_NOT_FOUND')
+        return void res.status(404).json({ success: false, message: 'Établissement introuvable.' });
+      if (error.message === 'PRODUCT_NOT_FOUND')
+        return void res.status(404).json({ success: false, message: 'Produit introuvable.' });
+      if (error.message === 'FORMAT_NOT_FOUND')
+        return void res.status(404).json({ success: false, message: 'Format introuvable ou non associé à ce produit.' });
+      if (error.message === 'SAME_FORMAT_CONVERSION')
+        return void res.status(400).json({ success: false, message: 'Le format source et le format destination doivent être différents.' });
+      if (error.message === 'INSUFFICIENT_FORMAT_STOCK')
+        return void res.status(409).json({ success: false, message: 'Stock insuffisant pour ce format source.' });
+    }
+    console.error('Erreur conversion inter-formats :', error);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });
   }
 }

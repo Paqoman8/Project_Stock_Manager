@@ -19,6 +19,7 @@ import type {
   StockMovementRow,
   StockMovementFilters,
   CreateMovementData,
+  CreateConversionData,
 } from '../repositories/stock_movement.repository';
 
 export type { StockMovementRow };
@@ -42,6 +43,7 @@ export async function getMovements(
  * @throws Error('PRODUCT_NOT_FOUND')            si le produit est introuvable
  * @throws Error('FORMAT_NOT_FOUND')             si le format est introuvable ou n'appartient pas au produit
  * @throws Error('PACKAGES_COUNT_REQUIRED')      si format fourni mais packages_count manquant
+ * @throws Error('INSUFFICIENT_FORMAT_STOCK')    si ADJUSTMENT_OUT et ventilation format insuffisante
  */
 export async function createMovement(
   data: Omit<CreateMovementData, 'performed_by_id'> & { performed_by_id: string },
@@ -88,6 +90,23 @@ export async function createMovement(
     packagingLabel = `${data.packages_count} × ${format.label}`;
   }
 
+  // ADJUSTMENT_OUT avec format : vérifier que la ventilation est suffisante
+  if (data.type === 'ADJUSTMENT_OUT' && data.packaging_format_id && data.packages_count) {
+    const breakdown = await prisma.inventoryBreakdown.findUnique({
+      where: {
+        store_id_product_id_packaging_format_id: {
+          store_id:            data.store_id,
+          product_id:          data.product_id,
+          packaging_format_id: data.packaging_format_id,
+        },
+      },
+      select: { quantity: true },
+    });
+    if (!breakdown || breakdown.quantity < data.packages_count) {
+      throw new Error('INSUFFICIENT_FORMAT_STOCK');
+    }
+  }
+
   // INITIAL : impossible si une entrée inventaire avec stock > 0 existe déjà
   if (data.type === 'INITIAL') {
     const existing = await prisma.inventory.findUnique({
@@ -120,10 +139,11 @@ export async function createMovement(
   // Audit — non-bloquant
   try {
     const typeLabels: Record<MovementType, string> = {
-      INITIAL:        'Saisie initiale',
-      ADJUSTMENT_IN:  'Régularisation +',
-      ADJUSTMENT_OUT: 'Régularisation −',
-      RECEPTION:      'Réception',
+      INITIAL:           'Saisie initiale',
+      ADJUSTMENT_IN:     'Régularisation +',
+      ADJUSTMENT_OUT:    'Régularisation −',
+      RECEPTION:         'Réception',
+      FORMAT_CONVERSION: 'Conversion inter-formats',
     };
     await logAction({
       actorId,
@@ -145,6 +165,74 @@ export async function createMovement(
     });
   } catch (err) {
     console.error('[audit] Échec du log STOCK_MOVEMENT_CREATED :', err);
+  }
+
+  return movement;
+}
+
+/**
+ * Convertit des colis d'un format vers un autre (conversion inter-formats).
+ *
+ * Règles :
+ *   - from_format et to_format doivent appartenir au même produit
+ *   - La ventilation source doit avoir assez de colis
+ *   - stock_physical est ajusté si les totaux d'unités diffèrent
+ *
+ * @throws Error('STORE_NOT_FOUND')
+ * @throws Error('PRODUCT_NOT_FOUND')
+ * @throws Error('FORMAT_NOT_FOUND')         si un format est introuvable ou n'appartient pas au produit
+ * @throws Error('SAME_FORMAT_CONVERSION')   si from == to
+ * @throws Error('INSUFFICIENT_FORMAT_STOCK') si stock insuffisant pour le format source
+ */
+export async function createConversion(
+  data: Omit<CreateConversionData, 'performed_by_id'> & { performed_by_id: string },
+  actorId:   string,
+  actorName: string,
+  storeId?:  string,
+  storeName?: string,
+  ipAddress?: string,
+): Promise<StockMovementRow> {
+  if (data.from_packaging_format_id === data.to_packaging_format_id) {
+    throw new Error('SAME_FORMAT_CONVERSION');
+  }
+
+  const store = await prisma.store.findUnique({ where: { id: data.store_id }, select: { id: true } });
+  if (!store) throw new Error('STORE_NOT_FOUND');
+
+  const product = await prisma.product.findUnique({ where: { id: data.product_id }, select: { id: true, name: true } });
+  if (!product) throw new Error('PRODUCT_NOT_FOUND');
+
+  // Vérifier que les deux formats appartiennent au même produit
+  const [fromFmt, toFmt] = await Promise.all([
+    prisma.packagingFormat.findUnique({ where: { id: data.from_packaging_format_id }, select: { id: true, label: true, product_id: true } }),
+    prisma.packagingFormat.findUnique({ where: { id: data.to_packaging_format_id },   select: { id: true, label: true, product_id: true } }),
+  ]);
+  if (!fromFmt || fromFmt.product_id !== data.product_id) throw new Error('FORMAT_NOT_FOUND');
+  if (!toFmt   || toFmt.product_id   !== data.product_id) throw new Error('FORMAT_NOT_FOUND');
+
+  const movement = await movementRepo.createConversion(data);
+
+  try {
+    await logAction({
+      actorId,
+      actorName,
+      action:     AuditAction.STOCK_MOVEMENT_CREATED,
+      targetType: 'STOCK_MOVEMENT',
+      targetId:   movement.id,
+      targetName: `${product.name} — Conversion ${fromFmt.label} → ${toFmt.label}`,
+      storeId,
+      storeName,
+      ipAddress,
+      metadata: {
+        type:                    'FORMAT_CONVERSION',
+        from_packaging_format_id: data.from_packaging_format_id,
+        from_packages_count:      data.from_packages_count,
+        to_packaging_format_id:   data.to_packaging_format_id,
+        to_packages_count:        data.to_packages_count,
+      },
+    });
+  } catch (err) {
+    console.error('[audit] Échec du log FORMAT_CONVERSION :', err);
   }
 
   return movement;

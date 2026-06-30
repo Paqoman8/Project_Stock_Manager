@@ -199,7 +199,8 @@ model PackagingFormat {
   created_at        DateTime             @default(now())
   updated_at        DateTime             @updatedAt
   product           Product              @relation(fields: [product_id], references: [id], onDelete: Cascade)
-  stock_movements         StockMovement[]
+  stock_movements         StockMovement[]  @relation("SourceFormat")
+  dest_movements          StockMovement[]  @relation("DestFormat")
   inventory_breakdowns    InventoryBreakdown[]
   purchase_order_items    PurchaseOrderItem[]
   reception_items         ReceptionItem[]
@@ -677,10 +678,11 @@ model AuditLog {
 // ---------------------------------------------------------------------------
 
 enum MovementType {
-  INITIAL        // Saisie initiale du stock (premier enregistrement)
-  ADJUSTMENT_IN  // Régularisation positive (retour, erreur de comptage…)
-  ADJUSTMENT_OUT // Régularisation négative (casse, perte, vol…)
-  RECEPTION      // Auto-created on reception confirmation
+  INITIAL           // Saisie initiale du stock (premier enregistrement)
+  ADJUSTMENT_IN     // Régularisation positive (retour, erreur de comptage…)
+  ADJUSTMENT_OUT    // Régularisation négative (casse, perte, vol…)
+  RECEPTION         // Auto-created on reception confirmation
+  FORMAT_CONVERSION // Conversion inter-formats (débit format A → crédit format B)
 }
 
 
@@ -692,13 +694,16 @@ model StockMovement {
   qty                 Int             // Always positive in base units
   reason              String?         // Free-form reason (required for ADJUSTMENT_*)
   performed_by_id     String          @db.Uuid
-  packaging_format_id String?         @db.Uuid // Optional packaging; non-null when movement by format
-  packages_count      Int?            // Package count (qty = packages_count × units_per_package)
-  created_at          DateTime        @default(now())
-  store               Store           @relation(fields: [store_id], references: [id])
-  product             Product         @relation(fields: [product_id], references: [id])
-  performed_by        User            @relation("MovementsPerformedBy", fields: [performed_by_id], references: [id])
-  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  packaging_format_id    String?          @db.Uuid // Source format (required for FORMAT_CONVERSION)
+  packages_count         Int?             // Source package count
+  to_packaging_format_id String?          @db.Uuid @map("to_packaging_format_id") // Destination format (FORMAT_CONVERSION only)
+  to_packages_count      Int?             @map("to_packages_count")               // Destination package count
+  created_at             DateTime         @default(now())
+  store                  Store            @relation(fields: [store_id], references: [id])
+  product                Product          @relation(fields: [product_id], references: [id])
+  performed_by           User             @relation("MovementsPerformedBy", fields: [performed_by_id], references: [id])
+  packaging_format       PackagingFormat? @relation("SourceFormat", fields: [packaging_format_id], references: [id])
+  to_packaging_format    PackagingFormat? @relation("DestFormat", fields: [to_packaging_format_id], references: [id])
 
   @@map("stock_movements")
 }
