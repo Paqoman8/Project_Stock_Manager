@@ -7,6 +7,7 @@
 
 import { Response } from 'express';
 import { z, ZodError } from 'zod';
+import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as receptionService from '../services/stock_reception.service';
@@ -22,6 +23,15 @@ function extractIp(req: AuthenticatedRequest): string {
     return forwarded.split(',')[0].trim() || (req.ip ?? '');
   }
   return req.ip ?? '';
+}
+
+/** Résout le nom du rôle de l'utilisateur connecté. */
+async function getRoleNameFromRequest(req: AuthenticatedRequest): Promise<string> {
+  const role = await prisma.role.findUnique({
+    where:  { id: req.user!.roleId },
+    select: { name: true },
+  });
+  return role?.name ?? '';
 }
 
 /**
@@ -134,10 +144,12 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
   const ip      = extractIp(req);
 
   try {
-    const [actorName, storeName] = await Promise.all([
+    const [actorName, storeName, roleName] = await Promise.all([
       resolveActorName(actorId),
       resolveStoreName(storeId),
+      getRoleNameFromRequest(req),
     ]);
+    const restrictToOwnStore = roleName !== 'Super Administrateur' && roleName !== 'Administrateur';
 
     const reception = await receptionService.createReception(
       parseResult.data,
@@ -146,6 +158,7 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
       storeId,
       storeName,
       ip,
+      restrictToOwnStore,
     );
 
     res.status(201).json({
@@ -156,6 +169,13 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
   } catch (error) {
     if (error instanceof Error && error.message === 'ORDER_NOT_FOUND') {
       res.status(404).json({ success: false, message: 'Commande introuvable.' });
+      return;
+    }
+    if (error instanceof Error && error.message === 'FORBIDDEN_STORE_SCOPE') {
+      res.status(403).json({
+        success: false,
+        message: 'Vous ne pouvez créer une réception que pour le magasin de destination de la commande.',
+      });
       return;
     }
     if (error instanceof Error && error.message === 'INVALID_ORDER_STATUS') {

@@ -9,7 +9,7 @@
     "dev": "bash ./scripts/dev-local.sh",
     "dev:db": "docker compose up -d postgres",
     "dev:backend": "DATABASE_URL='postgresql://admin:adminpassword@localhost:5433/gstock_db?schema=public' JWT_SECRET='changez-moi-en-production-avec-openssl-rand-hex-32' NODE_ENV=development PORT=5001 FRONTEND_URL='http://localhost:3000' npm --prefix backend run dev",
-    "dev:frontend": "PORT=3000 BACKEND_URL='http://localhost:5000' NEXT_PUBLIC_APP_NAME='Stock Manager' npm --prefix frontend run dev",
+    "dev:frontend": "PORT=3000 BACKEND_URL='http://localhost:5001' NEXT_PUBLIC_APP_NAME='Stock Manager' npm --prefix frontend run dev",
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
     "db:migrate": "DATABASE_URL='postgresql://admin:adminpassword@localhost:5433/gstock_db?schema=public' npm --prefix backend run prisma:migrate",
     "db:seed": "DATABASE_URL='postgresql://admin:adminpassword@localhost:5433/gstock_db?schema=public' npm --prefix backend run prisma:seed",

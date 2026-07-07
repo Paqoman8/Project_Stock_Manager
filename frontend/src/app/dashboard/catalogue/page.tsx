@@ -1042,7 +1042,8 @@ function PackagingFormatsModal({
         {
           label:             editLabel.trim(),
           units_per_package: units,
-          price:             editPrice.trim() && !isNaN(parsedEditPrice) && parsedEditPrice > 0 ? parsedEditPrice : null,
+          // L'unité de base n'a jamais de prix propre — le backend le rejetterait sinon
+          price:             editIsBase ? null : (editPrice.trim() && !isNaN(parsedEditPrice) && parsedEditPrice > 0 ? parsedEditPrice : null),
           is_base_unit:      editIsBase,
         },
       );

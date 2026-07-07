@@ -7,12 +7,18 @@
 //     d'un format utilisé par des PackagingFormats existants
 //   - Cycle de vie : création, mise à jour, suppression physique
 
+import { Prisma } from '@prisma/client';
 import * as productFormatRepo from '../repositories/productFormat.repository';
 import type {
   ProductFormatRow,
   CreateProductFormatData,
   UpdateProductFormatData,
 } from '../repositories/productFormat.repository';
+
+/** true si l'erreur est une violation de contrainte/index unique Postgres (code P2002). */
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
 
 // Ré-export du type pour les controllers
 export type { ProductFormatRow };
@@ -48,7 +54,16 @@ export async function createProductFormat(
     throw new Error('LABEL_ALREADY_EXISTS');
   }
 
-  return productFormatRepo.create(data);
+  try {
+    return await productFormatRepo.create(data);
+  } catch (err) {
+    // Filet de sécurité contre une création concurrente du même label entre le
+    // check ci-dessus et l'insertion (protégé en base par l'index unique insensible à la casse).
+    if (isUniqueViolation(err)) {
+      throw new Error('LABEL_ALREADY_EXISTS');
+    }
+    throw err;
+  }
 }
 
 /**
@@ -73,14 +88,21 @@ export async function updateProductFormat(
   }
 
   // Vérification unicité du label (seulement si le label change)
-  if (data.label.toLowerCase() !== existing.label.toLowerCase()) {
+  if (data.label.trim().toLowerCase() !== existing.label.trim().toLowerCase()) {
     const labelOwner = await productFormatRepo.findByLabel(data.label, id);
     if (labelOwner) {
       throw new Error('LABEL_ALREADY_EXISTS');
     }
   }
 
-  return productFormatRepo.update(id, data);
+  try {
+    return await productFormatRepo.update(id, data);
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new Error('LABEL_ALREADY_EXISTS');
+    }
+    throw err;
+  }
 }
 
 /**

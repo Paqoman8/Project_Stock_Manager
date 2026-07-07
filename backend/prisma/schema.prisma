@@ -179,7 +179,10 @@ model Product {
 // Managed by admins; labels are reused as-is in PackagingFormat.label.
 model ProductFormat {
   id        String   @id @default(uuid())
-  label     String   @unique
+  // Unicité réelle (insensible casse/espaces) appliquée par un index fonctionnel en base
+  // (product_formats_label_ci_key, cf. migration product_formats_case_insensitive_unique) —
+  // non représentable dans le schéma Prisma, donc pas de @unique ici.
+  label     String
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

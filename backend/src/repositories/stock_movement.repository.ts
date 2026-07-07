@@ -7,9 +7,8 @@
 //   - Création d'un mouvement + mise à jour atomique de stock_physical
 //   - Si packaging_format_id fourni : mise à jour atomique de InventoryBreakdown
 
-import { MovementType } from '@prisma/client';
+import { MovementType, Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
-import { upsertOp as breakdownUpsert } from './inventory_breakdown.repository';
 
 // ---------------------------------------------------------------------------
 // Types exposés
@@ -42,6 +41,7 @@ export interface CreateConversionData {
   from_packages_count:   number;
   to_packaging_format_id: string;
   to_packages_count:     number;
+  total_units:           number; // équivalence en unités de base — calculée par le service, tracée sur le mouvement
   reason?:               string;
   performed_by_id:       string;
 }
@@ -103,6 +103,9 @@ export async function findAll(
  *
  * - INITIAL / ADJUSTMENT_IN / RECEPTION : stock_physical += qty
  * - ADJUSTMENT_OUT                       : stock_physical -= qty
+ *
+ * @throws Error('INSUFFICIENT_FORMAT_STOCK') si ADJUSTMENT_OUT et ventilation format insuffisante
+ *         (vérifié à l'intérieur de la transaction — Serializable — pour éviter tout TOCTOU)
  */
 export async function create(data: CreateMovementData): Promise<StockMovementRow> {
   const stockDelta     = data.type === 'ADJUSTMENT_OUT' ? -data.qty : data.qty;
@@ -111,6 +114,23 @@ export async function create(data: CreateMovementData): Promise<StockMovementRow
     :  (data.packages_count ?? 0);
 
   const movement = await prisma.$transaction(async (tx) => {
+    // 0. ADJUSTMENT_OUT avec format : vérifier que la ventilation est suffisante
+    if (data.type === 'ADJUSTMENT_OUT' && data.packaging_format_id && data.packages_count) {
+      const breakdown = await tx.inventoryBreakdown.findUnique({
+        where: {
+          store_id_product_id_packaging_format_id: {
+            store_id:            data.store_id,
+            product_id:          data.product_id,
+            packaging_format_id: data.packaging_format_id,
+          },
+        },
+        select: { quantity: true },
+      });
+      if (!breakdown || breakdown.quantity < data.packages_count) {
+        throw new Error('INSUFFICIENT_FORMAT_STOCK');
+      }
+    }
+
     // 1. Créer le mouvement
     const mov = await tx.stockMovement.create({
       data: {
@@ -163,7 +183,7 @@ export async function create(data: CreateMovementData): Promise<StockMovementRow
     }
 
     return mov;
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   return movement as unknown as StockMovementRow;
 }
@@ -173,30 +193,14 @@ export async function create(data: CreateMovementData): Promise<StockMovementRow
  *
  * - Débite inventory_breakdowns[from_format].quantity de from_packages_count
  * - Crédite inventory_breakdowns[to_format].quantity de to_packages_count
- * - stock_physical est recalculé : delta = to_units - from_units (peut être 0 si même base)
+ * - to_packages_count est déjà l'équivalence exacte calculée par le service —
+ *   stock_physical (compteur global en unités de base) n'a donc jamais besoin d'être ajusté ici
  * - Un seul StockMovement FORMAT_CONVERSION est créé (traçabilité)
  *
  * @throws Error('INSUFFICIENT_FORMAT_STOCK') si la ventilation source est insuffisante
  */
 export async function createConversion(data: CreateConversionData): Promise<StockMovementRow> {
   const movement = await prisma.$transaction(async (tx) => {
-    // Résoudre les deux formats
-    const [fromFmt, toFmt] = await Promise.all([
-      tx.packagingFormat.findUnique({
-        where: { id: data.from_packaging_format_id },
-        select: { id: true, units_per_package: true },
-      }),
-      tx.packagingFormat.findUnique({
-        where: { id: data.to_packaging_format_id },
-        select: { id: true, units_per_package: true },
-      }),
-    ]);
-    if (!fromFmt || !toFmt) throw new Error('FORMAT_NOT_FOUND');
-
-    const fromUnits = data.from_packages_count * fromFmt.units_per_package;
-    const toUnits   = data.to_packages_count   * toFmt.units_per_package;
-    const stockDelta = toUnits - fromUnits; // 0 if same total units
-
     // Vérifier stock du format source
     const fromBreakdown = await tx.inventoryBreakdown.findUnique({
       where: {
@@ -242,31 +246,13 @@ export async function createConversion(data: CreateConversionData): Promise<Stoc
       },
     });
 
-    // Ajuster stock_physical si les unités totales diffèrent
-    if (stockDelta !== 0) {
-      await tx.inventory.upsert({
-        where: {
-          store_id_product_id: {
-            store_id:   data.store_id,
-            product_id: data.product_id,
-          },
-        },
-        update: { stock_physical: { increment: stockDelta } },
-        create: {
-          store_id:       data.store_id,
-          product_id:     data.product_id,
-          stock_physical: Math.max(0, stockDelta),
-        },
-      });
-    }
-
     // Créer le mouvement traçabilité
     return tx.stockMovement.create({
       data: {
         store_id:               data.store_id,
         product_id:             data.product_id,
         type:                   'FORMAT_CONVERSION',
-        qty:                    fromUnits,
+        qty:                    data.total_units,
         reason:                 data.reason ?? null,
         performed_by_id:        data.performed_by_id,
         packaging_format_id:    data.from_packaging_format_id,
@@ -276,7 +262,7 @@ export async function createConversion(data: CreateConversionData): Promise<Stoc
       },
       include: MOVEMENT_INCLUDE,
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   return movement as unknown as StockMovementRow;
 }

@@ -90,22 +90,8 @@ export async function createMovement(
     packagingLabel = `${data.packages_count} × ${format.label}`;
   }
 
-  // ADJUSTMENT_OUT avec format : vérifier que la ventilation est suffisante
-  if (data.type === 'ADJUSTMENT_OUT' && data.packaging_format_id && data.packages_count) {
-    const breakdown = await prisma.inventoryBreakdown.findUnique({
-      where: {
-        store_id_product_id_packaging_format_id: {
-          store_id:            data.store_id,
-          product_id:          data.product_id,
-          packaging_format_id: data.packaging_format_id,
-        },
-      },
-      select: { quantity: true },
-    });
-    if (!breakdown || breakdown.quantity < data.packages_count) {
-      throw new Error('INSUFFICIENT_FORMAT_STOCK');
-    }
-  }
+  // Note : la vérification « ventilation suffisante » pour ADJUSTMENT_OUT est faite
+  // dans movementRepo.create(), à l'intérieur de la transaction (évite un TOCTOU).
 
   // INITIAL : impossible si une entrée inventaire avec stock > 0 existe déjà
   if (data.type === 'INITIAL') {
@@ -176,16 +162,23 @@ export async function createMovement(
  * Règles :
  *   - from_format et to_format doivent appartenir au même produit
  *   - La ventilation source doit avoir assez de colis
- *   - stock_physical est ajusté si les totaux d'unités diffèrent
+ *   - to_packages_count est calculé server-side par équivalence en unités de base —
+ *     le client n'a pas à l'envoyer (une conversion ne crée ni ne détruit du stock).
+ *     S'il l'envoie quand même, il doit correspondre à la valeur calculée.
  *
  * @throws Error('STORE_NOT_FOUND')
  * @throws Error('PRODUCT_NOT_FOUND')
- * @throws Error('FORMAT_NOT_FOUND')         si un format est introuvable ou n'appartient pas au produit
- * @throws Error('SAME_FORMAT_CONVERSION')   si from == to
- * @throws Error('INSUFFICIENT_FORMAT_STOCK') si stock insuffisant pour le format source
+ * @throws Error('FORMAT_NOT_FOUND')            si un format est introuvable ou n'appartient pas au produit
+ * @throws Error('SAME_FORMAT_CONVERSION')      si from == to
+ * @throws Error('NON_DIVISIBLE_CONVERSION')    si l'équivalence en unités n'est pas un nombre entier de colis destination
+ * @throws Error('CONVERSION_MISMATCH')         si to_packages_count fourni ne correspond pas à la valeur calculée
+ * @throws Error('INSUFFICIENT_FORMAT_STOCK')   si stock insuffisant pour le format source
  */
 export async function createConversion(
-  data: Omit<CreateConversionData, 'performed_by_id'> & { performed_by_id: string },
+  data: Omit<CreateConversionData, 'performed_by_id' | 'to_packages_count' | 'total_units'> & {
+    performed_by_id: string;
+    to_packages_count?: number;
+  },
   actorId:   string,
   actorName: string,
   storeId?:  string,
@@ -204,13 +197,27 @@ export async function createConversion(
 
   // Vérifier que les deux formats appartiennent au même produit
   const [fromFmt, toFmt] = await Promise.all([
-    prisma.packagingFormat.findUnique({ where: { id: data.from_packaging_format_id }, select: { id: true, label: true, product_id: true } }),
-    prisma.packagingFormat.findUnique({ where: { id: data.to_packaging_format_id },   select: { id: true, label: true, product_id: true } }),
+    prisma.packagingFormat.findUnique({ where: { id: data.from_packaging_format_id }, select: { id: true, label: true, product_id: true, units_per_package: true } }),
+    prisma.packagingFormat.findUnique({ where: { id: data.to_packaging_format_id },   select: { id: true, label: true, product_id: true, units_per_package: true } }),
   ]);
   if (!fromFmt || fromFmt.product_id !== data.product_id) throw new Error('FORMAT_NOT_FOUND');
   if (!toFmt   || toFmt.product_id   !== data.product_id) throw new Error('FORMAT_NOT_FOUND');
 
-  const movement = await movementRepo.createConversion(data);
+  // Équivalence calculée server-side : la conversion ne doit jamais créer/détruire du stock
+  const fromUnits = data.from_packages_count * fromFmt.units_per_package;
+  if (fromUnits % toFmt.units_per_package !== 0) {
+    throw new Error('NON_DIVISIBLE_CONVERSION');
+  }
+  const computedToPackagesCount = fromUnits / toFmt.units_per_package;
+  if (data.to_packages_count !== undefined && data.to_packages_count !== computedToPackagesCount) {
+    throw new Error('CONVERSION_MISMATCH');
+  }
+
+  const movement = await movementRepo.createConversion({
+    ...data,
+    to_packages_count: computedToPackagesCount,
+    total_units:       fromUnits,
+  });
 
   try {
     await logAction({
@@ -228,7 +235,7 @@ export async function createConversion(
         from_packaging_format_id: data.from_packaging_format_id,
         from_packages_count:      data.from_packages_count,
         to_packaging_format_id:   data.to_packaging_format_id,
-        to_packages_count:        data.to_packages_count,
+        to_packages_count:        computedToPackagesCount,
       },
     });
   } catch (err) {

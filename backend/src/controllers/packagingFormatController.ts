@@ -99,11 +99,21 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
       }
     }
 
+    // Règle : l'unité de base n'a jamais de prix propre — elle prend automatiquement
+    // le prix de base du produit (null = product.price × 1, voir schema.prisma)
+    if (is_base_unit && price !== undefined && price !== null) {
+      res.status(422).json({
+        success: false,
+        message: 'Un format d\'unité de base ne peut pas avoir de prix spécifique : il utilise automatiquement le prix de base du produit.',
+      });
+      return;
+    }
+
     const format = await repo.create({
       product_id:        productId,
       label,
       units_per_package,
-      price:             price ?? null,
+      price:             is_base_unit ? null : (price ?? null),
       is_base_unit,
     });
     res.status(201).json({ success: true, format });
@@ -146,6 +156,16 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
+    // Règle : l'unité de base n'a jamais de prix propre — elle prend automatiquement
+    // le prix de base du produit (null = product.price × 1, voir schema.prisma)
+    if (newIsBase && price !== undefined && price !== null) {
+      res.status(422).json({
+        success: false,
+        message: 'Un format d\'unité de base ne peut pas avoir de prix spécifique : il utilise automatiquement le prix de base du produit.',
+      });
+      return;
+    }
+
     // Si on bascule ce format en unité de base, on retire le badge à l'ancien
     if (is_base_unit === true && !existing.is_base_unit) {
       const currentBase = await repo.findBaseUnit(productId);
@@ -154,7 +174,9 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
       }
     }
 
-    const format = await repo.update(id, { label, units_per_package, price: price ?? null, is_base_unit });
+    // price omis (undefined) = ne pas toucher à la valeur existante ; forcé à null si unité de base.
+    const priceUpdate = newIsBase ? null : price;
+    const format = await repo.update(id, { label, units_per_package, price: priceUpdate, is_base_unit });
     res.status(200).json({ success: true, format });
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes('Unique constraint')) {

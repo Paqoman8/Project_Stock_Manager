@@ -89,7 +89,7 @@ export async function findByLabel(
 ): Promise<ProductFormatRow | null> {
   return prisma.productFormat.findFirst({
     where: {
-      label: { equals: label, mode: 'insensitive' },
+      label: { equals: label.trim(), mode: 'insensitive' },
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: PRODUCT_FORMAT_SELECT,
@@ -105,7 +105,7 @@ export async function findByLabel(
  */
 export async function isLabelUsedByPackagingFormat(label: string): Promise<boolean> {
   const existing = await prisma.packagingFormat.findFirst({
-    where:  { label },
+    where:  { label: { equals: label.trim(), mode: 'insensitive' } },
     select: { id: true },
   });
   return existing !== null;
@@ -119,7 +119,7 @@ export async function isLabelUsedByPackagingFormat(label: string): Promise<boole
  */
 export async function create(data: CreateProductFormatData): Promise<ProductFormatRow> {
   return prisma.productFormat.create({
-    data:   { label: data.label },
+    data:   { label: data.label.trim() },
     select: PRODUCT_FORMAT_SELECT,
   });
 }
@@ -137,7 +137,7 @@ export async function update(
 ): Promise<ProductFormatRow> {
   return prisma.productFormat.update({
     where:  { id },
-    data:   { label: data.label },
+    data:   { label: data.label.trim() },
     select: PRODUCT_FORMAT_SELECT,
   });
 }

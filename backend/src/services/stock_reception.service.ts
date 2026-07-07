@@ -56,12 +56,23 @@ function assertSurplusHasNote(
     }
   }
 
-  const hasSurplus = requestedItems.some((item) => {
-    const orderItem = orderItems.find((oi) => oi.id === item.order_item_id);
+  // Agrégation par order_item_id : plusieurs lignes de la même requête portant sur la
+  // même ligne de commande doivent être sommées avant comparaison au reliquat, sinon un
+  // surplus peut être fractionné en plusieurs lignes sous le seuil pour contourner la garde.
+  const requestedQtyByOrderItem = new Map<string, number>();
+  for (const item of requestedItems) {
+    requestedQtyByOrderItem.set(
+      item.order_item_id,
+      (requestedQtyByOrderItem.get(item.order_item_id) ?? 0) + item.received_qty,
+    );
+  }
+
+  const hasSurplus = Array.from(requestedQtyByOrderItem.entries()).some(([orderItemId, totalRequestedQty]) => {
+    const orderItem = orderItems.find((oi) => oi.id === orderItemId);
     if (!orderItem) return false;
-    const confirmedQty = confirmedQtyByOrderItem.get(item.order_item_id) ?? 0;
+    const confirmedQty = confirmedQtyByOrderItem.get(orderItemId) ?? 0;
     const remaining = Math.max(0, orderItem.ordered_qty - confirmedQty);
-    return item.received_qty > remaining;
+    return totalRequestedQty > remaining;
   });
 
   if (hasSurplus && !notes?.trim()) {
@@ -109,11 +120,13 @@ export async function getReceptionById(id: string): Promise<StockReceptionRow> {
  * @param input         - Données de la réception (order_id, items…)
  * @param actorId       - UUID de l'utilisateur connecté (received_by_id)
  * @param actorName     - Nom de l'acteur (dénormalisé dans le log)
- * @param storeId       - UUID du magasin de l'acteur (contexte audit)
+ * @param storeId       - UUID du magasin de l'acteur (contexte audit + scope si restrictToOwnStore)
  * @param storeName     - Nom du magasin (dénormalisé dans le log)
  * @param ipAddress     - Adresse IP de l'acteur
+ * @param restrictToOwnStore - Si vrai, la commande doit avoir pour destination le magasin de l'acteur (tout rôle hors SA/Admin)
  * @returns La réception créée
  * @throws Error('ORDER_NOT_FOUND')              si la commande n'existe pas
+ * @throws Error('FORBIDDEN_STORE_SCOPE')        si l'acteur n'a pas accès au magasin de destination de la commande
  * @throws Error('INVALID_ORDER_STATUS')         si la commande n'est pas en SENT ou PARTIALLY_RECEIVED
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND')   si aucun SupplierProduct ne lie le produit à la commande
  */
@@ -124,6 +137,7 @@ export async function createReception(
   storeId?: string,
   storeName?: string,
   ipAddress?: string,
+  restrictToOwnStore = false,
 ): Promise<StockReceptionRow> {
   // Vérification de la commande
   const order = await prisma.purchaseOrder.findUnique({
@@ -145,6 +159,9 @@ export async function createReception(
 
   if (!order) {
     throw new Error('ORDER_NOT_FOUND');
+  }
+  if (restrictToOwnStore && order.destination_store_id !== storeId) {
+    throw new Error('FORBIDDEN_STORE_SCOPE');
   }
   if (
     order.status !== PurchaseOrderStatus.SENT &&
