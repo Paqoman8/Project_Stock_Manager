@@ -14,7 +14,7 @@ fi
 export DATABASE_URL="${DATABASE_URL:-postgresql://admin:adminpassword@localhost:5433/gstock_db?schema=public}"
 export JWT_SECRET="${JWT_SECRET:-changez-moi-en-production-avec-openssl-rand-hex-32}"
 export NODE_ENV="${NODE_ENV:-development}"
-export PORT="${PORT:-5000}"
+export PORT="${PORT:-5001}"
 export FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
 export BACKEND_URL="${BACKEND_URL:-http://localhost:${PORT}}"
 export NEXT_PUBLIC_APP_NAME="${APP_NAME:-Stock Manager}"

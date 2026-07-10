@@ -23,6 +23,15 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
     (o) => ['SENT', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(o.status) && !o.invoice,
   );
 
+  // Total attendu de la commande sélectionnée (arrondi entier, même logique que l'auto-fill)
+  const selectedOrder = facturableOrders.find((o) => o.id === orderId) ?? null;
+  const orderTotal = selectedOrder?.items?.length
+    ? Math.round(selectedOrder.items.reduce((sum, item) => sum + item.ordered_qty * parseFloat(item.unit_price), 0))
+    : null;
+
+  const parsedAmountPreview = parseFloat(amount);
+  const hasAmountDiscrepancy = orderTotal !== null && !isNaN(parsedAmountPreview) && parsedAmountPreview !== orderTotal;
+
   // Auto-remplissage du montant depuis les lignes de commande
   useEffect(() => {
     if (!orderId) return;
@@ -52,6 +61,10 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
       setApiError('Le montant doit être un nombre positif.');
       return;
     }
+    if (hasAmountDiscrepancy && !notes.trim()) {
+      setApiError('Une note est obligatoire lorsque le montant de la facture diffère du total de la commande.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -59,7 +72,7 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
         order_id:    orderId,
         invoice_ref: invoiceRef.trim() || undefined,
         amount:      parsedAmount,
-        due_at:      dueAt || undefined,
+        due_at:      dueAt ? `${dueAt}T00:00:00.000Z` : undefined,
         notes:       notes.trim() || undefined,
       });
       onSuccess();
@@ -133,11 +146,19 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
 
             <div className="flex flex-col gap-1">
               <label htmlFor="invoice-notes" className="text-xs font-medium text-textSecondary">
-                Notes (optionnel)
+                Notes{hasAmountDiscrepancy
+                  ? <span className="text-danger"> *</span>
+                  : <span className="font-normal text-textMuted"> (optionnel)</span>}
               </label>
+              {hasAmountDiscrepancy && (
+                <p className="text-xs text-amber-700">
+                  Écart de {Math.abs(parsedAmountPreview - orderTotal!).toLocaleString('fr-FR')} XOF avec le total de la commande.
+                </p>
+              )}
               <textarea id="invoice-notes" value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                rows={3} placeholder="Observations, conditions particulières…"
+                rows={3}
+                placeholder={hasAmountDiscrepancy ? 'Justifiez l\'écart avec le total de la commande…' : 'Observations, conditions particulières…'}
                 className={inputCls + ' resize-none'} />
             </div>
 

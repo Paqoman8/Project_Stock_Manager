@@ -13,6 +13,7 @@ export interface PackagingFormatRow {
   product_id:        string;
   label:             string;
   units_per_package: number;
+  price:             string | null; // Decimal serialisé — null = calculer depuis product.price × coefficient
   is_base_unit:      boolean;
   created_at:        Date;
   updated_at:        Date;
@@ -49,6 +50,7 @@ export async function create(data: {
   product_id:        string;
   label:             string;
   units_per_package: number;
+  price?:            number | null;
   is_base_unit:      boolean;
 }): Promise<PackagingFormatRow> {
   return prisma.packagingFormat.create({ data }) as unknown as PackagingFormatRow;
@@ -59,6 +61,7 @@ export async function update(
   data: {
     label?:             string;
     units_per_package?: number;
+    price?:             number | null;
     is_base_unit?:      boolean;
   },
 ): Promise<PackagingFormatRow> {

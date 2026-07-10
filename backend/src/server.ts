@@ -20,6 +20,7 @@ import inventoryRouter        from './routes/inventoryRoutes';
 import stockMovementRouter    from './routes/stockMovementRoutes';
 import inventoryReportRouter  from './routes/inventoryReportRoutes';
 import packagingFormatRouter  from './routes/packagingFormatRoutes';
+import productFormatRouter    from './routes/productFormatRoutes';
 import transferRouter         from './routes/transferRoutes';
 import transactionRouter      from './routes/transactionRoutes';
 import dashboardRouter        from './routes/dashboardRoutes';
@@ -38,6 +39,10 @@ const server = http.createServer(app);
 // ---------------------------------------------------------------------------
 // GLOBAL MIDDLEWARES                                                       
 // ---------------------------------------------------------------------------
+
+// Trust one proxy hop (Next.js dev server / reverse proxy in prod)
+// Required for express-rate-limit to read X-Forwarded-For correctly
+app.set('trust proxy', 1);
 
 // CORS configuration — restrict to frontend origin only
 app.use(cors({
@@ -98,9 +103,10 @@ app.use('/api/supplier-products', supplierProductRouter);
 
 
 // ── PRODUCT CATALOG ──────────────────────────────────────────────────
-app.use('/api/categories', categoryRouter);
-app.use('/api/products',   productRouter);
+app.use('/api/categories',      categoryRouter);
+app.use('/api/products',        productRouter);
 app.use('/api/products/:productId/packaging-formats', packagingFormatRouter);
+app.use('/api/product-formats', productFormatRouter);
 
 
 // ── PROCUREMENT ──────────────────────────────────────────────────────

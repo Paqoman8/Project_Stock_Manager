@@ -23,12 +23,14 @@ function formatZodErrors(err: ZodError): string[] {
 const createSchema = z.object({
   label:             z.string().min(1, 'Le libellé est obligatoire.').max(50),
   units_per_package: z.number().int().min(1, 'Le coefficient doit être ≥ 1.'),
+  price:             z.number().positive('Le prix doit être positif.').nullable().optional(),
   is_base_unit:      z.boolean().optional().default(false),
 });
 
 const updateSchema = z.object({
   label:             z.string().min(1).max(50).optional(),
   units_per_package: z.number().int().min(1).optional(),
+  price:             z.number().positive().nullable().optional(),
   is_base_unit:      z.boolean().optional(),
 });
 
@@ -74,7 +76,7 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
     return;
   }
 
-  const { label, units_per_package, is_base_unit } = parseResult.data;
+  const { label, units_per_package, price, is_base_unit } = parseResult.data;
 
   try {
     if (!(await assertProductExists(productId))) {
@@ -97,10 +99,21 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
       }
     }
 
+    // Règle : l'unité de base n'a jamais de prix propre — elle prend automatiquement
+    // le prix de base du produit (null = product.price × 1, voir schema.prisma)
+    if (is_base_unit && price !== undefined && price !== null) {
+      res.status(422).json({
+        success: false,
+        message: 'Un format d\'unité de base ne peut pas avoir de prix spécifique : il utilise automatiquement le prix de base du produit.',
+      });
+      return;
+    }
+
     const format = await repo.create({
       product_id:        productId,
       label,
       units_per_package,
+      price:             is_base_unit ? null : (price ?? null),
       is_base_unit,
     });
     res.status(201).json({ success: true, format });
@@ -132,7 +145,7 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    const { label, units_per_package, is_base_unit } = parseResult.data;
+    const { label, units_per_package, price, is_base_unit } = parseResult.data;
 
     // Recalcule les valeurs effectives après mise à jour partielle
     const newIsBase = is_base_unit ?? existing.is_base_unit;
@@ -140,6 +153,16 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
 
     if (newIsBase && newUnits !== 1) {
       res.status(422).json({ success: false, message: 'L\'unité de base doit avoir un coefficient de 1.' });
+      return;
+    }
+
+    // Règle : l'unité de base n'a jamais de prix propre — elle prend automatiquement
+    // le prix de base du produit (null = product.price × 1, voir schema.prisma)
+    if (newIsBase && price !== undefined && price !== null) {
+      res.status(422).json({
+        success: false,
+        message: 'Un format d\'unité de base ne peut pas avoir de prix spécifique : il utilise automatiquement le prix de base du produit.',
+      });
       return;
     }
 
@@ -151,7 +174,9 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
       }
     }
 
-    const format = await repo.update(id, { label, units_per_package, is_base_unit });
+    // price omis (undefined) = ne pas toucher à la valeur existante ; forcé à null si unité de base.
+    const priceUpdate = newIsBase ? null : price;
+    const format = await repo.update(id, { label, units_per_package, price: priceUpdate, is_base_unit });
     res.status(200).json({ success: true, format });
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes('Unique constraint')) {
