@@ -8,6 +8,7 @@ interface TokenPayload {
   userId: string;
   email: string;
   roleId: string;
+  roleName: string;
   storeId: string;
 }
 

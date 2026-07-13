@@ -8,7 +8,6 @@
 import { Response } from 'express';
 import { z, ZodError } from 'zod';
 import { MovementType } from '@prisma/client';
-import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as movementService from '../services/stock_movement.service';
@@ -23,14 +22,15 @@ function extractIp(req: AuthenticatedRequest): string {
   return req.ip ?? '';
 }
 
-/** Résout le nom du rôle de l'utilisateur connecté. */
-async function getRoleNameFromRequest(req: AuthenticatedRequest): Promise<string> {
-  const role = await prisma.role.findUnique({
-    where:  { id: req.user!.roleId },
-    select: { name: true },
-  });
-  return role?.name ?? '';
-}
+// ---------------------------------------------------------------------------
+// Helpers UUID
+// ---------------------------------------------------------------------------
+
+// Regex UUID permissive (accepte tous les UUID, pas seulement v4) pour
+// compatibilité avec les données de seed qui utilisent des UUID sans
+// respecter le nibble de version RFC 4122.
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidMsg   = (label: string) => `${label} : UUID invalide.`;
 
 // ---------------------------------------------------------------------------
 // Schéma Zod
@@ -40,14 +40,14 @@ const MANUAL_TYPES = ['INITIAL', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT'] as const;
 
 const createMovementSchema = z
   .object({
-    store_id:            z.string().uuid('UUID établissement invalide'),
-    product_id:          z.string().uuid('UUID produit invalide'),
+    store_id:            z.string().regex(uuidRegex, uuidMsg('UUID établissement')),
+    product_id:          z.string().regex(uuidRegex, uuidMsg('UUID produit')),
     type:                z.enum(MANUAL_TYPES, { message: 'Type de mouvement invalide.' }),
     // qty requis seulement si pas de format — validé ci-dessous via refine
     qty:                 z.number().int().positive('La quantité doit être un entier positif.').optional(),
     reason:              z.string().optional(),
     // Conditionnement optionnel
-    packaging_format_id: z.string().uuid('UUID format invalide').optional(),
+    packaging_format_id: z.string().regex(uuidRegex, uuidMsg('UUID format')).optional(),
     packages_count:      z.number().int().positive('Le nombre de colis doit être un entier positif.').optional(),
   })
   .refine(
@@ -101,7 +101,7 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
   const { qty, packaging_format_id, packages_count, ...rest } = parseResult.data;
 
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     if (roleName !== 'Super Administrateur' && roleName !== 'Administrateur' && rest.store_id !== storeId) {
       res.status(403).json({ success: false, message: 'Vous ne pouvez créer un mouvement de stock que pour votre propre établissement.' });
       return;
@@ -109,7 +109,7 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
 
     const [actorName, storeName] = await Promise.all([
       resolveActorName(actorId),
-      resolveStoreName(storeId),
+      resolveStoreName(rest.store_id),
     ]);
 
     const movement = await movementService.createMovement(
@@ -123,7 +123,7 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
       },
       actorId,
       actorName,
-      storeId,
+      rest.store_id,
       storeName,
       ip,
     );
@@ -156,11 +156,11 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
 // ---------------------------------------------------------------------------
 
 const createConversionSchema = z.object({
-  store_id:                 z.string().uuid('UUID établissement invalide'),
-  product_id:               z.string().uuid('UUID produit invalide'),
-  from_packaging_format_id: z.string().uuid('UUID format source invalide'),
+  store_id:                 z.string().regex(uuidRegex, uuidMsg('UUID établissement')),
+  product_id:               z.string().regex(uuidRegex, uuidMsg('UUID produit')),
+  from_packaging_format_id: z.string().regex(uuidRegex, uuidMsg('UUID format source')),
   from_packages_count:      z.number().int().positive('Nombre de colis source invalide'),
-  to_packaging_format_id:   z.string().uuid('UUID format destination invalide'),
+  to_packaging_format_id:   z.string().regex(uuidRegex, uuidMsg('UUID format destination')),
   // Calculé server-side par équivalence — optionnel ici, sert seulement de cross-check si fourni
   to_packages_count:        z.number().int().positive('Nombre de colis destination invalide').optional(),
   reason:                   z.string().trim().min(1, 'Un motif est obligatoire pour toute conversion.'),
@@ -183,7 +183,7 @@ export async function createConversion(req: AuthenticatedRequest, res: Response)
   const ip      = extractIp(req);
 
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     if (roleName !== 'Super Administrateur' && roleName !== 'Administrateur' && parseResult.data.store_id !== storeId) {
       res.status(403).json({ success: false, message: 'Vous ne pouvez effectuer une conversion que pour votre propre établissement.' });
       return;
@@ -191,14 +191,14 @@ export async function createConversion(req: AuthenticatedRequest, res: Response)
 
     const [actorName, storeName] = await Promise.all([
       resolveActorName(actorId),
-      resolveStoreName(storeId),
+      resolveStoreName(parseResult.data.store_id),
     ]);
 
     const movement = await movementService.createConversion(
       { ...parseResult.data, performed_by_id: actorId },
       actorId,
       actorName,
-      storeId,
+      parseResult.data.store_id,
       storeName,
       ip,
     );
@@ -214,8 +214,10 @@ export async function createConversion(req: AuthenticatedRequest, res: Response)
         return void res.status(404).json({ success: false, message: 'Format introuvable ou non associé à ce produit.' });
       if (error.message === 'SAME_FORMAT_CONVERSION')
         return void res.status(400).json({ success: false, message: 'Le format source et le format destination doivent être différents.' });
-      if (error.message === 'NON_DIVISIBLE_CONVERSION')
-        return void res.status(422).json({ success: false, message: 'Cette conversion ne correspond à aucun nombre entier de colis destination.' });
+      if (error.message === 'BASE_FORMAT_NOT_FOUND')
+        return void res.status(500).json({ success: false, message: 'Aucun format de base trouvé pour ce produit — conversion impossible.' });
+      if (error.message === 'ZERO_CONVERSION')
+        return void res.status(422).json({ success: false, message: 'Cette conversion ne produit aucun colis.' });
       if (error.message === 'CONVERSION_MISMATCH')
         return void res.status(400).json({ success: false, message: 'Le nombre de colis destination fourni ne correspond pas à l\'équivalence calculée.' });
       if (error.message === 'INSUFFICIENT_FORMAT_STOCK')

@@ -13,6 +13,9 @@ import {
 } from '@/lib/pos';
 import type { PaymentMethod } from '@/lib/pos';
 import TransactionsList from '@/components/pos/TransactionsList';
+import NewClientSelector from '@/components/pos/NewClientSelector';
+import type { ClientPayload } from '@/components/pos/NewClientSelector';
+import ConversionDialog from '@/components/stock/ConversionDialog';
 
 type SortKey = 'name' | 'price' | 'stock';
 type SortDir = 'asc' | 'desc';
@@ -35,9 +38,11 @@ type PackagingFormat = {
   label: string;
   units_per_package: number;
   is_base_unit: boolean;
+  available_quantity: number;
 };
 
 type CartItem = {
+  cartId: string;
   product: InventoryProductRow['product'];
   stock: number;
   qtyInput: string;
@@ -78,41 +83,13 @@ function getRequestedUnits(item: CartItem): number {
 function getMaxAmountForItem(item: CartItem): number {
   const selectedFormat = getFormatForItem(item);
   if (!selectedFormat) return item.stock;
-  return Math.floor(item.stock / selectedFormat.units_per_package);
+  return Math.min(
+    Math.floor(item.stock / selectedFormat.units_per_package),
+    selectedFormat.available_quantity,
+  );
 }
 
-// ---------------------------------------------------------------------------
-// CLIENT FIELD VALIDATION
-// ---------------------------------------------------------------------------
-
-const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]+$/;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^[\+\d\s\-\(\)\.]+$/;
-
-function validateClientName(name: string): string | null {
-  const trimmed = name.trim();
-  if (trimmed === '') return null;
-  if (trimmed.length < 2) return 'Le nom du client doit contenir au moins 2 caractères.';
-  if (/^\d+$/.test(trimmed)) return 'Le nom du client ne peut pas contenir uniquement des chiffres.';
-  if (!NAME_REGEX.test(trimmed)) return 'Le nom contient des caractères non autorisés.';
-  return null;
-}
-
-function validateClientPhone(phone: string): string | null {
-  const trimmed = phone.trim();
-  if (trimmed === '') return null;
-  if (!PHONE_REGEX.test(trimmed)) return 'Le téléphone ne doit contenir que des chiffres, espaces, +, -, ( ou ).';
-  const digits = trimmed.replace(/\D/g, '');
-  if (digits.length < 8) return 'Le numéro de téléphone semble trop court.';
-  return null;
-}
-
-function validateClientEmail(email: string): string | null {
-  const trimmed = email.trim();
-  if (trimmed === '') return null;
-  if (!EMAIL_REGEX.test(trimmed)) return 'Adresse email invalide (ex : client@exemple.com).';
-  return null;
-}
+let nextCartItemId = 1;
 
 export default function PosPage() {
   const router = useRouter();
@@ -126,10 +103,13 @@ export default function PosPage() {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
 
-  const [clientName, setClientName] = useState('');
-  const [clientPhone, setClientPhone] = useState('');
-  const [clientEmail, setClientEmail] = useState('');
-  const [clientErrors, setClientErrors] = useState<{ name?: string | null; phone?: string | null; email?: string | null }>({});
+  const [clientPayload, setClientPayload] = useState<ClientPayload | null>(null);
+
+  const [conversionForPos, setConversionForPos] = useState<{
+    productId: string;
+    productName: string;
+    toFormatId: string;
+  } | null>(null);
 
   const [isBootLoading, setIsBootLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -221,12 +201,12 @@ export default function PosPage() {
 
   async function addToCart(row: InventoryProductRow): Promise<void> {
     if (row.stock_physical <= 0) return;
-    if (cart.some((item) => item.product.id === row.product.id)) return;
 
     try {
       const formats = await loadFormats(row.product.id);
       const baseFormat = formats.find((format) => format.is_base_unit) ?? formats[0];
       const nextItem: CartItem = {
+        cartId: String(nextCartItemId++),
         product: row.product,
         stock: row.stock_physical,
         qtyInput: '1',
@@ -247,9 +227,9 @@ export default function PosPage() {
     }
   }
 
-  function updateCartItem(productId: string, updater: (item: CartItem) => CartItem): void {
+  function updateCartItem(cartId: string, updater: (item: CartItem) => CartItem): void {
     setCart((current) => current.map((item) => {
-      if (item.product.id !== productId) return item;
+      if (item.cartId !== cartId) return item;
       const nextItem = updater(item);
       const maxAmount = getMaxAmountForItem(nextItem);
       return {
@@ -259,41 +239,14 @@ export default function PosPage() {
     }));
   }
 
-  function removeFromCart(productId: string): void {
-    setCart((current) => current.filter((item) => item.product.id !== productId));
+  function removeFromCart(cartId: string): void {
+    setCart((current) => current.filter((item) => item.cartId !== cartId));
   }
 
   function clearCart(): void {
     setCart([]);
     setPaymentMethod('CASH');
-    setClientName('');
-    setClientPhone('');
-    setClientEmail('');
-    setClientErrors({});
-  }
-
-  function validateClientFields(): boolean {
-    const trimmedName = clientName.trim();
-    const trimmedPhone = clientPhone.trim();
-    const trimmedEmail = clientEmail.trim();
-    const hasAnyField = trimmedName !== '' || trimmedPhone !== '' || trimmedEmail !== '';
-
-    const errors = {
-      name: validateClientName(clientName),
-      phone: validateClientPhone(clientPhone),
-      email: validateClientEmail(clientEmail),
-    };
-
-    if (hasAnyField && trimmedName === '') {
-      errors.name = 'Le nom du client est requis.';
-    }
-
-    if (trimmedName !== '' && trimmedPhone === '' && trimmedEmail === '') {
-      errors.phone = 'Ajoutez au moins un téléphone ou un email.';
-    }
-
-    setClientErrors(errors);
-    return !errors.name && !errors.phone && !errors.email;
+    setClientPayload(null);
   }
 
   async function submitSale(e: React.FormEvent): Promise<void> {
@@ -311,19 +264,26 @@ export default function PosPage() {
       return;
     }
 
-    const hasClientFields = [clientName, clientPhone, clientEmail].some((value) => value.trim() !== '');
-    if (hasClientFields && !validateClientFields()) {
-      setSubmitError('Veuillez corriger les informations client.');
-      return;
+    const plainItemsByProduct = new Map<string, number>();
+    for (const item of cart) {
+      const selectedFormat = getFormatForItem(item);
+      if (selectedFormat) continue;
+      const productId = item.product.id;
+      plainItemsByProduct.set(productId, (plainItemsByProduct.get(productId) ?? 0) + getRequestedUnits(item));
+    }
+    for (const productId of plainItemsByProduct.keys()) {
+      const row = inventoryRows.find((r) => r.product_id === productId);
+      if (row && plainItemsByProduct.get(productId)! > row.stock_physical) {
+        setSubmitError(`La quantité totale demandée pour ${row.product.name} dépasse le stock disponible.`);
+        return;
+      }
     }
 
     setIsSubmitting(true);
     try {
       await apiClient.post('/api/transactions', {
         payment_method: paymentMethod,
-        client: hasClientFields
-          ? { name: clientName.trim(), phone: clientPhone.trim() || undefined, email: clientEmail.trim() || undefined }
-          : undefined,
+        client: clientPayload ?? undefined,
         items: cart.map((item) => {
           const selectedFormat = getFormatForItem(item);
           if (selectedFormat) {
@@ -363,7 +323,7 @@ export default function PosPage() {
   }
 
   return (
-    <section className="space-y-4">
+    <><section className="space-y-4">
       <header>
         <h1 className="text-2xl font-semibold text-textMain">Point de Vente</h1>
         <p className="text-sm text-textMuted mt-1">
@@ -439,22 +399,19 @@ export default function PosPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {visibleProducts.map((row) => {
                 const outOfStock = row.stock_physical <= 0;
-                const inCart = cart.some((item) => item.product.id === row.product.id);
                 const isLoadingFormats = loadingFormatIds.includes(row.product.id);
                 return (
                   <button
                     key={row.product_id}
                     type="button"
                     onClick={() => void addToCart(row)}
-                    disabled={outOfStock || inCart || isLoadingFormats}
+                    disabled={outOfStock || isLoadingFormats}
                     aria-label={`Ajouter ${row.product.name} au panier`}
                     className={[
                       'flex flex-col gap-1 p-3 border rounded text-left transition-colors',
                       outOfStock
                         ? 'border-borderLight bg-background opacity-50 cursor-not-allowed'
-                        : inCart
-                          ? 'border-primary bg-primary/10 cursor-not-allowed'
-                          : 'border-borderLight bg-background hover:border-primary hover:bg-primary/10 cursor-pointer',
+                        : 'border-borderLight bg-background hover:border-primary hover:bg-primary/10 cursor-pointer',
                     ].join(' ')}
                   >
                     <span className="text-sm font-medium text-textMain leading-tight line-clamp-2">{row.product.name}</span>
@@ -536,74 +493,7 @@ export default function PosPage() {
             </div>
           )}
 
-          <div className="rounded border border-borderLight bg-background p-3 space-y-3">
-            <p className="text-sm font-medium text-textMain">Client</p>
-
-            <div className="grid gap-2">
-              <div>
-                <input
-                  id="client-name"
-                  type="text"
-                  value={clientName}
-                  onChange={(e) => {
-                    setClientName(e.target.value);
-                    if (clientErrors.name) {
-                      setClientErrors((current) => ({ ...current, name: undefined }));
-                    }
-                  }}
-                  placeholder="Nom du client"
-                  className={`${inputCls} w-full ${clientErrors.name ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
-                  aria-invalid={Boolean(clientErrors.name)}
-                  aria-describedby={clientErrors.name ? 'client-name-error' : undefined}
-                />
-                {clientErrors.name && (
-                  <p id="client-name-error" className="text-xs text-red-600 mt-1">{clientErrors.name}</p>
-                )}
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <input
-                    id="client-phone"
-                    type="tel"
-                    value={clientPhone}
-                    onChange={(e) => {
-                      setClientPhone(e.target.value);
-                      if (clientErrors.phone) {
-                        setClientErrors((current) => ({ ...current, phone: undefined }));
-                      }
-                    }}
-                    placeholder="+229 01 XX XX XX XX"
-                    className={`${inputCls} w-full ${clientErrors.phone ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
-                    aria-invalid={Boolean(clientErrors.phone)}
-                    aria-describedby={clientErrors.phone ? 'client-phone-error' : undefined}
-                  />
-                  {clientErrors.phone && (
-                    <p id="client-phone-error" className="text-xs text-red-600 mt-1">{clientErrors.phone}</p>
-                  )}
-                </div>
-                <div>
-                  <input
-                    id="client-email"
-                    type="email"
-                    value={clientEmail}
-                    onChange={(e) => {
-                      setClientEmail(e.target.value);
-                      if (clientErrors.email) {
-                        setClientErrors((current) => ({ ...current, email: undefined }));
-                      }
-                    }}
-                    placeholder="client@exemple.com"
-                    className={`${inputCls} w-full ${clientErrors.email ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
-                    aria-invalid={Boolean(clientErrors.email)}
-                    aria-describedby={clientErrors.email ? 'client-email-error' : undefined}
-                  />
-                  {clientErrors.email && (
-                    <p id="client-email-error" className="text-xs text-red-600 mt-1">{clientErrors.email}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <NewClientSelector onClientPayloadChange={setClientPayload} />
 
           {cart.length === 0 ? (
             <p className="text-sm text-textMuted py-4 text-center">Cliquez sur un produit pour l&apos;ajouter.</p>
@@ -616,7 +506,7 @@ export default function PosPage() {
                   const requestedUnits = getRequestedUnits(item);
                   const lineTotal = Number(item.product.price) * requestedUnits;
                   return (
-                    <li key={item.product.id} className="border border-borderLight rounded p-3 space-y-3">
+                    <li key={item.cartId} className="border border-borderLight rounded p-3 space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-textMain">{item.product.name}</p>
@@ -626,7 +516,7 @@ export default function PosPage() {
                         </div>
                         <button
                           type="button"
-                          onClick={() => removeFromCart(item.product.id)}
+                          onClick={() => removeFromCart(item.cartId)}
                           className="text-textMuted hover:text-red-600 transition-colors"
                           aria-label={`Retirer ${item.product.name}`}
                         >
@@ -634,10 +524,10 @@ export default function PosPage() {
                         </button>
                       </div>
 
-                      <div className="grid gap-2 sm:grid-cols-[1fr_110px]">
+                      <div className="grid gap-2 sm:grid-cols-[1fr_90px_28px]">
                         <select
                           value={item.selectedFormatId}
-                          onChange={(e) => updateCartItem(item.product.id, (current) => ({
+                          onChange={(e) => updateCartItem(item.cartId, (current) => ({
                             ...current,
                             selectedFormatId: e.target.value,
                             qtyInput: '1',
@@ -660,12 +550,27 @@ export default function PosPage() {
                           min={1}
                           max={Math.max(maxAmount, 1)}
                           value={item.qtyInput}
-                          onChange={(e) => updateCartItem(item.product.id, (current) => ({
+                          onChange={(e) => updateCartItem(item.cartId, (current) => ({
                             ...current,
                             qtyInput: sanitizePositiveIntegerInput(e.target.value),
                           }))}
                           className={`${inputCls} w-full text-right`}
                         />
+                        {item.formats.length >= 2 && (
+                          <button
+                            type="button"
+                            onClick={() => setConversionForPos({
+                              productId: item.product.id,
+                              productName: item.product.name,
+                              toFormatId: item.selectedFormatId,
+                            })}
+                            className="h-10 w-7 border border-borderLight rounded text-textMuted hover:text-primary hover:border-primary flex items-center justify-center text-sm"
+                            aria-label="Convertir un conditionnement"
+                            title="Convertir un conditionnement"
+                          >
+                            ⇄
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between text-xs">
@@ -724,5 +629,20 @@ export default function PosPage() {
 
       <TransactionsList />
     </section>
+
+      <ConversionDialog
+        isOpen={conversionForPos !== null}
+        storeId={user?.storeId ?? ''}
+        productId={conversionForPos?.productId ?? ''}
+        productName={conversionForPos?.productName}
+        prefillToFormatId={conversionForPos?.toFormatId}
+        reasonHint="Conversion pour vente au comptoir"
+        onClose={() => setConversionForPos(null)}
+        onSuccess={() => {
+          setConversionForPos(null);
+          void loadData();
+        }}
+      />
+    </>
   );
 }

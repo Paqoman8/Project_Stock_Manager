@@ -53,13 +53,66 @@ async function assertProductExists(productId: string): Promise<boolean> {
 /** GET /api/products/:productId/packaging-formats */
 export async function getFormats(req: AuthenticatedRequest, res: Response): Promise<void> {
   const productId = req.params.productId as string;
+  const storeId   = req.user!.storeId;
   try {
     if (!(await assertProductExists(productId))) {
       res.status(404).json({ success: false, message: 'Produit introuvable.' });
       return;
     }
-    const formats = await repo.findAllByProduct(productId);
-    res.status(200).json({ success: true, formats });
+    let formats = await repo.findAllByProduct(productId);
+
+    // Si aucun format de base n'existe (produit créé avant l'ajout de ce champ),
+    // on le crée automatiquement à partir de l'unité du produit.
+    const hasBase = formats.some((f) => f.is_base_unit);
+    if (!hasBase) {
+      const product = await prisma.product.findUnique({
+        where: { id: productId },
+        select: { unit: true },
+      });
+      if (product) {
+        const labels: Record<string, string> = {
+          PIECE:      'Pièce',
+          KG:         'Kilogramme',
+          G:          'Gramme',
+          L:          'Litre',
+          CL:         'Centilitre',
+          ML:         'Millilitre',
+          BOUTEILLE:  'Bouteille',
+          SACHET:     'Sachet',
+          BOITE:      'Boîte',
+        };
+        await prisma.packagingFormat.createMany({
+          data: [{
+            product_id:        productId,
+            label:             labels[product.unit] ?? product.unit,
+            units_per_package: 1,
+            is_base_unit:      true,
+          }],
+          skipDuplicates: true,
+        });
+        formats = await repo.findAllByProduct(productId);
+      }
+    }
+
+    // Enrichir chaque format avec le stock disponible dans le breakdown du magasin
+    const formatIds = formats.map((f) => f.id);
+    const breakdowns = await prisma.inventoryBreakdown.findMany({
+      where: { packaging_format_id: { in: formatIds }, store_id: storeId },
+      select: { packaging_format_id: true, quantity: true },
+    });
+    const breakdownMap = new Map(breakdowns.map((b) => [b.packaging_format_id, b.quantity]));
+
+    const formatsWithStock = formats.map((f) => ({
+      id: f.id,
+      product_id: f.product_id,
+      label: f.label,
+      units_per_package: f.units_per_package,
+      price: f.price,
+      is_base_unit: f.is_base_unit,
+      available_quantity: breakdownMap.get(f.id) ?? 0,
+    }));
+
+    res.status(200).json({ success: true, formats: formatsWithStock });
   } catch (err) {
     console.error('Erreur récupération formats :', err);
     res.status(500).json({ success: false, message: 'Une erreur interne est survenue.' });

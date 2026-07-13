@@ -42,8 +42,14 @@ const createSaleSchema = z.object({
   }).optional(),
 });
 
+const refundItemSchema = z.object({
+  transaction_item_id: uuidLike('transaction_item_id invalide'),
+  qty: z.number().int().min(1).optional(),
+  packages_count: z.number().int().min(1).optional(),
+});
+
 const refundSchema = z.object({
-  item_ids: z.array(uuidLike('item_id invalide')).min(1, 'Sélectionnez au moins une ligne à rembourser.').optional(),
+  items: z.array(refundItemSchema).min(1, 'Sélectionnez au moins une ligne à rembourser.').optional(),
 });
 
 const listTransactionsQuerySchema = z.object({
@@ -259,7 +265,7 @@ export async function refundTransaction(req: AuthenticatedRequest, res: Response
       storeId,
       storeName,
       ip,
-      parsedBody.data.item_ids,
+      parsedBody.data.items,
     );
     res.status(201).json({ success: true, transaction: refund });
   } catch (error) {

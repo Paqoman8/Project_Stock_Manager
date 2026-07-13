@@ -1,6 +1,5 @@
 import { Response } from 'express';
 import { z, ZodError } from 'zod';
-import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as authService from '../services/auth.service';
@@ -45,14 +44,6 @@ function extractIp(req: AuthenticatedRequest): string {
   return req.ip ?? '';
 }
 
-async function getRoleNameFromRequest(req: AuthenticatedRequest): Promise<string> {
-  const role = await prisma.role.findUnique({
-    where: { id: req.user!.roleId },
-    select: { name: true },
-  });
-  return role?.name ?? '';
-}
-
 export async function createTransfer(req: AuthenticatedRequest, res: Response): Promise<void> {
   const parsed = createTransferSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -68,7 +59,7 @@ export async function createTransfer(req: AuthenticatedRequest, res: Response): 
   const ip = extractIp(req);
 
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     const accessibleSourceStores = await authService.getAccessibleStores(
       actorId,
       roleName === 'Super Administrateur',
@@ -120,7 +111,7 @@ export async function listTransfers(req: AuthenticatedRequest, res: Response): P
   const { page, limit, search, status } = parsedQuery.data;
 
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     const forceRequesterScope = roleName === 'Manager Magasin';
     const result = await transferService.listTransfers({
       status,
@@ -141,7 +132,7 @@ export async function listTransfers(req: AuthenticatedRequest, res: Response): P
 export async function getTransferById(req: AuthenticatedRequest, res: Response): Promise<void> {
   const id = req.params.id as string;
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     const transfer = await transferService.getTransferById(
       id,
       req.user!.storeId,
@@ -169,7 +160,7 @@ export async function confirmTransfer(req: AuthenticatedRequest, res: Response):
   const ip = extractIp(req);
 
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     const [actorName, actorStoreName] = await Promise.all([
       resolveActorName(actorId),
       resolveStoreName(actorStoreId),
@@ -209,7 +200,7 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
   const ip = extractIp(req);
 
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     const [actorName, actorStoreName] = await Promise.all([
       resolveActorName(actorId),
       resolveStoreName(actorStoreId),
@@ -242,7 +233,7 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
 
 export async function listTransferDestinationStores(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const roleName = await getRoleNameFromRequest(req);
+    const roleName = req.user!.roleName;
     const sourceStores = await authService.getAccessibleStores(
       req.user!.userId,
       roleName === 'Super Administrateur',

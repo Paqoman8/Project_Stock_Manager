@@ -64,13 +64,50 @@ const inputCls =
 
 const TRANSACTION_PAGE_SIZE = 10;
 
-function getRefundedOriginalItemIds(transactions: TransactionRow[], saleId: string): Set<string> {
-  return new Set(
-    transactions
-      .filter((row) => row.refund_of_id === saleId)
-      .flatMap((row) => row.items.map((item) => item.original_transaction_item_id))
-      .filter((value): value is string => Boolean(value)),
-  );
+function getRefundedQtys(
+  transactions: TransactionRow[],
+  saleId: string,
+): Map<string, { qty: number; packages_count: number }> {
+  const refunded = new Map<string, { qty: number; packages_count: number }>();
+  for (const row of transactions) {
+    if (row.refund_of_id !== saleId) continue;
+    for (const item of row.items) {
+      if (!item.original_transaction_item_id) continue;
+      const prev = refunded.get(item.original_transaction_item_id) ?? { qty: 0, packages_count: 0 };
+      refunded.set(item.original_transaction_item_id, {
+        qty: prev.qty + item.qty,
+        packages_count: prev.packages_count + (item.packages_count ?? 0),
+      });
+    }
+  }
+  return refunded;
+}
+
+function isFullyRefunded(
+  item: TransactionItem,
+  refunded: Map<string, { qty: number; packages_count: number }>,
+): boolean {
+  const r = refunded.get(item.id);
+  if (!r) return false;
+  if (item.packaging_format) return (r.packages_count) >= (item.packages_count ?? 0);
+  return r.qty >= item.qty;
+}
+
+function getRemainingQtys(
+  item: TransactionItem,
+  refunded: Map<string, { qty: number; packages_count: number }>,
+): { qty: number; packages_count: number } {
+  const r = refunded.get(item.id);
+  if (item.packaging_format) {
+    return {
+      qty: 0,
+      packages_count: Math.max((item.packages_count ?? 0) - (r?.packages_count ?? 0), 0),
+    };
+  }
+  return {
+    qty: Math.max(item.qty - (r?.qty ?? 0), 0),
+    packages_count: 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +129,7 @@ export default function TransactionsList(): React.JSX.Element {
   const [filterPayment, setFilterPayment] = useState<PaymentMethod | ''>('');
 
   // ── Table UI
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [transactionPage, setTransactionPage] = useState(1);
   const [transactionTotalPages, setTransactionTotalPages] = useState(1);
 
@@ -100,7 +137,7 @@ export default function TransactionsList(): React.JSX.Element {
   const [refundingId, setRefundingId] = useState<string | null>(null);
   const [refundError, setRefundError] = useState<string | null>(null);
   const [pendingRefundId, setPendingRefundId] = useState<string | null>(null);
-  const [selectedRefundItemIds, setSelectedRefundItemIds] = useState<string[]>([]);
+  const [refundItemQtys, setRefundItemQtys] = useState<Array<{ transaction_item_id: string; qty: number; packages_count: number }>>([]);
 
   const canAccess = !isLoading && user !== null &&
     POS_ROLES.includes(user.roleName as (typeof POS_ROLES)[number]);
@@ -150,55 +187,76 @@ export default function TransactionsList(): React.JSX.Element {
     setFilterType('');
     setFilterPayment('');
     setTransactionPage(1);
-    void loadTransactions(1, '', '', '');
   }
 
   // ── Refund handlers
   function requestRefund(transactionId: string): void {
     setRefundError(null);
     const transaction = transactions.find((row) => row.id === transactionId);
-    const refundedOriginalItemIds = getRefundedOriginalItemIds(transactions, transactionId);
+    const refundedQtys = getRefundedQtys(transactions, transactionId);
     setPendingRefundId(transactionId);
-    setSelectedRefundItemIds(
+    setRefundItemQtys(
       transaction?.items
-        .filter((item) => !refundedOriginalItemIds.has(item.id))
-        .map((item) => item.id) ?? [],
+        .filter((item) => !isFullyRefunded(item, refundedQtys))
+        .map((item) => ({
+          transaction_item_id: item.id,
+          ...getRemainingQtys(item, refundedQtys),
+        })) ?? [],
     );
   }
 
   async function confirmRefund(): Promise<void> {
     if (!pendingRefundId) return;
     const id = pendingRefundId;
+    const tx = transactions.find((t) => t.id === id);
+    if (!tx) return;
     setPendingRefundId(null);
     setRefundingId(id);
     try {
-      await apiClient.post(`/api/transactions/${id}/refund`, {
-        item_ids: selectedRefundItemIds,
-      });
+      const items = refundItemQtys
+        .filter((refundItem) => {
+          const origItem = tx.items.find((i) => i.id === refundItem.transaction_item_id);
+          return origItem?.packaging_format ? refundItem.packages_count > 0 : refundItem.qty > 0;
+        })
+        .map((refundItem) => {
+          const origItem = tx.items.find((i) => i.id === refundItem.transaction_item_id);
+          if (origItem?.packaging_format) {
+            return { transaction_item_id: refundItem.transaction_item_id, packages_count: refundItem.packages_count };
+          }
+          return { transaction_item_id: refundItem.transaction_item_id, qty: refundItem.qty };
+        });
+      await apiClient.post(`/api/transactions/${id}/refund`, { items });
       await loadTransactions();
     } catch (err) {
       setRefundError(extractApiError(err, 'Échec du remboursement.'));
     } finally {
       setRefundingId(null);
-      setSelectedRefundItemIds([]);
+      setRefundItemQtys([]);
     }
   }
 
   function cancelRefund(): void {
     setPendingRefundId(null);
-    setSelectedRefundItemIds([]);
+    setRefundItemQtys([]);
+  }
+
+  function updateRefundItemQty(itemId: string, field: 'qty' | 'packages_count', value: number): void {
+    setRefundItemQtys((current) => current.map((refundItem) =>
+      refundItem.transaction_item_id === itemId ? { ...refundItem, [field]: value } : refundItem,
+    ));
+  }
+
+  function removeRefundItem(itemId: string): void {
+    setRefundItemQtys((current) => current.filter((r) => r.transaction_item_id !== itemId));
   }
 
   function toggleExpanded(id: string): void {
-    setExpanded((prev) => (prev === id ? null : id));
-  }
-
-  function toggleRefundItem(itemId: string): void {
-    setSelectedRefundItemIds((current) => (
-      current.includes(itemId)
-        ? current.filter((id) => id !== itemId)
-        : [...current, itemId]
-    ));
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   if (isLoading || !canAccess) {
@@ -323,10 +381,10 @@ export default function TransactionsList(): React.JSX.Element {
                 </tr>
               ) : (
                 transactions.map((tx) => {
-                  const isExpanded = expanded === tx.id;
+                  const isExpanded = expanded.has(tx.id);
                   const isRefundable = tx.type === 'SALE';
-                  const refundedOriginalItemIds = getRefundedOriginalItemIds(transactions, tx.id);
-                  const hasRemainingRefundable = tx.items.some((item) => !refundedOriginalItemIds.has(item.id));
+                  const refundedQtys = getRefundedQtys(transactions, tx.id);
+                  const hasRemainingRefundable = tx.items.some((item) => !isFullyRefunded(item, refundedQtys));
                   return (
                     <React.Fragment key={tx.id}>
                       <tr className="border-t border-borderLight hover:bg-background/50">
@@ -405,11 +463,17 @@ export default function TransactionsList(): React.JSX.Element {
                                     <td className="py-1 text-textMain">{item.product.name}</td>
                                     <td className="py-1">
                                       {item.packaging_format
-                                        ? `${item.packaging_format.label} (${item.packages_count ?? 0})`
+                                        ? `${item.packaging_format.label} (${item.packaging_format.units_per_package})`
                                         : 'Unité'}
                                     </td>
-                                    <td className="py-1 text-right">{item.qty}</td>
-                                    <td className="py-1 text-right">{formatPrice(item.price_at_sale)} F</td>
+                                    <td className="py-1 text-right">
+                                      {item.packaging_format ? (item.packages_count ?? 0) : item.qty}
+                                    </td>
+                                    <td className="py-1 text-right">
+                                      {item.packaging_format
+                                        ? `${formatPrice(Number(item.price_at_sale) * item.packaging_format.units_per_package)} F`
+                                        : `${formatPrice(item.price_at_sale)} F`}
+                                    </td>
                                     <td className="py-1 text-right font-medium text-textMain">
                                       {formatPrice(Number(item.price_at_sale) * item.qty)} F
                                     </td>
@@ -466,11 +530,18 @@ export default function TransactionsList(): React.JSX.Element {
       {(() => {
         const tx = transactions.find((item) => item.id === pendingRefundId);
         if (!tx) return null;
-        const refundedOriginalItemIds = getRefundedOriginalItemIds(transactions, tx.id);
+        const refundedQtys = getRefundedQtys(transactions, tx.id);
 
-        const selectedTotal = tx.items
-          .filter((item) => selectedRefundItemIds.includes(item.id))
-          .reduce((sum, item) => sum + Number(item.price_at_sale) * item.qty, 0);
+        const selectedTotal = tx.items.reduce((sum, item) => {
+          const refundItem = refundItemQtys.find((r) => r.transaction_item_id === item.id);
+          if (!refundItem || (refundItem.qty <= 0 && refundItem.packages_count <= 0)) return sum;
+          const ratio = item.packaging_format
+            ? refundItem.packages_count / (item.packages_count ?? 1)
+            : refundItem.qty / item.qty;
+          return sum + Number(item.price_at_sale) * item.qty * ratio;
+        }, 0);
+
+        const hasSelection = refundItemQtys.some((refundItem) => refundItem.qty > 0 || refundItem.packages_count > 0);
 
         return (
           <div
@@ -480,46 +551,104 @@ export default function TransactionsList(): React.JSX.Element {
           >
             <div className="absolute inset-0 bg-black/40" onClick={cancelRefund} aria-hidden="true" />
             <div className="relative z-10 w-full max-w-2xl rounded bg-surface border border-borderLight p-6 shadow-lg">
-              <h2 className="text-base font-medium text-textMain">Rembourser des lignes entières</h2>
+              <h2 className="text-base font-medium text-textMain">Remboursement partiel</h2>
               <p className="mt-2 text-sm text-textMuted">
-                Sélectionnez les lignes à rembourser pour la vente du {new Date(tx.created_at).toLocaleString('fr-FR')}. Les quantités partielles ne sont pas autorisées.
+                Ajustez les quantités à rembourser pour la vente du {new Date(tx.created_at).toLocaleString('fr-FR')}. Cliquez sur <strong>×</strong> pour exclure un produit.
               </p>
 
               <div className="mt-4 space-y-2 max-h-[320px] overflow-y-auto">
                 {tx.items.map((item) => {
-                  const checked = selectedRefundItemIds.includes(item.id);
-                  const alreadyRefunded = refundedOriginalItemIds.has(item.id);
+                  const alreadyRefunded = isFullyRefunded(item, refundedQtys);
+                  const remaining = getRemainingQtys(item, refundedQtys);
+                  const refundItem = refundItemQtys.find((r) => r.transaction_item_id === item.id);
+                  if (!refundItem) return null;
                   return (
-                    <label key={item.id} className="flex items-start gap-3 rounded border border-borderLight bg-background px-4 py-3">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={checked}
-                        disabled={alreadyRefunded}
-                        onChange={() => toggleRefundItem(item.id)}
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-textMain">{item.product.name}</p>
-                        <p className="mt-1 text-xs text-textMuted">
-                          {item.packaging_format
-                            ? `${item.packaging_format.label} · ${item.packages_count ?? 0} colis · ${item.qty} unités`
-                            : `${item.qty} unités`}
-                        </p>
+                    <div key={item.id} className={`rounded border border-borderLight bg-background px-4 py-3 ${alreadyRefunded ? 'opacity-50' : ''}`}>
+                      {!alreadyRefunded && (
+                        <div className="flex justify-end -mt-1 -mr-2 mb-1">
+                          <button
+                            type="button"
+                            onClick={() => removeRefundItem(item.id)}
+                            className="text-textMuted hover:text-red-600 transition-colors text-sm leading-none px-1"
+                            aria-label="Ne pas rembourser ce produit"
+                            title="Ne pas rembourser"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-textMain">{item.product.name}</p>
+                          <p className="mt-1 text-xs text-textMuted">
+                            {item.packaging_format
+                              ? `${item.packaging_format.label} · max ${remaining.packages_count} colis`
+                              : `${remaining.qty} unités`}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          {item.packaging_format ? (
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-textMuted">Colis</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={remaining.packages_count}
+                                value={refundItem.packages_count}
+                                disabled={alreadyRefunded}
+                                onChange={(e) => {
+                                  const v = Math.min(Math.max(0, Number(e.target.value) || 0), remaining.packages_count);
+                                  updateRefundItemQty(item.id, 'packages_count', v);
+                                }}
+                                className="w-20 px-2 py-1 text-sm bg-background border border-borderLight rounded text-textMain text-right focus:outline-none focus:ring-1 focus:ring-primary"
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-textMuted">Qté</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={remaining.qty}
+                                value={refundItem.qty}
+                                disabled={alreadyRefunded}
+                                onChange={(e) => {
+                                  const v = Math.min(Math.max(0, Number(e.target.value) || 0), remaining.qty);
+                                  updateRefundItemQty(item.id, 'qty', v);
+                                }}
+                                className="w-20 px-2 py-1 text-sm bg-background border border-borderLight rounded text-textMain text-right focus:outline-none focus:ring-1 focus:ring-primary"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className="block text-sm font-medium text-textMain">
-                          {formatPrice(Number(item.price_at_sale) * item.qty)} F
-                        </span>
-                        {alreadyRefunded ? <span className="text-xs text-textMuted italic">Déjà remboursé</span> : null}
-                      </div>
-                    </label>
+                      {!alreadyRefunded && (
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-borderLight">
+                          <span className="text-xs text-textMuted">
+                            {item.packaging_format
+                              ? `${refundItem.packages_count} × ${item.packaging_format.label} = ${refundItem.packages_count * (item.packaging_format.units_per_package)} unités`
+                              : `${refundItem.qty} unités`}
+                          </span>
+                          <span className="text-xs font-medium text-textMain">
+                            {formatPrice(
+                              item.packaging_format
+                                ? Number(item.price_at_sale) * item.packaging_format.units_per_package * refundItem.packages_count
+                                : Number(item.price_at_sale) * refundItem.qty,
+                            )} F
+                          </span>
+                        </div>
+                      )}
+                      {alreadyRefunded ? (
+                        <p className="mt-1 text-xs text-textMuted italic">Déjà entièrement remboursé</p>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
 
               <div className="mt-6 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-textMuted">Montant sélectionné</p>
+                  <p className="text-xs uppercase tracking-wide text-textMuted">Montant remboursé</p>
                   <p className="text-lg font-semibold text-textMain">{formatPrice(selectedTotal)} F</p>
                 </div>
                 <div className="flex gap-3">
@@ -531,7 +660,7 @@ export default function TransactionsList(): React.JSX.Element {
                     size="md"
                     onClick={confirmRefund}
                     isLoading={refundingId !== null}
-                    disabled={selectedRefundItemIds.length === 0}
+                    disabled={!hasSelection}
                   >
                     Rembourser
                   </Button>

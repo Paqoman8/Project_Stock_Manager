@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
+import ConversionDialog from '@/components/stock/ConversionDialog';
 
 const TRANSFER_ROLES = ['Super Administrateur', 'Administrateur', 'Manager Magasin'] as const;
 
@@ -170,6 +171,12 @@ export default function TransfersPage() {
   const [isActionLoadingId, setIsActionLoadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [conversionSuggestion, setConversionSuggestion] = useState<{
+    productId: string;
+    productName: string;
+    toFormatId: string;
+  } | null>(null);
+  const [showConversionDialog, setShowConversionDialog] = useState(false);
 
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<TransferStatus | ''>('');
@@ -307,11 +314,13 @@ export default function TransfersPage() {
     });
   }, [draftItems, formatsByProduct]);
 
-  async function submitTransfer(e: React.FormEvent): Promise<void> {
-    e.preventDefault();
+  async function submitTransfer(e?: React.FormEvent): Promise<void> {
+    if (e) e.preventDefault();
     if (!user) return;
 
     setFormError(null);
+    setConversionSuggestion(null);
+    setShowConversionDialog(false);
 
     const parsedItems = draftItems
       .filter((item) => item.product_id.trim() !== '')
@@ -328,12 +337,6 @@ export default function TransfersPage() {
           qty: Number(item.qty),
         };
       });
-
-    const uniqueProductIds = new Set(parsedItems.map((item) => item.product_id));
-    if (uniqueProductIds.size !== parsedItems.length) {
-      setFormError('Un produit ne peut apparaître qu’une seule fois dans un transfert.');
-      return;
-    }
 
     if (hasQuantityErrors) {
       setFormError('Corrigez les quantités supérieures au stock disponible.');
@@ -363,7 +366,20 @@ export default function TransfersPage() {
       setDraftItems([{ product_id: '', qty: '', packaging_format_id: '', packages_count: '' }]);
       await loadTransfers(1);
     } catch (err) {
-      setFormError(extractApiError(err, 'Échec de création du transfert.'));
+      const apiMsg = extractApiError(err, '');
+      setFormError(apiMsg || 'Échec de création du transfert.');
+
+      if (axios.isAxiosError(err) && err.response?.status === 409) {
+        const firstFormatItem = parsedItems.find((i) => i.packaging_format_id);
+        if (firstFormatItem) {
+          const row = sourceInventory.find((r) => r.product_id === firstFormatItem.product_id);
+          setConversionSuggestion({
+            productId: firstFormatItem.product_id,
+            productName: row?.product.name ?? '',
+            toFormatId: firstFormatItem.packaging_format_id!,
+          });
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -585,8 +601,44 @@ export default function TransfersPage() {
           {formError && (
             <p className="text-sm text-red-700">{formError}</p>
           )}
+
+          {conversionSuggestion && (
+            <div className="border border-amber-200 bg-amber-50 rounded px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-sm text-amber-800">
+                Stock insuffisant pour <strong>{conversionSuggestion.productName}</strong>.
+                Voulez-vous convertir depuis un autre conditionnement&nbsp;?
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowConversionDialog(true)}
+              >
+                Convertir
+              </Button>
+            </div>
+          )}
         </form>
       </div>
+
+      <ConversionDialog
+        isOpen={showConversionDialog}
+        storeId={fromStoreId}
+        productId={conversionSuggestion?.productId ?? ''}
+        productName={conversionSuggestion?.productName}
+        prefillToFormatId={conversionSuggestion?.toFormatId}
+        reasonHint={
+          conversionSuggestion
+            ? `Conversion pour transfert vers ${filteredDestinationStores.find((s) => s.id === toStoreId)?.name ?? 'destination'}`
+            : undefined
+        }
+        onClose={() => setShowConversionDialog(false)}
+        onSuccess={() => {
+          setShowConversionDialog(false);
+          setConversionSuggestion(null);
+          void submitTransfer();
+        }}
+      />
 
       <div className="bg-surface border border-borderLight rounded overflow-hidden">
         <div className="px-4 py-3 border-b border-borderLight">

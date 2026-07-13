@@ -23,6 +23,7 @@ export interface PurchaseOrderItemRow {
   ordered_qty: number;
   unit_price: string;    // Decimal Prisma — sérialisé en string par JSON.stringify
   packaging_format_id: string | null;
+  snapshotted_units_per_package: number;
   supplier_product: {
     id: string;
     packaging_format_id: string;
@@ -72,6 +73,7 @@ export interface CreatePurchaseOrderData {
     ordered_qty: number;
     unit_price: number;
     packaging_format_id?: string;
+    snapshotted_units_per_package: number;
   }>;
 }
 
@@ -85,6 +87,7 @@ export interface UpdatePurchaseOrderData {
     ordered_qty: number;
     unit_price: number;
     packaging_format_id?: string;
+    snapshotted_units_per_package?: number;
   }>;
 }
 
@@ -94,6 +97,7 @@ export interface OrderItemInput {
   ordered_qty: number;
   unit_price: number;
   packaging_format_id?: string;
+  snapshotted_units_per_package?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,10 +203,11 @@ export async function create(data: CreatePurchaseOrderData): Promise<PurchaseOrd
       expected_at:          data.expected_at ? new Date(data.expected_at) : null,
       items: {
         create: data.items.map((item) => ({
-          supplier_product_id: item.supplier_product_id,
-          ordered_qty:         item.ordered_qty,
-          unit_price:          item.unit_price,
-          packaging_format_id: item.packaging_format_id ?? null,
+          supplier_product_id:          item.supplier_product_id,
+          ordered_qty:                  item.ordered_qty,
+          unit_price:                   item.unit_price,
+          packaging_format_id:          item.packaging_format_id ?? null,
+          snapshotted_units_per_package: item.snapshotted_units_per_package,
         })),
       },
     },
@@ -234,10 +239,11 @@ export async function update(id: string, data: UpdatePurchaseOrderData): Promise
         items: {
           deleteMany: {},
           create: data.items.map((item) => ({
-            supplier_product_id: item.supplier_product_id,
-            ordered_qty:         item.ordered_qty,
-            unit_price:          item.unit_price,
-            packaging_format_id: item.packaging_format_id ?? null,
+            supplier_product_id:          item.supplier_product_id,
+            ordered_qty:                  item.ordered_qty,
+            unit_price:                   item.unit_price,
+            packaging_format_id:          item.packaging_format_id ?? null,
+            snapshotted_units_per_package: item.snapshotted_units_per_package ?? 1,
           })),
         },
       },
@@ -285,11 +291,12 @@ export async function updateStatus(
 export async function addItem(orderId: string, item: OrderItemInput): Promise<PurchaseOrderRow> {
   await prisma.purchaseOrderItem.create({
     data: {
-      order_id:            orderId,
-      supplier_product_id: item.supplier_product_id,
-      ordered_qty:         item.ordered_qty,
-      unit_price:          item.unit_price,
-      packaging_format_id: item.packaging_format_id ?? null,
+      order_id:                     orderId,
+      supplier_product_id:          item.supplier_product_id,
+      ordered_qty:                  item.ordered_qty,
+      unit_price:                   item.unit_price,
+      packaging_format_id:          item.packaging_format_id ?? null,
+      snapshotted_units_per_package: item.snapshotted_units_per_package ?? 1,
     },
   });
 

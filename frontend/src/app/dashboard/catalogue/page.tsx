@@ -32,6 +32,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
+import ConversionPanel from '@/components/stock/ConversionPanel';
 
 // ---------------------------------------------------------------------------
 // Constantes de rôle
@@ -52,18 +53,21 @@ interface CategoryRow {
   _count: { products: number; children: number };
 }
 
-type ProductUnit = 'PIECE' | 'KG' | 'G' | 'L' | 'CL' | 'ML';
+type ProductUnit = 'PIECE' | 'KG' | 'G' | 'L' | 'CL' | 'ML' | 'BOUTEILLE' | 'SACHET' | 'BOITE';
 
 const UNIT_LABELS: Record<ProductUnit, string> = {
-  PIECE: 'Pièce',
-  KG:    'Kilogramme (kg)',
-  G:     'Gramme (g)',
-  L:     'Litre (L)',
-  CL:    'Centilitre (cL)',
-  ML:    'Millilitre (mL)',
+  PIECE:    'Pièce',
+  KG:       'Kilogramme (kg)',
+  G:        'Gramme (g)',
+  L:        'Litre (L)',
+  CL:       'Centilitre (cL)',
+  ML:       'Millilitre (mL)',
+  BOUTEILLE: 'Bouteille',
+  SACHET:   'Sachet',
+  BOITE:    'Boîte',
 };
 
-const PRODUCT_UNITS: ProductUnit[] = ['PIECE', 'KG', 'G', 'L', 'CL', 'ML'];
+const PRODUCT_UNITS: ProductUnit[] = ['PIECE', 'KG', 'G', 'L', 'CL', 'ML', 'BOUTEILLE', 'SACHET', 'BOITE'];
 
 interface ProductRow {
   id: string;
@@ -86,7 +90,7 @@ interface ProductFormatRow {
   createdAt: string;
 }
 
-type ActiveTab = 'categories' | 'products' | 'formats';
+type ActiveTab = 'categories' | 'products' | 'formats' | 'conversion';
 
 // ---------------------------------------------------------------------------
 // Classes communes
@@ -2695,6 +2699,7 @@ export default function CataloguePage() {
     { id: 'products',   label: 'Produits'   },
     { id: 'categories', label: 'Catégories' },
     { id: 'formats',    label: 'Formats'    },
+    { id: 'conversion', label: 'Conversion' },
   ];
 
   return (
@@ -2752,6 +2757,11 @@ export default function CataloguePage() {
             fetchError={formatsError}
             canManageFormats={canEditProducts}
             onReload={loadFormats}
+          />
+        ) : activeTab === 'conversion' ? (
+          <ConversionPanel
+            products={products}
+            storeId={sessionUser.storeId}
           />
         ) : (
           <ProductsTab

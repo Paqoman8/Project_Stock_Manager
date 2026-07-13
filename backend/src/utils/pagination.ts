@@ -100,7 +100,7 @@ function isValidDate(year: number, month: number, day: number): boolean {
 }
 
 function isValidDayMonth(day: number, month: number): boolean {
-  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+  return isValidDate(2000, month, day);
 }
 
 function isValidMonthYear(month: number, year: number): boolean {

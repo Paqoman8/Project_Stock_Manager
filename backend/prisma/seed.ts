@@ -96,15 +96,17 @@ async function main() {
   }
 
   // 4. Création des formats de produit de référence
-  // upsert sur le label (unique) — idempotent
+  // findFirst (pas upsert) car label n'est pas @unique dans Prisma —
+  // l'unicité est assurée par un index fonctionnel LOWER(TRIM(label)) en base.
   const formatLabels = ['Unité', 'Carton', 'Boîte'];
 
   for (const label of formatLabels) {
-    await prisma.productFormat.upsert({
-      where:  { label },
-      update: {},
-      create: { label },
+    const existing = await prisma.productFormat.findFirst({
+      where: { label: { equals: label, mode: 'insensitive' } },
     });
+    if (!existing) {
+      await prisma.productFormat.create({ data: { label } });
+    }
     console.log(`Format créé/vérifié: ${label}`);
   }
 

@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import { prisma } from '../config/database';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import * as dashboardService from '../services/dashboard.service';
 
@@ -27,14 +26,9 @@ function parseDateBoundary(value: string, boundary: 'start' | 'end'): Date | nul
 }
 
 export async function getDashboardOverview(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { storeId, roleId } = req.user!;
+  const { storeId, roleName } = req.user!;
 
   try {
-    const role = await prisma.role.findUnique({
-      where: { id: roleId },
-      select: { name: true },
-    });
-
     let period: dashboardService.DashboardPeriod | undefined;
     if (typeof req.query.from === 'string' || typeof req.query.to === 'string') {
       if (typeof req.query.from !== 'string' || typeof req.query.to !== 'string') {
@@ -53,7 +47,7 @@ export async function getDashboardOverview(req: AuthenticatedRequest, res: Respo
       period = { from, to };
     }
 
-    const overview = await dashboardService.getDashboardOverview(storeId, role?.name ?? '', period);
+    const overview = await dashboardService.getDashboardOverview(storeId, roleName ?? '', period);
     res.status(200).json({ success: true, dashboard: overview });
   } catch (error) {
     console.error('Erreur getDashboardOverview:', error);

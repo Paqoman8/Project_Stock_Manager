@@ -170,7 +170,7 @@ export async function createMovement(
  * @throws Error('PRODUCT_NOT_FOUND')
  * @throws Error('FORMAT_NOT_FOUND')            si un format est introuvable ou n'appartient pas au produit
  * @throws Error('SAME_FORMAT_CONVERSION')      si from == to
- * @throws Error('NON_DIVISIBLE_CONVERSION')    si l'équivalence en unités n'est pas un nombre entier de colis destination
+ * @throws Error('ZERO_CONVERSION')             si l'équivalent en colis destination est nul (< 1 colis)
  * @throws Error('CONVERSION_MISMATCH')         si to_packages_count fourni ne correspond pas à la valeur calculée
  * @throws Error('INSUFFICIENT_FORMAT_STOCK')   si stock insuffisant pour le format source
  */
@@ -205,18 +205,39 @@ export async function createConversion(
 
   // Équivalence calculée server-side : la conversion ne doit jamais créer/détruire du stock
   const fromUnits = data.from_packages_count * fromFmt.units_per_package;
-  if (fromUnits % toFmt.units_per_package !== 0) {
-    throw new Error('NON_DIVISIBLE_CONVERSION');
+  const computedToPackagesCount = Math.floor(fromUnits / toFmt.units_per_package);
+  const remainderUnits = fromUnits % toFmt.units_per_package;
+
+  if (computedToPackagesCount < 1) {
+    throw new Error('ZERO_CONVERSION');
   }
-  const computedToPackagesCount = fromUnits / toFmt.units_per_package;
   if (data.to_packages_count !== undefined && data.to_packages_count !== computedToPackagesCount) {
     throw new Error('CONVERSION_MISMATCH');
   }
 
+  let remainderFormatId: string | undefined;
+  let remainderFormatLabel: string | undefined;
+  if (remainderUnits > 0) {
+    const baseFmt = await prisma.packagingFormat.findFirst({
+      where: { product_id: data.product_id, is_base_unit: true },
+      select: { id: true, label: true },
+    });
+    if (!baseFmt) throw new Error('BASE_FORMAT_NOT_FOUND');
+    remainderFormatId = baseFmt.id;
+    remainderFormatLabel = baseFmt.label;
+  }
+
+  const convReason = remainderUnits > 0
+    ? `Conversion ${data.from_packages_count} ${fromFmt.label} → ${computedToPackagesCount} ${toFmt.label} + ${remainderUnits} ${remainderFormatLabel}`
+    : `Conversion ${data.from_packages_count} ${fromFmt.label} → ${computedToPackagesCount} ${toFmt.label}`;
+
   const movement = await movementRepo.createConversion({
     ...data,
-    to_packages_count: computedToPackagesCount,
-    total_units:       fromUnits,
+    to_packages_count:  computedToPackagesCount,
+    total_units:        fromUnits,
+    reason:             data.reason ? `${convReason} — ${data.reason}` : convReason,
+    remainder_units:    remainderUnits > 0 ? remainderUnits : undefined,
+    remainder_format_id: remainderFormatId,
   });
 
   try {
@@ -226,7 +247,7 @@ export async function createConversion(
       action:     AuditAction.STOCK_MOVEMENT_CREATED,
       targetType: 'STOCK_MOVEMENT',
       targetId:   movement.id,
-      targetName: `${product.name} — Conversion ${fromFmt.label} → ${toFmt.label}`,
+      targetName: `${product.name} — ${convReason}`,
       storeId,
       storeName,
       ipAddress,
@@ -236,6 +257,11 @@ export async function createConversion(
         from_packages_count:      data.from_packages_count,
         to_packaging_format_id:   data.to_packaging_format_id,
         to_packages_count:        computedToPackagesCount,
+        ...(remainderUnits > 0 ? {
+          remainder_units:       remainderUnits,
+          remainder_format_id:   remainderFormatId,
+          remainder_format_label: remainderFormatLabel,
+        } : {}),
       },
     });
   } catch (err) {

@@ -144,12 +144,14 @@ export async function createReception(
     where:   { id: input.order_id },
     include: {
       items: {
-        include: {
+        select: {
+          id:                            true,
+          ordered_qty:                   true,
+          snapshotted_units_per_package: true,
           supplier_product: {
             select: {
               product_id:          true,
               packaging_format_id: true,
-              packaging_format:    { select: { units_per_package: true } },
             },
           },
         },
@@ -189,6 +191,8 @@ export async function createReception(
   // Construire un index order_item_id → { product_id, unitsPerPackage, packaging_format_id }
   // Clé par ligne de commande (et non par produit) pour traiter correctement un même
   // produit commandé sous plusieurs formats différents.
+  // Utilise snapshotted_units_per_package figé à la création de la commande, pas le
+  // catalogue live — évite les dérives si le format change après émission de la commande.
   const orderInfoByItem = new Map<string, {
     product_id:        string;
     unitsPerPackage:   number;
@@ -197,7 +201,7 @@ export async function createReception(
   for (const oi of order.items) {
     orderInfoByItem.set(oi.id, {
       product_id:        oi.supplier_product.product_id,
-      unitsPerPackage:   oi.supplier_product.packaging_format.units_per_package,
+      unitsPerPackage:   oi.snapshotted_units_per_package,
       packagingFormatId: oi.supplier_product.packaging_format_id ?? null,
     });
   }

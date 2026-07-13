@@ -131,7 +131,13 @@ export async function login(
     throw new Error('Accès à ce magasin non autorisé');
   }
 
-  // Étape 4 : Génération du JWT
+  // Étape 4 : Récupération du nom du rôle (one-time lookup au login)
+  const roleRow = await prisma.role.findUnique({
+    where: { id: utilisateur.role_id },
+    select: { name: true },
+  });
+
+  // Étape 5 : Génération du JWT
   // Le payload contient tout ce dont les middlewares auront besoin
   // pour autoriser les actions sans aller chercher la base à chaque requête
   const secret = process.env.JWT_SECRET as string;
@@ -139,6 +145,7 @@ export async function login(
     userId: utilisateur.id,
     email: utilisateur.email,
     roleId: utilisateur.role_id,
+    roleName: roleRow?.name ?? '',
     storeId,
   };
 
@@ -146,7 +153,7 @@ export async function login(
     expiresIn: TOKEN_EXPIRATION,
   });
 
-  // Étape 5 : Création du SessionLog — non-bloquant
+  // Étape 6 : Création du SessionLog — non-bloquant
   // Si l'écriture en base échoue (base surchargée, network, etc.),
   // on ne veut pas faire échouer la connexion de l'utilisateur pour autant.
   try {
@@ -162,7 +169,7 @@ export async function login(
     console.error('Avertissement : impossible de créer le SessionLog :', erreurSessionLog);
   }
 
-  // Étape 6 : Audit de la connexion réussie — non-bloquant
+  // Étape 7 : Audit de la connexion réussie — non-bloquant
   // On récupère le nom du magasin pour la dénormalisation
   try {
     const magasin = await prisma.store.findUnique({
@@ -181,7 +188,7 @@ export async function login(
     console.error('[audit] Échec du log de connexion :', errAudit);
   }
 
-  // Étape 7 : Retour du résultat au controller
+  // Étape 8 : Retour du résultat au controller
   return {
     token,
     user: {

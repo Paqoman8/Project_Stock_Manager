@@ -563,16 +563,17 @@ model PurchaseOrderSequence {
 
 
 model PurchaseOrderItem {
-  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  order_id            String           @db.Uuid
-  supplier_product_id String           @db.Uuid
-  ordered_qty         Int
-  unit_price          Decimal          @db.Decimal(10, 2) // Denormalized at order time
-  packaging_format_id String?          @db.Uuid           // Packaging format ordered (optional)
-  order               PurchaseOrder    @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  supplier_product    SupplierProduct  @relation(fields: [supplier_product_id], references: [id])
-  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
-  reception_items     ReceptionItem[]
+  id                           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id                     String           @db.Uuid
+  supplier_product_id          String           @db.Uuid
+  ordered_qty                  Int
+  unit_price                   Decimal          @db.Decimal(10, 2) // Denormalized at order time
+  packaging_format_id          String?          @db.Uuid           // Packaging format ordered (optional)
+  snapshotted_units_per_package Int             @default(1)        // Snapshot at order creation time
+  order                        PurchaseOrder    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  supplier_product             SupplierProduct  @relation(fields: [supplier_product_id], references: [id])
+  packaging_format             PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  reception_items              ReceptionItem[]
 
   @@unique([order_id, supplier_product_id])
   @@map("purchase_order_items")

@@ -304,6 +304,7 @@ describe('createSale', () => {
           upsert: jest.fn().mockResolvedValue({}),
         },
         stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        inventoryBreakdown: { findUnique: jest.fn().mockResolvedValue({ quantity: 99 }), update: jest.fn().mockResolvedValue({}) },
         client: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(null) },
       };
       return callback(fakeTx);
@@ -464,6 +465,15 @@ describe('refundSale', () => {
         ],
       },
     ]);
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory:         { upsert: jest.fn().mockResolvedValue({}) },
+        stockMovement:     { create: jest.fn().mockResolvedValue({}) },
+        inventoryBreakdown:{ upsert: jest.fn().mockResolvedValue({}) },
+        transaction:       { findMany: mockTransactionFindMany },
+      };
+      return callback(fakeTx);
+    });
 
     await expect(
       transactionService.refundSale(MOCK_TRANSACTION.id, ACTOR_ID, ACTOR_NAME, STORE_ID),
@@ -479,6 +489,7 @@ describe('refundSale', () => {
       const fakeTx = {
         inventory:     { upsert: jest.fn().mockResolvedValue({}) },
         stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        transaction:   { findMany: mockTransactionFindMany },
       };
       return callback(fakeTx);
     });
@@ -501,6 +512,7 @@ describe('refundSale', () => {
       const fakeTx = {
         inventory: { upsert: jest.fn().mockResolvedValue({}) },
         stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        transaction:   { findMany: mockTransactionFindMany },
       };
       return callback(fakeTx);
     });
@@ -513,7 +525,7 @@ describe('refundSale', () => {
       STORE_ID,
       undefined,
       undefined,
-      [MOCK_TRANSACTION.items[0].id],
+      [{ transaction_item_id: MOCK_TRANSACTION.items[0].id }],
     );
 
     expect(mockCreateTransaction).toHaveBeenCalledWith(
@@ -575,6 +587,7 @@ describe('refundSale', () => {
       const fakeTx = {
         inventory: { upsert: jest.fn().mockResolvedValue({}) },
         stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        transaction:   { findMany: mockTransactionFindMany },
       };
       return callback(fakeTx);
     });
@@ -588,9 +601,60 @@ describe('refundSale', () => {
         STORE_ID,
         undefined,
         undefined,
-        ['item-dup-002'],
+        [{ transaction_item_id: 'item-dup-002' }],
       ),
     ).resolves.toMatchObject({ type: 'REFUND' });
+  });
+
+  it('throws TRANSACTION_LINE_ALREADY_REFUNDED when a second partial refund on the same line would exceed the original quantity', async () => {
+    const transactionWithQty3 = {
+      ...MOCK_TRANSACTION,
+      store_id: STORE_ID,
+      items: [
+        {
+          ...MOCK_TRANSACTION.items[0],
+          qty: 3,
+        },
+      ],
+    };
+    mockGetTransactionById.mockResolvedValue(transactionWithQty3);
+
+    // First refund already returned 2 of the 3 units for item-001
+    mockTransactionFindMany.mockResolvedValue([
+      {
+        items: [
+          {
+            original_transaction_item_id: 'item-001',
+            product_id: 'prod-001',
+            packaging_format_id: null,
+            packages_count: null,
+            qty: 2,
+          },
+        ],
+      },
+    ]);
+
+    mockPrismaTransaction.mockImplementation(async (callback: any) => {
+      const fakeTx = {
+        inventory: { upsert: jest.fn().mockResolvedValue({}) },
+        stockMovement: { create: jest.fn().mockResolvedValue({}) },
+        transaction: { findMany: mockTransactionFindMany },
+      };
+      return callback(fakeTx);
+    });
+
+    // Second refund tries to return 2 more — only 1 remains
+    await expect(
+      transactionService.refundSale(
+        transactionWithQty3.id,
+        ACTOR_ID,
+        ACTOR_NAME,
+        STORE_ID,
+        undefined,
+        undefined,
+        [{ transaction_item_id: 'item-001', qty: 2 }],
+      ),
+    ).rejects.toThrow('TRANSACTION_LINE_ALREADY_REFUNDED');
   });
 });
 

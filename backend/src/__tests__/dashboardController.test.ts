@@ -32,7 +32,7 @@ describe('getDashboardOverview', () => {
 
   it('returns 400 for invalid date ranges', async () => {
     const req = {
-      user: { storeId: 'store-001', roleId: 'role-001' },
+      user: { storeId: 'store-001', roleId: 'role-001', roleName: 'Manager Magasin' },
       query: { from: '2026-06-10', to: '2026-06-01' },
     } as any;
     const res = createResponse();
@@ -45,7 +45,7 @@ describe('getDashboardOverview', () => {
 
   it('passes validated date bounds to the dashboard service', async () => {
     const req = {
-      user: { storeId: 'store-001', roleId: 'role-001' },
+      user: { storeId: 'store-001', roleId: 'role-001', roleName: 'Manager Magasin' },
       query: { from: '2026-06-01', to: '2026-06-07' },
     } as any;
     const res = createResponse();

@@ -117,10 +117,28 @@ async function normalizeSaleItems(items: SaleItemInput[]): Promise<NormalizedSal
  */
 async function ensureEnoughStock(
   storeId: string,
-  items:   Array<{ product_id: string; qty: number }>,
+  items:   Array<{ product_id: string; qty: number; packaging_format_id?: string; packages_count?: number }>,
   tx?:     Prisma.TransactionClient,
 ): Promise<void> {
   const client = tx ?? prisma;
+
+  const formatItems = items.filter((i) => i.packaging_format_id && i.packages_count !== undefined);
+  for (const item of formatItems) {
+    const breakdown = await client.inventoryBreakdown.findUnique({
+      where: {
+        store_id_product_id_packaging_format_id: {
+          store_id:            storeId,
+          product_id:          item.product_id,
+          packaging_format_id: item.packaging_format_id!,
+        },
+      },
+      select: { quantity: true },
+    });
+    if (!breakdown || breakdown.quantity < item.packages_count!) {
+      throw new Error('INSUFFICIENT_STOCK');
+    }
+  }
+
   const requestedByProduct = aggregateRequestedQuantities(items);
   const rows = await client.inventory.findMany({
     where:  { store_id: storeId, product_id: { in: [...requestedByProduct.keys()] } },
@@ -189,6 +207,21 @@ export async function createSale(
             packages_count:      item.packages_count,
           },
         });
+
+        // Decrement inventory breakdown per format (only if the row exists;
+        // ensureEnoughStock already verified it does, so a straight update is safe)
+        if (item.packaging_format_id && item.packages_count) {
+          await tx.inventoryBreakdown.update({
+            where: {
+              store_id_product_id_packaging_format_id: {
+                store_id: storeId,
+                product_id: item.product_id,
+                packaging_format_id: item.packaging_format_id,
+              },
+            },
+            data: { quantity: { decrement: item.packages_count } },
+          });
+        }
       }
 
       return transactionRepo.createTransaction(
@@ -236,7 +269,7 @@ export async function createSale(
 
 /**
  * Refunds an original SALE transaction. Credits stock back, creates refund record.
- * Fails if: original not found, is already a REFUND, already refunded, or from different store.
+ * Supports partial refunds per line (e.g. 1 carton out of 2).
  *
  * @throws TRANSACTION_NOT_FOUND if original ID does not exist
  * @throws ONLY_SALES_CAN_BE_REFUNDED if original is REFUND or EXPENSE
@@ -250,64 +283,50 @@ export async function refundSale(
   storeId:               string,
   storeName?:            string,
   ipAddress?:            string,
-  selectedItemIds?:      string[],
+  refundItems?:          Array<{ transaction_item_id: string; qty?: number; packages_count?: number }>,
 ): Promise<transactionRepo.TransactionRow> {
   const original = await transactionRepo.getTransactionById(originalTransactionId);
   if (!original) throw new Error('TRANSACTION_NOT_FOUND');
   if (original.type !== 'SALE') throw new Error('ONLY_SALES_CAN_BE_REFUNDED');
   if (original.store_id !== storeId) throw new Error('TRANSACTION_STORE_MISMATCH');
 
-  const targetItems = selectedItemIds && selectedItemIds.length > 0
-    ? original.items.filter((item) => selectedItemIds.includes(item.id))
-    : original.items;
+  // Build target items: if specific items are requested, use their partial qty;
+  // otherwise refund all (full lines).
+  const targetItems: Array<transactionRepo.TransactionRow['items'][number] & {
+    _requestedQty?: number;
+    _requestedPackagesCount?: number;
+  }> = [];
+
+  if (refundItems && refundItems.length > 0) {
+    for (const ri of refundItems) {
+      const originalItem = original.items.find((i) => i.id === ri.transaction_item_id);
+      if (!originalItem) throw new Error('REFUND_ITEMS_REQUIRED');
+
+      const requestedPackagesCount = ri.packages_count ?? originalItem.packages_count ?? undefined;
+      const requestedQty = ri.qty ?? (
+        requestedPackagesCount !== undefined && originalItem.packaging_format
+          ? requestedPackagesCount * originalItem.packaging_format.units_per_package
+          : originalItem.qty
+      );
+
+      if (requestedQty > originalItem.qty) throw new Error('REFUND_ITEMS_REQUIRED');
+      if (originalItem.packaging_format_id && requestedPackagesCount !== undefined && requestedPackagesCount > (originalItem.packages_count ?? 0)) {
+        throw new Error('REFUND_ITEMS_REQUIRED');
+      }
+
+      targetItems.push({
+        ...originalItem,
+        qty: requestedQty,
+        packages_count: requestedPackagesCount ?? originalItem.packages_count,
+        _requestedQty: requestedQty,
+        _requestedPackagesCount: requestedPackagesCount,
+      });
+    }
+  } else {
+    targetItems.push(...original.items);
+  }
 
   if (targetItems.length === 0) throw new Error('REFUND_ITEMS_REQUIRED');
-
-  const refundSiblings = await prisma.transaction.findMany({
-    where: { refund_of_id: original.id },
-    select: {
-      items: {
-        select: {
-          original_transaction_item_id: true,
-          product_id: true,
-          packaging_format_id: true,
-          packages_count: true,
-          qty: true,
-        },
-      },
-    },
-  });
-
-  const refundedOriginalItemIds = new Set<string>();
-  const refundedLegacySignatures = new Set<string>();
-  for (const refund of refundSiblings) {
-    for (const item of refund.items as Array<{
-      original_transaction_item_id?: string | null;
-      product_id: string;
-      packaging_format_id?: string | null;
-      packages_count?: number | null;
-      qty: number;
-    }>) {
-      if (item.original_transaction_item_id) {
-        refundedOriginalItemIds.add(item.original_transaction_item_id);
-        continue;
-      }
-      refundedLegacySignatures.add(
-        `${item.product_id}:${item.packaging_format_id ?? 'base'}:${item.packages_count ?? item.qty}`,
-      );
-    }
-  }
-
-  if (!selectedItemIds?.length && refundSiblings.length > 0) {
-    throw new Error('TRANSACTION_ALREADY_REFUNDED');
-  }
-
-  for (const item of targetItems) {
-    const signature = `${item.product_id}:${item.packaging_format_id ?? 'base'}:${item.packages_count ?? item.qty}`;
-    if (refundedOriginalItemIds.has(item.id) || refundedLegacySignatures.has(signature)) {
-      throw new Error('TRANSACTION_LINE_ALREADY_REFUNDED');
-    }
-  }
 
   const refundAmount = targetItems.reduce(
     (sum, item) => sum + Number(item.price_at_sale) * item.qty,
@@ -316,27 +335,112 @@ export async function refundSale(
 
   const refund = await prisma.$transaction(
     async (tx) => {
+      // Anti-doublon check inside the serializable TX to prevent TOCTOU race
+      const refundSiblings = await tx.transaction.findMany({
+        where: { refund_of_id: original.id },
+        select: {
+          items: {
+            select: {
+              original_transaction_item_id: true,
+              product_id: true,
+              packaging_format_id: true,
+              packages_count: true,
+              qty: true,
+            },
+          },
+        },
+      });
+
+      // Track cumulative refunded quantities per original item
+      const refundedQtys = new Map<string, { qty: number; packages_count: number }>();
+      const refundedLegacySignatures = new Set<string>();
+      for (const refund of refundSiblings) {
+        for (const item of refund.items as Array<{
+          original_transaction_item_id?: string | null;
+          product_id: string;
+          packaging_format_id?: string | null;
+          packages_count?: number | null;
+          qty: number;
+        }>) {
+          if (item.original_transaction_item_id) {
+            const prev = refundedQtys.get(item.original_transaction_item_id) ?? { qty: 0, packages_count: 0 };
+            refundedQtys.set(item.original_transaction_item_id, {
+              qty: prev.qty + item.qty,
+              packages_count: prev.packages_count + (item.packages_count ?? 0),
+            });
+            continue;
+          }
+          refundedLegacySignatures.add(
+            `${item.product_id}:${item.packaging_format_id ?? 'base'}:${item.packages_count ?? item.qty}`,
+          );
+        }
+      }
+
+      if (!refundItems?.length && refundSiblings.length > 0) {
+        throw new Error('TRANSACTION_ALREADY_REFUNDED');
+      }
+
       for (const item of targetItems) {
-        // Credit stock back
+        const alreadyRefunded = refundedQtys.get(item.id);
+        if (alreadyRefunded) {
+          if (item.packaging_format_id && item.packages_count != null) {
+            if (alreadyRefunded.packages_count + item.packages_count > (original.items.find((oi) => oi.id === item.id)?.packages_count ?? 0)) {
+              throw new Error('TRANSACTION_LINE_ALREADY_REFUNDED');
+            }
+          } else {
+            if (alreadyRefunded.qty + item.qty > (original.items.find((oi) => oi.id === item.id)?.qty ?? 0)) {
+              throw new Error('TRANSACTION_LINE_ALREADY_REFUNDED');
+            }
+          }
+        }
+        const signature = `${item.product_id}:${item.packaging_format_id ?? 'base'}:${item.packages_count ?? item.qty}`;
+        if (refundedLegacySignatures.has(signature)) {
+          throw new Error('TRANSACTION_LINE_ALREADY_REFUNDED');
+        }
+      }
+
+      for (const item of targetItems) {
+        const restoredQty = item._requestedQty ?? item.qty;
+        const restoredPackagesCount = item._requestedPackagesCount ?? item.packages_count;
+
         await tx.inventory.upsert({
           where:  { store_id_product_id: { store_id: storeId, product_id: item.product_id } },
-          update: { stock_physical: { increment: item.qty } },
-          create: { store_id: storeId, product_id: item.product_id, stock_physical: item.qty },
+          update: { stock_physical: { increment: restoredQty } },
+          create: { store_id: storeId, product_id: item.product_id, stock_physical: restoredQty },
         });
 
-        // Stock ledger — inbound movement
         await tx.stockMovement.create({
           data: {
             store_id:            storeId,
             product_id:          item.product_id,
             type:                'ADJUSTMENT_IN',
-            qty:                 item.qty,
+            qty:                 restoredQty,
             reason:              `Remboursement transaction ${original.id}`,
             performed_by_id:     actorId,
             packaging_format_id: item.packaging_format_id ?? undefined,
-            packages_count:      item.packages_count ?? undefined,
+            packages_count:      restoredPackagesCount ?? undefined,
           },
         });
+
+        if (item.packaging_format_id) {
+          const pkgCount = restoredPackagesCount ?? restoredQty;
+          await tx.inventoryBreakdown.upsert({
+            where: {
+              store_id_product_id_packaging_format_id: {
+                store_id: storeId,
+                product_id: item.product_id,
+                packaging_format_id: item.packaging_format_id,
+              },
+            },
+            update: { quantity: { increment: pkgCount } },
+            create: {
+              store_id: storeId,
+              product_id: item.product_id,
+              packaging_format_id: item.packaging_format_id,
+              quantity: pkgCount,
+            },
+          });
+        }
       }
 
       return transactionRepo.createTransaction(
@@ -350,10 +454,10 @@ export async function refundSale(
           items: targetItems.map((item) => ({
             original_transaction_item_id: item.id,
             product_id:          item.product_id,
-            qty:                 item.qty,
+            qty:                 item._requestedQty ?? item.qty,
             price_at_sale:       Number(item.price_at_sale),
             packaging_format_id: item.packaging_format_id ?? undefined,
-            packages_count:      item.packages_count ?? undefined,
+            packages_count:      item._requestedPackagesCount ?? item.packages_count ?? undefined,
           })),
         },
         tx,

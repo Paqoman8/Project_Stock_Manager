@@ -44,6 +44,10 @@ export interface CreateConversionData {
   total_units:           number; // équivalence en unités de base — calculée par le service, tracée sur le mouvement
   reason?:               string;
   performed_by_id:       string;
+  /** Nombre d'unités restantes (conversion non-divisible) à créditer sur le format de base */
+  remainder_units?:      number;
+  /** ID du format de base qui reçoit le reste */
+  remainder_format_id?:  string;
 }
 
 export interface StockMovementFilters {
@@ -202,7 +206,7 @@ export async function create(data: CreateMovementData): Promise<StockMovementRow
 export async function createConversion(data: CreateConversionData): Promise<StockMovementRow> {
   const movement = await prisma.$transaction(async (tx) => {
     // Vérifier stock du format source
-    const fromBreakdown = await tx.inventoryBreakdown.findUnique({
+    let fromBreakdown = await tx.inventoryBreakdown.findUnique({
       where: {
         store_id_product_id_packaging_format_id: {
           store_id:            data.store_id,
@@ -212,12 +216,46 @@ export async function createConversion(data: CreateConversionData): Promise<Stoc
       },
       select: { quantity: true },
     });
-    if (!fromBreakdown || fromBreakdown.quantity < data.from_packages_count) {
+
+    // Si aucune entrée de ventilation n'existe pour le format source (ex. stock
+    // ajouté sans packaging_format_id via INITIAL/ADJUSTMENT_IN), on regarde si
+    // c'est l'unité de base et on synthétise l'entrée depuis le stock total.
+    if (!fromBreakdown) {
+      const fromFmt = await tx.packagingFormat.findUnique({
+        where: { id: data.from_packaging_format_id },
+        select: { is_base_unit: true },
+      });
+      if (!fromFmt?.is_base_unit) {
+        throw new Error('INSUFFICIENT_FORMAT_STOCK');
+      }
+      const inv = await tx.inventory.findUnique({
+        where: {
+          store_id_product_id: {
+            store_id:   data.store_id,
+            product_id: data.product_id,
+          },
+        },
+        select: { stock_physical: true },
+      });
+      if (!inv || inv.stock_physical < data.from_packages_count) {
+        throw new Error('INSUFFICIENT_FORMAT_STOCK');
+      }
+      fromBreakdown = await tx.inventoryBreakdown.create({
+        data: {
+          store_id:            data.store_id,
+          product_id:          data.product_id,
+          packaging_format_id: data.from_packaging_format_id,
+          quantity:            inv.stock_physical,
+        },
+        select: { quantity: true },
+      });
+    }
+    if (fromBreakdown.quantity < data.from_packages_count) {
       throw new Error('INSUFFICIENT_FORMAT_STOCK');
     }
 
-    // Débit format source
-    await tx.inventoryBreakdown.update({
+    // Débit format source (upsert au cas où l'entrée vient d'être créée ci-dessus)
+    await tx.inventoryBreakdown.upsert({
       where: {
         store_id_product_id_packaging_format_id: {
           store_id:            data.store_id,
@@ -225,7 +263,13 @@ export async function createConversion(data: CreateConversionData): Promise<Stoc
           packaging_format_id: data.from_packaging_format_id,
         },
       },
-      data: { quantity: { decrement: data.from_packages_count } },
+      update: { quantity: { decrement: data.from_packages_count } },
+      create: {
+        store_id:            data.store_id,
+        product_id:          data.product_id,
+        packaging_format_id: data.from_packaging_format_id,
+        quantity:            0,
+      },
     });
 
     // Crédit format destination
@@ -245,6 +289,26 @@ export async function createConversion(data: CreateConversionData): Promise<Stoc
         quantity:            data.to_packages_count,
       },
     });
+
+    // Crédit du reste au format de base (conversion non-divisible)
+    if (data.remainder_units && data.remainder_format_id) {
+      await tx.inventoryBreakdown.upsert({
+        where: {
+          store_id_product_id_packaging_format_id: {
+            store_id:            data.store_id,
+            product_id:          data.product_id,
+            packaging_format_id: data.remainder_format_id,
+          },
+        },
+        update: { quantity: { increment: data.remainder_units } },
+        create: {
+          store_id:            data.store_id,
+          product_id:          data.product_id,
+          packaging_format_id: data.remainder_format_id,
+          quantity:            data.remainder_units,
+        },
+      });
+    }
 
     // Créer le mouvement traçabilité
     return tx.stockMovement.create({

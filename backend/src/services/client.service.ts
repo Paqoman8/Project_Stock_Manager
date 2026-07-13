@@ -80,25 +80,6 @@ export async function resolveClient(
 
   if (matches.length === 1) {
     const match = matches[0];
-    const shouldUpdate =
-      match.name !== name ||
-      (normalizedEmail && match.normalized_email !== normalizedEmail) ||
-      (normalizedPhone && match.normalized_phone !== normalizedPhone);
-
-    if (shouldUpdate) {
-      return client.client.update({
-        where: { id: match.id },
-        data: {
-          store_id: storeId,
-          name,
-          email: normalizedEmail ?? match.email,
-          phone: normalizedPhone ?? match.phone,
-          normalized_email: normalizedEmail ?? match.normalized_email,
-          normalized_phone: normalizedPhone ?? match.normalized_phone,
-        },
-        select: { id: true, store_id: true, name: true, phone: true, email: true },
-      });
-    }
 
     return {
       id: match.id,

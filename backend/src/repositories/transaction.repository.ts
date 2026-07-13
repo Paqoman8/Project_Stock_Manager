@@ -44,12 +44,12 @@ export type CreateTransactionData = {
   type: TransactionType;
   payment_method: 'CASH' | 'CARD' | 'MOBILE_MONEY';
   total_amount: number;
-    refund_of_id?: string;
-    items: Array<{
-      original_transaction_item_id?: string;
-      product_id: string;
-      qty: number;
-      price_at_sale: number;
+  refund_of_id?: string;
+  items: Array<{
+    original_transaction_item_id?: string;
+    product_id: string;
+    qty: number;
+    price_at_sale: number;
     packaging_format_id?: string;
     packages_count?: number;
   }>;
@@ -105,13 +105,13 @@ export async function createTransaction(
       total_amount:   data.total_amount,
       refund_of_id:   data.refund_of_id,
       items: {
-            create: data.items.map((item) => ({
-              original_transaction_item_id: item.original_transaction_item_id,
-              product_id:          item.product_id,
-              qty:                 item.qty,
-          price_at_sale:       item.price_at_sale,
-          packaging_format_id: item.packaging_format_id,
-          packages_count:      item.packages_count,
+        create: data.items.map((item) => ({
+          original_transaction_item_id: item.original_transaction_item_id,
+          product_id:                   item.product_id,
+          qty:                          item.qty,
+          price_at_sale:                item.price_at_sale,
+          packaging_format_id:          item.packaging_format_id,
+          packages_count:               item.packages_count,
         })),
       },
     },

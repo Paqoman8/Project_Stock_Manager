@@ -20,12 +20,7 @@ type DonutSegment = {
   color: string;
 };
 
-type BarPoint = {
-  label: string;
-  value: number;
-};
-
-type LinePoint = {
+type ChartPoint = {
   label: string;
   value: number;
 };
@@ -52,11 +47,11 @@ export type DashboardOverview = {
   } | null;
   bar: {
     title: string;
-    points: BarPoint[];
+    points: ChartPoint[];
   } | null;
   line: {
     title: string;
-    points: LinePoint[];
+    points: ChartPoint[];
   } | null;
   recent_actions: RecentAction[];
 };
@@ -152,47 +147,49 @@ export async function getDashboardOverview(
   const canViewInventory = isOneOf(roleName, INVENTORY_ROLES);
   const canViewTransfers = isOneOf(roleName, TRANSFER_ROLES);
 
-  const [salesRows, lowStockRows, pendingTransfers, recentAuditRows] = await Promise.all([
+  const salesWhere = { store_id: storeId, type: 'SALE' as const, created_at: { gte: from, lte: to } };
+
+  const [salesAgg, paymentGroups, topProductGroups, trendRows, lowStockRows, pendingTransfers, recentAuditRows] = await Promise.all([
+    canViewSales
+      ? prisma.transaction.aggregate({
+          where: salesWhere,
+          _count: { id: true },
+          _sum: { total_amount: true },
+        })
+      : Promise.resolve(null),
+    canViewSales
+      ? prisma.transaction.groupBy({
+          by: ['payment_method'],
+          where: salesWhere,
+          _sum: { total_amount: true },
+        })
+      : Promise.resolve([]),
+    canViewSales
+      ? prisma.transactionItem.groupBy({
+          by: ['product_id'],
+          where: { transaction: { store_id: storeId, type: 'SALE', created_at: { gte: from, lte: to } } },
+          _sum: { qty: true },
+          orderBy: { _sum: { qty: 'desc' } },
+          take: 3,
+        })
+      : Promise.resolve([]),
     canViewSales
       ? prisma.transaction.findMany({
-          where: {
-            store_id: storeId,
-            type: 'SALE',
-            created_at: { gte: from, lte: to },
-          },
-          select: {
-            id: true,
-            payment_method: true,
-            total_amount: true,
-            created_at: true,
-            items: {
-              select: {
-                qty: true,
-                product: { select: { name: true } },
-              },
-            },
-          },
+          where: salesWhere,
+          select: { id: true, total_amount: true, created_at: true },
           orderBy: { created_at: 'asc' },
+          take: 1000,
         })
       : Promise.resolve([]),
     canViewInventory
       ? prisma.inventory.findMany({
-          where: {
-            store_id: storeId,
-            stock_min: { gt: 0 },
-          },
-          select: {
-            stock_min: true,
-            stock_physical: true,
-          },
+          where: { store_id: storeId, stock_min: { gt: 0 } },
+          select: { stock_min: true, stock_physical: true },
         })
       : Promise.resolve(0),
     canViewTransfers
       ? prisma.transfer.count({
-          where: {
-            status: 'PENDING',
-            OR: [{ from_store_id: storeId }, { to_store_id: storeId }],
-          },
+          where: { status: 'PENDING', OR: [{ from_store_id: storeId }, { to_store_id: storeId }] },
         })
       : Promise.resolve(0),
     prisma.auditLog.findMany({
@@ -214,23 +211,15 @@ export async function getDashboardOverview(
       },
       orderBy: { created_at: 'desc' },
       take: 3,
-      select: {
-        id: true,
-        action: true,
-        target_name: true,
-        actor_name: true,
-        created_at: true,
-      },
+      select: { id: true, action: true, target_name: true, actor_name: true, created_at: true },
     }),
   ]);
 
   const statCards: StatCard[] = [];
-  if (canViewSales) {
-    const periodSales = salesRows;
-    const revenue = periodSales.reduce((sum, row) => sum + Number(row.total_amount), 0);
+  if (canViewSales && salesAgg) {
     statCards.push(
-      { id: 'revenue_today', label: 'CA', value: revenue, suffix: 'F', tone: 'primary' },
-      { id: 'tickets_today', label: 'Ventes', value: periodSales.length, tone: 'success' },
+      { id: 'revenue_today', label: 'CA', value: Number(salesAgg._sum.total_amount ?? 0), suffix: 'F', tone: 'primary' },
+      { id: 'tickets_today', label: 'Ventes', value: salesAgg._count.id, tone: 'success' },
     );
   }
   if (canViewInventory) {
@@ -254,11 +243,10 @@ export async function getDashboardOverview(
       MOBILE_MONEY: '#198754',
     };
 
-    const salesByPayment = salesRows
-      .reduce<Record<PaymentMethod, number>>((acc, row) => {
-        acc[row.payment_method] += Number(row.total_amount);
-        return acc;
-      }, { CASH: 0, CARD: 0, MOBILE_MONEY: 0 });
+    const salesByPayment = { CASH: 0, CARD: 0, MOBILE_MONEY: 0 } as Record<PaymentMethod, number>;
+    for (const group of paymentGroups as Array<{ payment_method: PaymentMethod; _sum: { total_amount: number | null } }>) {
+      salesByPayment[group.payment_method] = Number(group._sum.total_amount ?? 0);
+    }
 
     const segments = (Object.entries(salesByPayment) as Array<[PaymentMethod, number]>)
       .filter(([, value]) => value > 0)
@@ -275,20 +263,25 @@ export async function getDashboardOverview(
       segments,
     };
 
-    const quantitiesByProduct = new Map<string, number>();
-    for (const sale of salesRows) {
-      for (const item of sale.items) {
-        const current = quantitiesByProduct.get(item.product.name) ?? 0;
-        quantitiesByProduct.set(item.product.name, current + item.qty);
-      }
-    }
+    const topProductIds = (topProductGroups as Array<{ product_id: string; _sum: { qty: number | null } }>)
+      .map((g) => g.product_id);
+
+    const productNames = topProductIds.length > 0
+      ? await prisma.product.findMany({
+          where: { id: { in: topProductIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+    const nameById = new Map(productNames.map((p) => [p.id, p.name]));
 
     bar = {
       title: 'Produits les plus vendus',
-      points: [...quantitiesByProduct.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([label, value]) => ({ label, value })),
+      points: (topProductGroups as Array<{ product_id: string; _sum: { qty: number | null } }>)
+        .map((g) => ({
+          label: nameById.get(g.product_id) ?? 'Produit inconnu',
+          value: g._sum.qty ?? 0,
+        })),
     };
 
     const dayCount = getPeriodDays(from, to);
@@ -322,7 +315,7 @@ export async function getDashboardOverview(
       }
     }
 
-    for (const sale of salesRows) {
+    for (const sale of trendRows as Array<{ total_amount: number | string; created_at: Date }>) {
       const key = getPeriodKey(sale.created_at, granularity, from);
       totalsByPeriod.set(key, (totalsByPeriod.get(key) ?? 0) + Number(sale.total_amount));
     }

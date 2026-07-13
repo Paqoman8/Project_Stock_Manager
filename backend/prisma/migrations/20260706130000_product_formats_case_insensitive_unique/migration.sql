@@ -7,6 +7,6 @@ UPDATE "product_formats" SET "label" = TRIM("label");
 
 -- Créé à l'origine via CREATE UNIQUE INDEX (pas ADD CONSTRAINT) : c'est un index, pas un
 -- constraint au sens catalogue Postgres, donc DROP INDEX (et non DROP CONSTRAINT).
-DROP INDEX "product_formats_label_key";
+DROP INDEX IF EXISTS "product_formats_label_key";
 
 CREATE UNIQUE INDEX "product_formats_label_ci_key" ON "product_formats" (LOWER(TRIM("label")));

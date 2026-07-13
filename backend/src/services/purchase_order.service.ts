@@ -36,6 +36,7 @@ export interface CreateOrderInput {
     supplier_product_id: string;
     ordered_qty: number;
     unit_price: number;
+    packaging_format_id?: string;
   }>;
 }
 
@@ -113,15 +114,49 @@ export async function createPurchaseOrder(
     throw new Error('STORE_NOT_FOUND');
   }
 
-  // Vérification de chaque supplier_product
+  // Vérification de chaque supplier_product + cache des métadonnées
+  const supplierProductCache = new Map<string, { product_id: string; defaultUnitsPerPackage: number }>();
   for (const item of input.items) {
     const sp = await prisma.supplierProduct.findUnique({
       where: { id: item.supplier_product_id },
+      select: {
+        product_id: true,
+        is_active: true,
+        supplier_id: true,
+        packaging_format: { select: { units_per_package: true } },
+      },
     });
     if (!sp || !sp.is_active || sp.supplier_id !== input.supplier_id) {
       throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
     }
+    supplierProductCache.set(item.supplier_product_id, {
+      product_id: sp.product_id,
+      defaultUnitsPerPackage: sp.packaging_format?.units_per_package ?? 1,
+    });
   }
+
+  // Résolution des units_per_package pour chaque ligne (snapshot au moment de la création)
+  const enrichedItems = await Promise.all(
+    input.items.map(async (item) => {
+      const cachedProduct = supplierProductCache.get(item.supplier_product_id);
+      if (!cachedProduct) throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
+
+      let unitsPerPackage = cachedProduct.defaultUnitsPerPackage;
+      if (item.packaging_format_id) {
+        const packagingFormat = await prisma.packagingFormat.findUnique({
+          where: { id: item.packaging_format_id },
+          select: { units_per_package: true, product_id: true },
+        });
+        if (packagingFormat) {
+          if (packagingFormat.product_id !== cachedProduct.product_id) {
+            throw new Error('PACKAGING_FORMAT_MISMATCH');
+          }
+          unitsPerPackage = packagingFormat.units_per_package;
+        }
+      }
+      return { ...item, snapshotted_units_per_package: unitsPerPackage };
+    }),
+  );
 
   // Génération de la référence
   const reference = await orderRepo.getNextReference(new Date().getFullYear());
@@ -133,7 +168,7 @@ export async function createPurchaseOrder(
     ordered_by_id:        actorId,
     notes:                input.notes,
     expected_at:          input.expected_at,
-    items:                input.items,
+    items:                enrichedItems,
   };
 
   const order = await orderRepo.create(createData);
@@ -207,12 +242,48 @@ export async function updatePurchaseOrder(
 
   // Validate supplier products if items are provided
   if (data.items) {
+    const supplierProductCache = new Map<string, { product_id: string; defaultUnitsPerPackage: number }>();
     for (const item of data.items) {
-      const sp = await prisma.supplierProduct.findUnique({ where: { id: item.supplier_product_id } });
+      const sp = await prisma.supplierProduct.findUnique({
+        where: { id: item.supplier_product_id },
+        select: {
+          product_id: true,
+          is_active: true,
+          supplier_id: true,
+          packaging_format: { select: { units_per_package: true } },
+        },
+      });
       if (!sp || !sp.is_active || sp.supplier_id !== existing.supplier_id) {
         throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
       }
+      supplierProductCache.set(item.supplier_product_id, {
+        product_id: sp.product_id,
+        defaultUnitsPerPackage: sp.packaging_format?.units_per_package ?? 1,
+      });
     }
+
+    // Snapshot units_per_package for each item
+    data.items = await Promise.all(
+      data.items.map(async (item) => {
+        const cachedProduct = supplierProductCache.get(item.supplier_product_id);
+        if (!cachedProduct) throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
+
+        let unitsPerPackage = cachedProduct.defaultUnitsPerPackage;
+        if (item.packaging_format_id) {
+          const packagingFormat = await prisma.packagingFormat.findUnique({
+            where: { id: item.packaging_format_id },
+            select: { units_per_package: true, product_id: true },
+          });
+          if (packagingFormat) {
+            if (packagingFormat.product_id !== cachedProduct.product_id) {
+              throw new Error('PACKAGING_FORMAT_MISMATCH');
+            }
+            unitsPerPackage = packagingFormat.units_per_package;
+          }
+        }
+        return { ...item, snapshotted_units_per_package: unitsPerPackage };
+      }),
+    );
   }
 
   const order = await orderRepo.update(id, data);
