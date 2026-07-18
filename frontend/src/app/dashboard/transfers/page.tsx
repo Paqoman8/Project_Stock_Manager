@@ -731,14 +731,14 @@ export default function TransfersPage() {
                       <td className="px-4 py-3 text-textMain align-top">
                         <div className="space-y-1">
                           {transfer.items.map((item) => (
-                            <div key={`${transfer.id}-${item.product_id}`}>{item.product.name}</div>
+                            <div key={`${transfer.id}-${item.product_id}-${item.packaging_format_id ?? ''}`}>{item.product.name}</div>
                           ))}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-textMain align-top">
                         <div className="space-y-1">
                           {transfer.items.map((item) => (
-                            <div key={`${transfer.id}-${item.product_id}-fmt`}>
+                            <div key={`${transfer.id}-${item.product_id}-${item.packaging_format_id ?? ''}-fmt`}>
                               {item.packaging_format?.label ?? 'Unité de base'}
                             </div>
                           ))}
@@ -747,7 +747,7 @@ export default function TransfersPage() {
                       <td className="px-4 py-3 text-textMain align-top">
                         <div className="space-y-1">
                           {transfer.items.map((item) => (
-                            <div key={`${transfer.id}-${item.product_id}-qty`}>
+                            <div key={`${transfer.id}-${item.product_id}-${item.packaging_format_id ?? ''}-qty`}>
                               {item.packaging_format ? `${item.packages_count} ${item.packaging_format.label}` : item.qty}
                             </div>
                           ))}

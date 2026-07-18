@@ -282,6 +282,7 @@ model Transfer {
 
 
 model TransferItem {
+  id                  String          @id @default(uuid()) @db.Uuid
   transfer_id         String          @db.Uuid
   product_id          String          @db.Uuid
   qty                 Int
@@ -291,7 +292,7 @@ model TransferItem {
   product             Product         @relation(fields: [product_id], references: [id])
   packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
 
-  @@id([transfer_id, product_id])
+  @@unique([transfer_id, product_id, packaging_format_id])
   @@index([transfer_id])
   @@index([product_id])
   @@index([packaging_format_id])
