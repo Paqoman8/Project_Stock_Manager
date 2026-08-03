@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getProductFormats,
   createProductFormat,
@@ -19,10 +20,10 @@ import {
 const productFormatRouter = Router();
 
 // Raccourci pour la pile de middlewares réservée aux admins (SA + Admin)
-const adminOnly = [requireAuth, requireRole('Super Administrateur', 'Administrateur')];
+const adminOnly = [requireAuth, requireOrg, requireRole('Super Administrateur', 'Administrateur')];
 
 // GET /api/product-formats — liste tous les formats triés par label ASC
-productFormatRouter.get('/', requireAuth, getProductFormats);
+productFormatRouter.get('/', requireAuth, requireOrg, getProductFormats);
 
 // POST /api/product-formats — crée un nouveau format
 productFormatRouter.post('/', adminOnly, createProductFormat);

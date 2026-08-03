@@ -26,6 +26,8 @@ jest.mock('../services/audit.service', () => ({
 
 import * as stockMovementService from '../services/stock_movement.service';
 
+const ORG_ID = '00000000-0000-0000-0000-000000000010';
+
 const FORMATS: Record<string, { id: string; label: string; product_id: string; units_per_package: number }> = {
   'fmt-unit':   { id: 'fmt-unit',   label: 'Unité',   product_id: 'prod-001', units_per_package: 1 },
   'fmt-carton': { id: 'fmt-carton', label: 'Carton',  product_id: 'prod-001', units_per_package: 24 },
@@ -49,6 +51,7 @@ describe('createConversion — rejets', () => {
   it('rejette une conversion vers le même format', async () => {
     await expect(
       stockMovementService.createConversion(
+        ORG_ID,
         {
           store_id: 'store-001',
           product_id: 'prod-001',
@@ -68,6 +71,7 @@ describe('createConversion — rejets', () => {
   it('rejette quand to_packages_count fourni par le client ne correspond pas', async () => {
     await expect(
       stockMovementService.createConversion(
+        ORG_ID,
         {
           store_id: 'store-001',
           product_id: 'prod-001',
@@ -90,6 +94,7 @@ describe('createConversion — rejets', () => {
 
     await expect(
       stockMovementService.createConversion(
+        ORG_ID,
         {
           store_id: 'store-001',
           product_id: 'prod-001',
@@ -112,6 +117,7 @@ describe('createConversion — divisible (sans reste)', () => {
     mockPackagingFormatFindFirst.mockResolvedValue(BASE_FORMAT);
 
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -131,6 +137,7 @@ describe('createConversion — divisible (sans reste)', () => {
 
   it('accepte to_packages_count fourni par le client quand il correspond', async () => {
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -151,6 +158,7 @@ describe('createConversion — divisible (sans reste)', () => {
 
   it('passe un appel sans remainder_units ni remainder_format_id pour une conversion exacte', async () => {
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -183,6 +191,7 @@ describe('createConversion — divisible (sans reste)', () => {
 describe('createConversion — non-divisible (avec reste)', () => {
   it('convertit 1 carton ×24 → packs ×5 avec reste de 3 unités', async () => {
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -211,6 +220,7 @@ describe('createConversion — non-divisible (avec reste)', () => {
 
   it('convertit 1 carton ×24 → packs ×5 avec reste de 4 unités', async () => {
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -234,34 +244,30 @@ describe('createConversion — non-divisible (avec reste)', () => {
   });
 
   it('convertit 1 pack ×5 → carton ×24 : 0 cartons + 5 unités restantes', async () => {
-    await stockMovementService.createConversion(
-      {
-        store_id: 'store-001',
-        product_id: 'prod-001',
-        from_packaging_format_id: 'fmt-pack5',
-        from_packages_count: 1,
-        to_packaging_format_id: 'fmt-carton',
-        performed_by_id: 'actor-001',
-      },
-      'actor-001',
-      'Actor',
-    );
+    await expect(
+      stockMovementService.createConversion(
+        ORG_ID,
+        {
+          store_id: 'store-001',
+          product_id: 'prod-001',
+          from_packaging_format_id: 'fmt-pack5',
+          from_packages_count: 1,
+          to_packaging_format_id: 'fmt-carton',
+          performed_by_id: 'actor-001',
+        },
+        'actor-001',
+        'Actor',
+      ),
+    ).rejects.toThrow('ZERO_CONVERSION');
 
-    // 5 unités, 5 ÷ 24 = 0 cartons, reste 5
-    expect(mockCreateConversion).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to_packages_count: 0,
-        total_units: 5,
-        remainder_units: 5,
-        remainder_format_id: 'fmt-unit',
-      }),
-    );
+    expect(mockCreateConversion).not.toHaveBeenCalled();
   });
 
   it('ne génère pas d\'erreur et route correctement un gros reste', async () => {
     // 100 packs ×5 = 500 unités → carton ×24
     // 500 ÷ 24 = 20 cartons, reste 20
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -288,6 +294,7 @@ describe('createConversion — non-divisible (avec reste)', () => {
 describe('createConversion — audit et reason', () => {
   it('inclut le reste dans la reason générée automatiquement', async () => {
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',
@@ -310,6 +317,7 @@ describe('createConversion — audit et reason', () => {
 
   it('inclut le reste dans la reason même sans raison fournie', async () => {
     await stockMovementService.createConversion(
+      ORG_ID,
       {
         store_id: 'store-001',
         product_id: 'prod-001',

@@ -8,7 +8,7 @@ export type { TransactionRow } from '../repositories/transaction.repository';
 
 
 // ---------------------------------------------------------------------------
-// INPUT TYPES & CONTRACTS                                                  
+// INPUT TYPES & CONTRACTS
 // ---------------------------------------------------------------------------
 
 /**
@@ -43,17 +43,17 @@ export type DailySummary = {
 
 
 // ---------------------------------------------------------------------------
-// HELPER FUNCTIONS — VALIDATION & PRECONDITIONS                            
+// HELPER FUNCTIONS — VALIDATION & PRECONDITIONS
 // ---------------------------------------------------------------------------
 
 /**
  * Validates that all products exist and are active.
  * Throws PRODUCT_NOT_FOUND if any product is missing or inactive.
  */
-async function ensureProductsExist(productIds: string[]): Promise<void> {
+async function ensureProductsExist(orgId: string, productIds: string[]): Promise<void> {
   const unique = [...new Set(productIds)];
   const found  = await prisma.product.findMany({
-    where:  { id: { in: unique }, is_active: true },
+    where:  { id: { in: unique }, organization_id: orgId, is_active: true },
     select: { id: true },
   });
   if (found.length !== unique.length) throw new Error('PRODUCT_NOT_FOUND');
@@ -153,8 +153,8 @@ async function ensureEnoughStock(
 
 
 // ---------------------------------------------------------------------------
-// createSale — CORE WORKFLOW                                               
-// Atomic: validate inputs → decrement stock → log movements → persist TX   
+// createSale — CORE WORKFLOW
+// Atomic: validate inputs → decrement stock → log movements → persist TX
 // ---------------------------------------------------------------------------
 
 /**
@@ -165,6 +165,7 @@ async function ensureEnoughStock(
  * @throws INSUFFICIENT_STOCK if store lacks required quantity
  */
 export async function createSale(
+  orgId:         string,
   input:         CreateSaleInput,
   actorId:       string,
   actorName:     string,
@@ -173,28 +174,24 @@ export async function createSale(
   ipAddress?:    string,
 ): Promise<transactionRepo.TransactionRow> {
   const normalizedItems = await normalizeSaleItems(input.items);
-  await ensureProductsExist(normalizedItems.map((i) => i.product_id));
+  await ensureProductsExist(orgId, normalizedItems.map((i) => i.product_id));
 
   const totalAmount = normalizedItems.reduce(
     (sum, item) => sum + item.price_at_sale * item.qty,
     0,
   );
 
-  // All stock mutations + transaction insert run in a single serializable TX.
-  // Stock availability is re-checked inside the TX to prevent TOCTOU races.
   const transaction = await prisma.$transaction(
     async (tx) => {
       await ensureEnoughStock(storeId, normalizedItems, tx);
       const client = await resolveClient(input.client, tx, storeId);
 
       for (const item of normalizedItems) {
-        // Decrement physical stock
         await tx.inventory.update({
-          where: { store_id_product_id: { store_id: storeId, product_id: item.product_id } },
+          where: { organization_id_store_id_product_id: { organization_id: orgId, store_id: storeId, product_id: item.product_id } },
           data:  { stock_physical: { decrement: item.qty } },
         });
 
-        // Stock ledger entry
         await tx.stockMovement.create({
           data: {
             store_id:            storeId,
@@ -208,8 +205,6 @@ export async function createSale(
           },
         });
 
-        // Decrement inventory breakdown per format (only if the row exists;
-        // ensureEnoughStock already verified it does, so a straight update is safe)
         if (item.packaging_format_id && item.packages_count) {
           await tx.inventoryBreakdown.update({
             where: {
@@ -247,6 +242,7 @@ export async function createSale(
     targetType:  'TRANSACTION',
     targetId:    transaction.id,
     targetName:  `Transaction ${transaction.id}`,
+    orgId,
     storeId,
     storeName,
     ipAddress,
@@ -263,8 +259,8 @@ export async function createSale(
 
 
 // ---------------------------------------------------------------------------
-// refundSale — REFUND WORKFLOW                                             
-// Reverse stock deduction, create inbound movement, persist REFUND TX     
+// refundSale — REFUND WORKFLOW
+// Reverse stock deduction, create inbound movement, persist REFUND TX
 // ---------------------------------------------------------------------------
 
 /**
@@ -277,6 +273,7 @@ export async function createSale(
  * @throws TRANSACTION_STORE_MISMATCH if original belongs to different store
  */
 export async function refundSale(
+  orgId:                 string,
   originalTransactionId: string,
   actorId:               string,
   actorName:             string,
@@ -285,13 +282,11 @@ export async function refundSale(
   ipAddress?:            string,
   refundItems?:          Array<{ transaction_item_id: string; qty?: number; packages_count?: number }>,
 ): Promise<transactionRepo.TransactionRow> {
-  const original = await transactionRepo.getTransactionById(originalTransactionId);
+  const original = await transactionRepo.getTransactionById(originalTransactionId, orgId);
   if (!original) throw new Error('TRANSACTION_NOT_FOUND');
   if (original.type !== 'SALE') throw new Error('ONLY_SALES_CAN_BE_REFUNDED');
   if (original.store_id !== storeId) throw new Error('TRANSACTION_STORE_MISMATCH');
 
-  // Build target items: if specific items are requested, use their partial qty;
-  // otherwise refund all (full lines).
   const targetItems: Array<transactionRepo.TransactionRow['items'][number] & {
     _requestedQty?: number;
     _requestedPackagesCount?: number;
@@ -335,7 +330,6 @@ export async function refundSale(
 
   const refund = await prisma.$transaction(
     async (tx) => {
-      // Anti-doublon check inside the serializable TX to prevent TOCTOU race
       const refundSiblings = await tx.transaction.findMany({
         where: { refund_of_id: original.id },
         select: {
@@ -351,7 +345,6 @@ export async function refundSale(
         },
       });
 
-      // Track cumulative refunded quantities per original item
       const refundedQtys = new Map<string, { qty: number; packages_count: number }>();
       const refundedLegacySignatures = new Set<string>();
       for (const refund of refundSiblings) {
@@ -404,9 +397,9 @@ export async function refundSale(
         const restoredPackagesCount = item._requestedPackagesCount ?? item.packages_count;
 
         await tx.inventory.upsert({
-          where:  { store_id_product_id: { store_id: storeId, product_id: item.product_id } },
+          where:  { organization_id_store_id_product_id: { organization_id: orgId, store_id: storeId, product_id: item.product_id } },
           update: { stock_physical: { increment: restoredQty } },
-          create: { store_id: storeId, product_id: item.product_id, stock_physical: restoredQty },
+          create: { organization_id: orgId, store_id: storeId, product_id: item.product_id, stock_physical: restoredQty },
         });
 
         await tx.stockMovement.create({
@@ -473,6 +466,7 @@ export async function refundSale(
     targetType:  'TRANSACTION',
     targetId:    refund.id,
     targetName:  `Remboursement de ${original.id}`,
+    orgId,
     storeId,
     storeName,
     ipAddress,
@@ -484,7 +478,7 @@ export async function refundSale(
 
 
 // ---------------------------------------------------------------------------
-// listTransactionsForStore — QUERY TRANSACTIONS                            
+// listTransactionsForStore — QUERY TRANSACTIONS
 // ---------------------------------------------------------------------------
 
 export type ListTransactionsOptions = {
@@ -502,9 +496,10 @@ export type ListTransactionsResult = transactionRepo.TransactionPaginationResult
  * Retrieves paginated transactions for a store, sorted by creation date (newest first).
  */
 export async function listTransactionsForStore(
+  orgId: string,
   options: ListTransactionsOptions,
 ): Promise<ListTransactionsResult> {
-  return transactionRepo.listTransactionsPaginated({
+  return transactionRepo.listTransactionsPaginated(orgId, {
     store_id: options.storeId,
     search: options.search,
     type: options.type,
@@ -516,23 +511,21 @@ export async function listTransactionsForStore(
 
 
 // ---------------------------------------------------------------------------
-// getDailySummary — DASHBOARD AGGREGATE                                    
-// Sums sales count and revenue for the day, scoped to store.               
+// getDailySummary — DASHBOARD AGGREGATE
+// Sums sales count and revenue for the day, scoped to store.
 // ---------------------------------------------------------------------------
 
 /**
  * Computes total sales and revenue for a given date (default: today).
  * Only includes SALE transactions; REFUNDs and EXPENSEs are excluded.
  */
-export async function getDailySummary(storeId: string, date?: Date): Promise<DailySummary> {
+export async function getDailySummary(orgId: string, storeId: string, date?: Date): Promise<DailySummary> {
   const target = date ?? new Date();
   const dateFrom = new Date(target);
   dateFrom.setHours(0, 0, 0, 0);
   const dateTo = new Date(target);
   dateTo.setHours(23, 59, 59, 999);
 
-  // Use aggregate instead of fetching full rows — avoids loading items/store/user joins
-  // just to count and sum. Much cheaper at scale.
   const agg = await prisma.transaction.aggregate({
     where: {
       store_id:   storeId,
@@ -543,8 +536,6 @@ export async function getDailySummary(storeId: string, date?: Date): Promise<Dai
     _sum:   { total_amount: true },
   });
 
-  // Build the YYYY-MM-DD label from the local-midnight boundary so it always
-  // matches the query window, even on servers that are not in UTC.
   const pad = (n: number) => String(n).padStart(2, '0');
   const dateLabel = `${dateFrom.getFullYear()}-${pad(dateFrom.getMonth() + 1)}-${pad(dateFrom.getDate())}`;
 

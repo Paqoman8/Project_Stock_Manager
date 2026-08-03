@@ -22,7 +22,7 @@ describe('supplier_product.repository.update', () => {
     mockSupplierProductUpdate.mockRejectedValue({ code: 'P2002' });
 
     await expect(
-      update('supplier-product-001', { packaging_format_id: 'fmt-002' }),
+      update('org-001', 'supplier-product-001', { packaging_format_id: 'fmt-002' }),
     ).rejects.toThrow('SUPPLIER_PRODUCT_ALREADY_EXISTS');
   });
 });

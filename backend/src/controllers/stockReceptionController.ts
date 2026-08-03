@@ -10,26 +10,8 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as receptionService from '../services/stock_reception.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  }
-  return req.ip ?? '';
-}
-
-/**
- * Formate les erreurs Zod en tableau de messages lisibles pour le client.
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schémas Zod
@@ -69,10 +51,11 @@ export type CreateReceptionInput = z.infer<typeof createReceptionSchema>;
  * Réponse 200 : { success: true, receptions: StockReceptionRow[] }
  */
 export async function getReceptionsByOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const orderId = req.params.orderId as string;
 
   try {
-    const receptions = await receptionService.getReceptionsByOrder(orderId);
+    const receptions = await receptionService.getReceptionsByOrder(orgId, orderId);
     res.status(200).json({ success: true, receptions });
   } catch (error) {
     console.error('Erreur lors de la récupération des réceptions :', error);
@@ -90,10 +73,11 @@ export async function getReceptionsByOrder(req: AuthenticatedRequest, res: Respo
  * Réponse 404 : { success: false, message } si introuvable
  */
 export async function getReceptionById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const reception = await receptionService.getReceptionById(id);
+    const reception = await receptionService.getReceptionById(orgId, id);
     res.status(200).json({ success: true, reception });
   } catch (error) {
     if (error instanceof Error && error.message === 'RECEPTION_NOT_FOUND') {
@@ -131,6 +115,7 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -142,6 +127,7 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
     const restrictToOwnStore = roleName !== 'Super Administrateur' && roleName !== 'Administrateur';
 
     const reception = await receptionService.createReception(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -206,6 +192,7 @@ export async function createReception(req: AuthenticatedRequest, res: Response):
  * Réponse 422 : { success: false, message } si statut invalide
  */
 export async function confirmReception(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -217,7 +204,7 @@ export async function confirmReception(req: AuthenticatedRequest, res: Response)
       resolveStoreName(storeId),
     ]);
 
-    const reception = await receptionService.confirmReception(id, actorId, actorName, storeId, storeName, ip);
+    const reception = await receptionService.confirmReception(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success:   true,
@@ -253,6 +240,7 @@ export async function confirmReception(req: AuthenticatedRequest, res: Response)
  * Réponse 422 : { success: false, message } si statut invalide
  */
 export async function cancelReception(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -264,7 +252,7 @@ export async function cancelReception(req: AuthenticatedRequest, res: Response):
       resolveStoreName(storeId),
     ]);
 
-    const reception = await receptionService.cancelReception(id, actorId, actorName, storeId, storeName, ip);
+    const reception = await receptionService.cancelReception(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success:   true,

@@ -17,10 +17,11 @@ import { prisma } from '../config/database';
  * Un format de produit tel que retourné par toutes les fonctions du repository.
  */
 export interface ProductFormatRow {
-  id:        string;
-  label:     string;
-  createdAt: Date;
-  updatedAt: Date;
+  id:              string;
+  label:           string;
+  organization_id: string;
+  createdAt:       Date;
+  updatedAt:       Date;
 }
 
 /**
@@ -42,10 +43,11 @@ export interface UpdateProductFormatData {
 // ---------------------------------------------------------------------------
 
 const PRODUCT_FORMAT_SELECT = {
-  id:        true,
-  label:     true,
-  createdAt: true,
-  updatedAt: true,
+  id:              true,
+  label:           true,
+  organization_id: true,
+  createdAt:       true,
+  updatedAt:       true,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -57,8 +59,9 @@ const PRODUCT_FORMAT_SELECT = {
  *
  * @returns Tableau de ProductFormatRow, potentiellement vide
  */
-export async function findAll(): Promise<ProductFormatRow[]> {
+export async function findAll(orgId: string): Promise<ProductFormatRow[]> {
   return prisma.productFormat.findMany({
+    where:   { organization_id: orgId },
     select:  PRODUCT_FORMAT_SELECT,
     orderBy: { label: 'asc' },
   });
@@ -69,9 +72,9 @@ export async function findAll(): Promise<ProductFormatRow[]> {
  *
  * @param id - UUID du format
  */
-export async function findById(id: string): Promise<ProductFormatRow | null> {
+export async function findById(id: string, orgId: string): Promise<ProductFormatRow | null> {
   return prisma.productFormat.findUnique({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     select: PRODUCT_FORMAT_SELECT,
   });
 }
@@ -85,10 +88,12 @@ export async function findById(id: string): Promise<ProductFormatRow | null> {
  */
 export async function findByLabel(
   label: string,
+  orgId: string,
   excludeId?: string,
 ): Promise<ProductFormatRow | null> {
   return prisma.productFormat.findFirst({
     where: {
+      organization_id: orgId,
       label: { equals: label.trim(), mode: 'insensitive' },
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
@@ -117,9 +122,9 @@ export async function isLabelUsedByPackagingFormat(label: string): Promise<boole
  * @param data - { label }
  * @returns Le format créé
  */
-export async function create(data: CreateProductFormatData): Promise<ProductFormatRow> {
+export async function create(data: CreateProductFormatData, orgId: string): Promise<ProductFormatRow> {
   return prisma.productFormat.create({
-    data:   { label: data.label.trim() },
+    data:   { label: data.label.trim(), organization_id: orgId },
     select: PRODUCT_FORMAT_SELECT,
   });
 }
@@ -134,9 +139,10 @@ export async function create(data: CreateProductFormatData): Promise<ProductForm
 export async function update(
   id: string,
   data: UpdateProductFormatData,
+  orgId: string,
 ): Promise<ProductFormatRow> {
   return prisma.productFormat.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   { label: data.label.trim() },
     select: PRODUCT_FORMAT_SELECT,
   });
@@ -148,6 +154,6 @@ export async function update(
  *
  * @param id - UUID du format à supprimer
  */
-export async function deleteById(id: string): Promise<void> {
-  await prisma.productFormat.delete({ where: { id } });
+export async function deleteById(id: string, orgId: string): Promise<void> {
+  await prisma.productFormat.delete({ where: { id, organization_id: orgId } });
 }

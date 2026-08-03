@@ -12,27 +12,8 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as productService from '../services/product.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  }
-  return req.ip ?? '';
-}
-
-/**
- * Formate les erreurs Zod en tableau de messages lisibles pour le client.
- * Exemple : ["price: Le prix doit être positif", "category_id: UUID de catégorie invalide"]
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schéma Zod — utilisé pour create (complet) et update (partiel)
@@ -93,6 +74,7 @@ const updateProductSchema = productSchema.omit({ sku: true }).partial();
  * Sécurité : requireAuth.
  */
 export async function getProducts(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId       = req.user!.orgId;
   const search      = req.query.search     as string | undefined;
   const categoryId  = req.query.categoryId as string | undefined;
   const isActiveRaw = req.query.isActive   as string | undefined;
@@ -103,7 +85,7 @@ export async function getProducts(req: AuthenticatedRequest, res: Response): Pro
   if (isActiveRaw === 'false') isActive = false;
 
   try {
-    const products = await productService.getProducts({ search, categoryId, isActive });
+    const products = await productService.getProducts(orgId, { search, categoryId, isActive });
 
     res.status(200).json({
       success: true,
@@ -130,10 +112,11 @@ export async function getProducts(req: AuthenticatedRequest, res: Response): Pro
  * Sécurité : requireAuth.
  */
 export async function getProductById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const product = await productService.getProductById(id);
+    const product = await productService.getProductById(orgId, id);
 
     res.status(200).json({
       success: true,
@@ -184,6 +167,7 @@ export async function createProduct(req: AuthenticatedRequest, res: Response): P
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -193,6 +177,7 @@ export async function createProduct(req: AuthenticatedRequest, res: Response): P
     ]);
 
     const product = await productService.createProduct(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -271,6 +256,7 @@ export async function updateProduct(req: AuthenticatedRequest, res: Response): P
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -280,6 +266,7 @@ export async function updateProduct(req: AuthenticatedRequest, res: Response): P
     ]);
 
     const product = await productService.updateProduct(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -331,6 +318,7 @@ export async function updateProduct(req: AuthenticatedRequest, res: Response): P
  * Sécurité : requireAuth + requireRole('Super Administrateur').
  */
 export async function deactivateProduct(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -342,7 +330,7 @@ export async function deactivateProduct(req: AuthenticatedRequest, res: Response
       resolveStoreName(storeId),
     ]);
 
-    const product = await productService.deactivateProduct(id, actorId, actorName, storeId, storeName, ip);
+    const product = await productService.deactivateProduct(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success:  true,
@@ -378,6 +366,7 @@ export async function deactivateProduct(req: AuthenticatedRequest, res: Response
  * Sécurité : requireAuth + requireRole('Super Administrateur').
  */
 export async function reactivateProduct(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -389,7 +378,7 @@ export async function reactivateProduct(req: AuthenticatedRequest, res: Response
       resolveStoreName(storeId),
     ]);
 
-    const product = await productService.reactivateProduct(id, actorId, actorName, storeId, storeName, ip);
+    const product = await productService.reactivateProduct(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success:  true,

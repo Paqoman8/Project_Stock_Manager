@@ -91,12 +91,13 @@ function codeHttpPourErreurMetier(message: string): number | null {
  * Sécurité : pwd_hash n'est jamais retourné dans cette réponse.
  */
 export async function listUsers(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   // Par défaut on inclut les inactifs — SA et Admin doivent les voir.
   // Le query param permet de filtrer si le frontend a besoin d'un listing réduit.
   const inclureInactifs = req.query.includeInactive !== 'false';
 
   try {
-    const utilisateurs = await userService.getAllUsers(inclureInactifs);
+    const utilisateurs = await userService.getAllUsers(orgId, inclureInactifs);
 
     res.status(200).json({
       success: true,
@@ -135,10 +136,10 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
   };
 
   // Validation de présence des champs obligatoires
-  if (!username || !password || !roleId) {
+  if (!username || !email || !password || !roleId) {
     res.status(400).json({
       success: false,
-      message: 'Les champs username, password et roleId sont obligatoires.',
+      message: 'Les champs username, email, password et roleId sont obligatoires.',
     });
     return;
   }
@@ -146,17 +147,10 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
   // Validation des types
   if (
     typeof username !== 'string' ||
+    typeof email !== 'string' ||
     typeof password !== 'string' ||
     typeof roleId !== 'string'
   ) {
-    res.status(400).json({
-      success: false,
-      message: 'Format de données invalide.',
-    });
-    return;
-  }
-
-  if (email !== undefined && email !== null && typeof email !== 'string') {
     res.status(400).json({
       success: false,
       message: 'Format de données invalide.',
@@ -173,13 +167,16 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     return;
   }
 
+    const orgId = req.user!.orgId;
+
   try {
     // On passe req.user!.roleId pour que le service puisse appliquer les règles
     // de hiérarchie (Admin ne peut pas créer un autre Admin).
     const nouvelUtilisateur = await userService.createUser(
+      orgId,
       {
         username,
-        email: typeof email === 'string' ? email : undefined,
+        email,
         password,
         roleId,
         storeIds,
@@ -270,8 +267,10 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
   }
 
   try {
+    const orgId = req.user!.orgId;
     // On passe req.user!.roleId pour que le service applique les règles de hiérarchie.
     const utilisateurMisAJour = await userService.updateUser(
+      orgId,
       id,
       {
         username: username as string | undefined,
@@ -345,7 +344,9 @@ export async function deactivateUser(req: AuthenticatedRequest, res: Response): 
     : undefined;
 
   try {
+    const orgId = req.user!.orgId;
     await userService.deactivateUser(
+      orgId,
       id,
       { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
       reason,
@@ -399,7 +400,9 @@ export async function reactivateUser(req: AuthenticatedRequest, res: Response): 
   }
 
   try {
+    const orgId = req.user!.orgId;
     const utilisateurReactive = await userService.reactivateUser(
+      orgId,
       id,
       { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
     );

@@ -62,20 +62,21 @@ export async function createTransfer(data: CreateTransferData): Promise<Transfer
   });
 }
 
-export async function listTransfers(filters: TransferFilters = {}): Promise<TransferRow[]> {
+export async function listTransfers(orgId: string, filters: TransferFilters = {}): Promise<TransferRow[]> {
   return prisma.transfer.findMany({
-    where: buildTransferWhere(filters),
+    where: buildTransferWhere(orgId, filters),
     include: TRANSFER_INCLUDE,
     orderBy: { created_at: 'desc' },
   });
 }
 
 export async function listTransfersPaginated(
+  orgId: string,
   filters: TransferPaginationFilters,
 ): Promise<TransferPaginationResult> {
   const { page, limit } = filters;
   const skip = (page - 1) * limit;
-  const where = buildTransferWhere(filters);
+  const where = buildTransferWhere(orgId, filters);
 
   const [total, transfers] = await Promise.all([
     prisma.transfer.count({ where }),
@@ -96,8 +97,13 @@ export async function listTransfersPaginated(
   };
 }
 
-function buildTransferWhere(filters: TransferFilters & { search?: string }): Prisma.TransferWhereInput {
-  const andConditions: Prisma.TransferWhereInput[] = [];
+function buildTransferWhere(orgId: string, filters: TransferFilters & { search?: string }): Prisma.TransferWhereInput {
+  const andConditions: Prisma.TransferWhereInput[] = [
+    { OR: [
+      { from_store: { organization_id: orgId } },
+      { to_store: { organization_id: orgId } },
+    ] },
+  ];
 
   if (filters.status) {
     andConditions.push({ status: filters.status });
@@ -139,24 +145,31 @@ function buildTransferSearchOr(search?: string): Prisma.TransferWhereInput[] {
   return conditions;
 }
 
-export async function getTransferById(id: string): Promise<TransferRow | null> {
+export async function getTransferById(id: string, orgId: string): Promise<TransferRow | null> {
   return prisma.transfer.findUnique({
-    where: { id },
+    where: { id, OR: [
+      { from_store: { organization_id: orgId } },
+      { to_store: { organization_id: orgId } },
+    ] },
     include: TRANSFER_INCLUDE,
   });
 }
 
-export async function updateTransferStatus(id: string, status: TransferStatus): Promise<TransferRow> {
+export async function updateTransferStatus(id: string, status: TransferStatus, orgId: string): Promise<TransferRow> {
   return prisma.transfer.update({
-    where: { id },
+    where: { id, OR: [
+      { from_store: { organization_id: orgId } },
+      { to_store: { organization_id: orgId } },
+    ] },
     data: { status },
     include: TRANSFER_INCLUDE,
   });
 }
 
-export async function listDestinationStoresForUserStore(excludedStoreId?: string): Promise<Array<{ id: string; name: string }>> {
+export async function listDestinationStoresForUserStore(orgId: string, excludedStoreId?: string): Promise<Array<{ id: string; name: string }>> {
   return prisma.store.findMany({
     where: {
+      organization_id: orgId,
       status: 'ACTIVE',
       ...(excludedStoreId ? { id: { not: excludedStoreId } } : {}),
     },

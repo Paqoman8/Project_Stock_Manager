@@ -30,6 +30,8 @@ jest.mock('../services/audit.service', () => ({
 
 import * as stockReceptionService from '../services/stock_reception.service';
 
+const ORG_ID = '00000000-0000-0000-0000-000000000010';
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -64,6 +66,7 @@ describe('createReception — garde de surplus', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         { order_id: 'order-001', items: [{ order_item_id: 'order-item-001', received_qty: 2 }] },
         'actor-001',
         'Receiver',
@@ -82,6 +85,7 @@ describe('createReception — garde de surplus', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         {
           order_id: 'order-001',
           notes: 'Le fournisseur a livré un carton supplémentaire par erreur',
@@ -104,6 +108,7 @@ describe('createReception — garde de surplus', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         { order_id: 'order-001', items: [{ order_item_id: 'order-item-001', received_qty: 3 }] },
         'actor-001',
         'Receiver',
@@ -120,6 +125,7 @@ describe('createReception — garde de surplus', () => {
     // Deux lignes de 3 : chacune est < 5 mais la somme (6) dépasse le reliquat.
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         {
           order_id: 'order-001',
           items: [
@@ -142,6 +148,7 @@ describe('createReception — garde de surplus', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         {
           order_id: 'order-001',
           notes: 'Livraison groupée en deux palettes',
@@ -166,6 +173,7 @@ describe('createReception — scope magasin', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         { order_id: 'order-001', items: [{ order_item_id: 'order-item-001', received_qty: 1 }] },
         'actor-001',
         'Receiver',
@@ -186,6 +194,7 @@ describe('createReception — scope magasin', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         { order_id: 'order-001', items: [{ order_item_id: 'order-item-001', received_qty: 1 }] },
         'actor-001',
         'Receiver',
@@ -206,6 +215,7 @@ describe('createReception — scope magasin', () => {
 
     await expect(
       stockReceptionService.createReception(
+        ORG_ID,
         { order_id: 'order-001', items: [{ order_item_id: 'order-item-001', received_qty: 1 }] },
         'actor-001',
         'Receiver',

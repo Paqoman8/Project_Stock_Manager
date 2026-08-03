@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getInvoices,
   getInvoiceById,
@@ -19,7 +20,7 @@ import {
 
 const supplierInvoiceRouter = Router();
 
-const superAdminOnly = [requireAuth, requireRole('Super Administrateur')];
+const superAdminOnly = [requireAuth, requireOrg, requireRole('Super Administrateur')];
 
 // GET /api/invoices — liste des factures (filtres optionnels via query params)
 supplierInvoiceRouter.get('/', superAdminOnly, getInvoices);

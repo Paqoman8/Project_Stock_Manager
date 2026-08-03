@@ -19,6 +19,7 @@ jest.mock('../config/database', () => ({
 
 import { resolveClient, searchClients } from '../services/client.service';
 
+const ORG_ID = '00000000-0000-0000-0000-000000000010';
 const STORE_ID = 'store-uuid-001';
 
 beforeEach(() => {
@@ -128,7 +129,7 @@ describe('searchClients', () => {
   it('scopes client search to the requesting store', async () => {
     mockClientFindMany.mockResolvedValue([]);
 
-    await searchClients('alice', STORE_ID);
+    await searchClients(ORG_ID, 'alice', STORE_ID);
 
     expect(mockClientFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -140,7 +141,7 @@ describe('searchClients', () => {
   });
 
   it('returns empty array for queries shorter than 2 characters', async () => {
-    const result = await searchClients('a', STORE_ID);
+    const result = await searchClients(ORG_ID, 'a', STORE_ID);
     expect(result).toEqual([]);
     expect(mockClientFindMany).not.toHaveBeenCalled();
   });

@@ -26,7 +26,7 @@ function parseDateBoundary(value: string, boundary: 'start' | 'end'): Date | nul
 }
 
 export async function getDashboardOverview(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { storeId, roleName } = req.user!;
+  const { storeId, roleName, orgId } = req.user!;
 
   try {
     let period: dashboardService.DashboardPeriod | undefined;
@@ -47,7 +47,7 @@ export async function getDashboardOverview(req: AuthenticatedRequest, res: Respo
       period = { from, to };
     }
 
-    const overview = await dashboardService.getDashboardOverview(storeId, roleName ?? '', period);
+    const overview = await dashboardService.getDashboardOverview(orgId, storeId, roleName ?? '', period);
     res.status(200).json({ success: true, dashboard: overview });
   } catch (error) {
     console.error('Erreur getDashboardOverview:', error);

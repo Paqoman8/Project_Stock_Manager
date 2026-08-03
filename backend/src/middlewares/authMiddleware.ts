@@ -1,21 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-
-// Structure des données que nous stockons à l'intérieur du token JWT.
-// storeId est obligatoire : depuis la refonte du login, l'utilisateur choisit
-// son magasin au moment de la connexion, donc le JWT le contient toujours.
-interface TokenPayload {
-  userId: string;
-  email: string;
-  roleId: string;
-  roleName: string;
-  storeId: string;
-}
+import type { TokenPayload } from '../services/auth.service';
+import { getJwtSecret } from '../services/auth.service';
 
 // On étend le type Request d'Express pour pouvoir y attacher
 // les infos de l'utilisateur une fois le token validé
 export interface AuthenticatedRequest extends Request {
   user?: TokenPayload;
+  orgId?: string;
 }
 
 // Ce middleware est un "gardien de porte". Il sera placé devant toutes
@@ -43,8 +35,42 @@ export function requireAuth(
 
   try {
     // On vérifie que le token est valide et qu'il a été signé avec notre clé secrète
-    const secret = process.env.JWT_SECRET as string;
+    const secret = getJwtSecret();
     const decodedPayload = jwt.verify(token, secret) as TokenPayload;
+
+    // Si le token a un scope 'change-password' ou 'reset-password' (temporaryToken),
+    // il n'est accepté QUE sur les routes correspondantes.
+    //
+    // IMPORTANT : on compare le chemin exact (req.baseUrl + req.path reconstruit
+    // correctement dans Express 5) et non un simple endsWith, sinon un token
+    // scope "reset-password" pourrait accéder à /api/auth/admin-reset-password.
+    if (decodedPayload.scope === 'change-password') {
+      // Seule la route POST /api/auth/change-password accepte ce scope
+      const requestPath = req.originalUrl.split('?')[0];
+      const isAllowedChangePass = requestPath === '/api/auth/change-password';
+
+      if (!isAllowedChangePass) {
+        res.status(401).json({
+          success: false,
+          message: 'Accès refusé : token temporaire, changement de mot de passe requis.',
+        });
+        return;
+      }
+    }
+
+    if (decodedPayload.scope === 'reset-password') {
+      // Seule la route POST /api/auth/reset-password accepte ce scope
+      const requestPath = req.originalUrl.split('?')[0];
+      const isAllowedReset = requestPath === '/api/auth/reset-password';
+
+      if (!isAllowedReset) {
+        res.status(401).json({
+          success: false,
+          message: 'Accès refusé : token temporaire invalide.',
+        });
+        return;
+      }
+    }
 
     // On attache les informations de l'utilisateur à la requête
     // pour que le controller suivant puisse les utiliser

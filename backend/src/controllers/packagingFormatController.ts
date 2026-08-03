@@ -11,10 +11,7 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../config/database';
 import * as repo from '../repositories/packaging_format.repository';
-
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
-}
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schémas Zod
@@ -38,9 +35,9 @@ const updateSchema = z.object({
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function assertProductExists(productId: string): Promise<boolean> {
+async function assertProductExists(orgId: string, productId: string): Promise<boolean> {
   const product = await prisma.product.findUnique({
-    where:  { id: productId },
+    where: { id: productId, organization_id: orgId },
     select: { id: true },
   });
   return product !== null;
@@ -52,21 +49,22 @@ async function assertProductExists(productId: string): Promise<boolean> {
 
 /** GET /api/products/:productId/packaging-formats */
 export async function getFormats(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId     = req.user!.orgId;
   const productId = req.params.productId as string;
   const storeId   = req.user!.storeId;
   try {
-    if (!(await assertProductExists(productId))) {
+    if (!(await assertProductExists(orgId, productId))) {
       res.status(404).json({ success: false, message: 'Produit introuvable.' });
       return;
     }
-    let formats = await repo.findAllByProduct(productId);
+    let formats = await repo.findAllByProduct(orgId, productId);
 
     // Si aucun format de base n'existe (produit créé avant l'ajout de ce champ),
     // on le crée automatiquement à partir de l'unité du produit.
     const hasBase = formats.some((f) => f.is_base_unit);
     if (!hasBase) {
       const product = await prisma.product.findUnique({
-        where: { id: productId },
+        where: { id: productId, organization_id: orgId },
         select: { unit: true },
       });
       if (product) {
@@ -90,7 +88,7 @@ export async function getFormats(req: AuthenticatedRequest, res: Response): Prom
           }],
           skipDuplicates: true,
         });
-        formats = await repo.findAllByProduct(productId);
+        formats = await repo.findAllByProduct(orgId, productId);
       }
     }
 
@@ -121,6 +119,7 @@ export async function getFormats(req: AuthenticatedRequest, res: Response): Prom
 
 /** POST /api/products/:productId/packaging-formats */
 export async function createFormat(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId     = req.user!.orgId;
   const productId = req.params.productId as string;
 
   const parseResult = createSchema.safeParse(req.body);
@@ -132,7 +131,7 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
   const { label, units_per_package, price, is_base_unit } = parseResult.data;
 
   try {
-    if (!(await assertProductExists(productId))) {
+    if (!(await assertProductExists(orgId, productId))) {
       res.status(404).json({ success: false, message: 'Produit introuvable.' });
       return;
     }
@@ -145,7 +144,7 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
 
     // Règle : un seul format is_base_unit par produit
     if (is_base_unit) {
-      const existing = await repo.findBaseUnit(productId);
+      const existing = await repo.findBaseUnit(orgId, productId);
       if (existing) {
         res.status(409).json({ success: false, message: 'Ce produit a déjà une unité de base définie.' });
         return;
@@ -162,7 +161,7 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    const format = await repo.create({
+    const format = await repo.create(orgId, {
       product_id:        productId,
       label,
       units_per_package,
@@ -182,6 +181,7 @@ export async function createFormat(req: AuthenticatedRequest, res: Response): Pr
 
 /** PUT /api/products/:productId/packaging-formats/:id */
 export async function updateFormat(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId     = req.user!.orgId;
   const productId = req.params.productId as string;
   const id        = req.params.id        as string;
 
@@ -192,7 +192,7 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
   }
 
   try {
-    const existing = await repo.findById(id);
+    const existing = await repo.findById(orgId, id);
     if (!existing || existing.product_id !== productId) {
       res.status(404).json({ success: false, message: 'Format introuvable.' });
       return;
@@ -221,15 +221,15 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
 
     // Si on bascule ce format en unité de base, on retire le badge à l'ancien
     if (is_base_unit === true && !existing.is_base_unit) {
-      const currentBase = await repo.findBaseUnit(productId);
+      const currentBase = await repo.findBaseUnit(orgId, productId);
       if (currentBase && currentBase.id !== id) {
-        await repo.update(currentBase.id, { is_base_unit: false });
+        await repo.update(orgId, currentBase.id, { is_base_unit: false });
       }
     }
 
     // price omis (undefined) = ne pas toucher à la valeur existante ; forcé à null si unité de base.
     const priceUpdate = newIsBase ? null : price;
-    const format = await repo.update(id, { label, units_per_package, price: priceUpdate, is_base_unit });
+    const format = await repo.update(orgId, id, { label, units_per_package, price: priceUpdate, is_base_unit });
     res.status(200).json({ success: true, format });
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes('Unique constraint')) {
@@ -243,11 +243,12 @@ export async function updateFormat(req: AuthenticatedRequest, res: Response): Pr
 
 /** DELETE /api/products/:productId/packaging-formats/:id */
 export async function deleteFormat(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId     = req.user!.orgId;
   const productId = req.params.productId as string;
   const id        = req.params.id        as string;
 
   try {
-    const existing = await repo.findById(id);
+    const existing = await repo.findById(orgId, id);
     if (!existing || existing.product_id !== productId) {
       res.status(404).json({ success: false, message: 'Format introuvable.' });
       return;
@@ -255,7 +256,7 @@ export async function deleteFormat(req: AuthenticatedRequest, res: Response): Pr
 
     // Refuse de supprimer l'unité de base s'il reste d'autres formats
     if (existing.is_base_unit) {
-      const count = await repo.countByProduct(productId);
+      const count = await repo.countByProduct(orgId, productId);
       if (count > 1) {
         res.status(409).json({
           success: false,
@@ -265,7 +266,7 @@ export async function deleteFormat(req: AuthenticatedRequest, res: Response): Pr
       }
     }
 
-    await repo.remove(id);
+    await repo.remove(orgId, id);
     res.status(200).json({ success: true, message: 'Format supprimé.' });
   } catch (err) {
     console.error('Erreur suppression format :', err);

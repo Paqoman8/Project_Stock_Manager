@@ -132,6 +132,7 @@ function buildRecentActionLabel(action: AuditAction, targetName: string | null):
 }
 
 export async function getDashboardOverview(
+  orgId: string,
   storeId: string,
   roleName: string,
   period?: DashboardPeriod,
@@ -183,7 +184,7 @@ export async function getDashboardOverview(
       : Promise.resolve([]),
     canViewInventory
       ? prisma.inventory.findMany({
-          where: { store_id: storeId, stock_min: { gt: 0 } },
+          where: { organization_id: orgId, store_id: storeId, stock_min: { gt: 0 } },
           select: { stock_min: true, stock_physical: true },
         })
       : Promise.resolve(0),
@@ -194,6 +195,7 @@ export async function getDashboardOverview(
       : Promise.resolve(0),
     prisma.auditLog.findMany({
       where: {
+        organization_id: orgId,
         store_id: storeId,
         action: {
           in: [

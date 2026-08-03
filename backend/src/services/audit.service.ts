@@ -25,6 +25,7 @@ export type LogActionInput = {
   targetName?: string;       // Nom au moment du fait (dénormalisé)
   storeId?: string;
   storeName?: string;        // Nom au moment du fait (dénormalisé)
+  orgId?: string | null;     // Organisation (null pour actions plateforme)
   ipAddress?: string;        // Adresse IP du poste à l'origine de l'action
   metadata?: Prisma.InputJsonValue;
 };
@@ -78,16 +79,17 @@ export async function logAction(input: LogActionInput): Promise<void> {
   try {
     await prisma.auditLog.create({
       data: {
-        actor_id:    input.actorId    ?? null,
-        actor_name:  input.actorName,
-        action:      input.action,
-        target_type: input.targetType  ?? null,
-        target_id:   input.targetId   ?? null,
-        target_name: input.targetName  ?? null,
-        store_id:    input.storeId    ?? null,
-        store_name:  input.storeName  ?? null,
-        ip_address:  input.ipAddress  ?? null,
-        metadata:    input.metadata   ?? undefined,
+        actor_id:        input.actorId    ?? null,
+        actor_name:      input.actorName,
+        action:          input.action,
+        target_type:     input.targetType  ?? null,
+        target_id:       input.targetId   ?? null,
+        target_name:     input.targetName  ?? null,
+        store_id:        input.storeId    ?? null,
+        store_name:      input.storeName  ?? null,
+        organization_id: input.orgId      ?? null,
+        ip_address:      input.ipAddress  ?? null,
+        metadata:        input.metadata   ?? undefined,
       },
     });
   } catch (err) {
@@ -109,7 +111,7 @@ export async function logAction(input: LogActionInput): Promise<void> {
  *    Les logs sans store_id (ex : USER_LOGIN_FAILED) ne sont visibles
  *    que par le SA car ils n'appartiennent à aucun magasin.
  */
-export async function getAuditLogs(options: GetAuditLogsOptions): Promise<AuditLogsResult> {
+export async function getAuditLogs(orgId: string, options: GetAuditLogsOptions): Promise<AuditLogsResult> {
   const { actions, actorId, storeId, startDate, endDate, allowedStoreIds, page, limit } = options;
 
   const where: Prisma.AuditLogWhereInput = {};
@@ -145,6 +147,19 @@ export async function getAuditLogs(options: GetAuditLogsOptions): Promise<AuditL
     // string[] = Admin → logs dont store_id est dans la liste (les logs sans store
     // ne sont pas exposés aux Admins car ils n'ont pas de contexte magasin)
     where.store_id = { in: allowedStoreIds };
+  }
+
+  // Filtre par organisation — les SA et Admins ne voient que les logs
+  // de leur propre organisation (ou les logs sans org pour les SA).
+  if (allowedStoreIds === null) {
+    // SA : logs de son org + logs sans organisation (actions plateforme, échecs login)
+    where.OR = [
+      { organization_id: orgId },
+      { organization_id: null },
+    ];
+  } else {
+    // Admin : uniquement les logs de son org
+    where.organization_id = orgId;
   }
 
   const skip = (page - 1) * limit;

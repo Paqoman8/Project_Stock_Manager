@@ -89,6 +89,7 @@ export async function getSupplierProducts(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
+  const orgId       = req.user!.orgId;
   const supplier_id  = req.query.supplier_id as string | undefined;
   const product_id   = req.query.product_id  as string | undefined;
   const isActiveRaw  = req.query.isActive    as string | undefined;
@@ -98,7 +99,7 @@ export async function getSupplierProducts(
   if (isActiveRaw === 'false') isActive = false;
 
   try {
-    const supplierProducts = await supplierProductService.getSupplierProducts({
+    const supplierProducts = await supplierProductService.getSupplierProducts(orgId, {
       supplier_id,
       product_id,
       isActive,
@@ -126,10 +127,11 @@ export async function getSupplierProductById(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const supplierProduct = await supplierProductService.getSupplierProductById(id);
+    const supplierProduct = await supplierProductService.getSupplierProductById(orgId, id);
 
     res.status(200).json({
       success: true,
@@ -179,6 +181,7 @@ export async function createSupplierProduct(
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -188,6 +191,7 @@ export async function createSupplierProduct(
     ]);
 
     const supplierProduct = await supplierProductService.createSupplierProduct(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -278,6 +282,7 @@ export async function updateSupplierProduct(
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -287,6 +292,7 @@ export async function updateSupplierProduct(
     ]);
 
     const supplierProduct = await supplierProductService.updateSupplierProduct(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -335,6 +341,7 @@ export async function deleteSupplierProduct(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -347,6 +354,7 @@ export async function deleteSupplierProduct(
     ]);
 
     const supplierProduct = await supplierProductService.deleteSupplierProduct(
+      orgId,
       id,
       actorId,
       actorName,

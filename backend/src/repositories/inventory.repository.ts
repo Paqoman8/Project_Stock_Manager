@@ -15,6 +15,7 @@ import { prisma } from '../config/database';
 export interface InventoryRow {
   store_id:       string;
   product_id:     string;
+  organization_id: string;
   stock_physical: number;
   stock_reserved: number;
   stock_min:      number;
@@ -59,9 +60,10 @@ const INVENTORY_INCLUDE = {
  * Retourne toutes les entrées d'inventaire avec filtres optionnels.
  * Triées par nom d'établissement puis par nom de produit.
  */
-export async function findAll(filters: InventoryFilters = {}): Promise<InventoryRow[]> {
+export async function findAll(orgId: string, filters: InventoryFilters = {}): Promise<InventoryRow[]> {
   const rows = await prisma.inventory.findMany({
     where: {
+      organization_id: orgId,
       ...(filters.store_id   ? { store_id:   filters.store_id }   : {}),
       ...(filters.product_id ? { product_id: filters.product_id } : {}),
     },
@@ -82,15 +84,16 @@ export async function findAll(filters: InventoryFilters = {}): Promise<Inventory
 }
 
 /**
- * Retourne une entrée d'inventaire par sa clé composite (store_id, product_id).
+ * Retourne une entrée d'inventaire par sa clé composite (organization_id, store_id, product_id).
  * Retourne null si elle n'existe pas.
  */
 export async function findOne(
+  orgId: string,
   storeId: string,
   productId: string,
 ): Promise<InventoryRow | null> {
   return prisma.inventory.findUnique({
-    where:   { store_id_product_id: { store_id: storeId, product_id: productId } },
+    where:   { organization_id_store_id_product_id: { organization_id: orgId, store_id: storeId, product_id: productId } },
     include: INVENTORY_INCLUDE,
   }) as unknown as InventoryRow | null;
 }
@@ -100,6 +103,7 @@ export async function findOne(
  * Upsert : crée la ligne si elle n'existe pas encore.
  */
 export async function updateThresholds(
+  orgId: string,
   storeId: string,
   productId: string,
   data: UpdateThresholdsData,
@@ -109,9 +113,10 @@ export async function updateThresholds(
   if (data.stock_reorder !== undefined) updateData.stock_reorder = data.stock_reorder;
 
   return prisma.inventory.upsert({
-    where:  { store_id_product_id: { store_id: storeId, product_id: productId } },
+    where:  { organization_id_store_id_product_id: { organization_id: orgId, store_id: storeId, product_id: productId } },
     update: updateData,
     create: {
+      organization_id: orgId,
       store_id:   storeId,
       product_id: productId,
       stock_min:     data.stock_min     ?? 0,

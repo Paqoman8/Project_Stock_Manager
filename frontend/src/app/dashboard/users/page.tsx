@@ -6,7 +6,11 @@ import { Button } from '@/components/ui/Button';
 import { UserFormModal } from '@/components/users/UserFormModal';
 import { DeactivateUserModal } from '@/components/users/DeactivateUserModal';
 import { ReactivateUserModal } from '@/components/users/ReactivateUserModal';
+import { Modal } from '@/components/ui/Modal';
+import { ResetPasswordModal } from '@/components/users/ResetPasswordModal';
 import { useSession } from '@/contexts/SessionContext';
+import { adminResetPassword } from '@/services/auth.service';
+import { extractApiErrorMessage } from '@/lib/errors';
 import SkeletonRows from '@/components/shared/SkeletonRows';
 import { useUsers } from './hooks/useUsers';
 import UserFilters from './components/UserFilters';
@@ -32,6 +36,11 @@ export default function UsersPage() {
   const [userToDeactivate, setUserToDeactivate] = useState<UserRow | null>(null);
   const [userToReactivate, setUserToReactivate] = useState<UserRow | null>(null);
 
+  const [resetTarget, setResetTarget]           = useState<UserRow | null>(null);
+  const [resetResult, setResetResult]           = useState<{ username: string; password: string } | null>(null);
+  const [resetError, setResetError]             = useState<string | null>(null);
+  const [isResetting, setIsResetting]           = useState(false);
+
   useEffect(() => {
     if (!sessionLoading && sessionUser !== null && !ROLES_AUTORISES.includes(sessionUser.roleName)) {
       router.replace('/dashboard');
@@ -43,6 +52,30 @@ export default function UsersPage() {
     if (!sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) return;
     loadData();
   }, [loadData, sessionLoading, sessionUser]);
+
+  async function handleResetPassword() {
+    if (!resetTarget) return;
+    setIsResetting(true);
+    setResetError(null);
+
+    try {
+      const response = await adminResetPassword(resetTarget.id);
+      setResetTarget(null);
+      setResetResult({
+        username: resetTarget.username,
+        password: response.temporaryPassword ?? '',
+      });
+    } catch (error: unknown) {
+      setResetError(
+        extractApiErrorMessage(
+          error,
+          'Une erreur est survenue. Veuillez réessayer.',
+        ),
+      );
+    } finally {
+      setIsResetting(false);
+    }
+  }
 
   if (sessionLoading || !sessionUser || !ROLES_AUTORISES.includes(sessionUser.roleName)) {
     return (
@@ -80,6 +113,7 @@ export default function UsersPage() {
         isLoading={isLoading} fetchError={fetchError}
         sessionUserId={sessionUser.id} sessionUserRole={sessionUser.roleName}
         onEdit={setUserToEdit} onDeactivate={setUserToDeactivate} onReactivate={setUserToReactivate}
+        onResetPassword={setResetTarget}
       />
 
       <UserFormModal
@@ -99,6 +133,30 @@ export default function UsersPage() {
         isOpen={userToReactivate !== null} onClose={() => setUserToReactivate(null)}
         onSuccess={loadData} user={userToReactivate}
       />
+
+      <Modal
+        isOpen={resetTarget !== null}
+        title="Réinitialiser le mot de passe"
+        message={
+          resetError
+            ? resetError
+            : `Voulez-vous vraiment réinitialiser le mot de passe de ${resetTarget?.username ?? 'cet utilisateur'} ? Un mot de passe temporaire sera généré et l'utilisateur devra le changer à sa prochaine connexion.`
+        }
+        confirmLabel="Réinitialiser"
+        confirmVariant="primary"
+        cancelLabel="Annuler"
+        onConfirm={handleResetPassword}
+        onCancel={() => { setResetTarget(null); setResetError(null); }}
+        isConfirming={isResetting}
+      />
+
+      {resetResult && (
+        <ResetPasswordModal
+          username={resetResult.username}
+          temporaryPassword={resetResult.password}
+          onClose={() => setResetResult(null)}
+        />
+      )}
     </div>
   );
 }

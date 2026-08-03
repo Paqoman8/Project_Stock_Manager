@@ -126,11 +126,12 @@ const SUPPLIER_PRODUCT_SELECT = {
  * @param filters - { supplier_id?, product_id?, isActive? }
  * @returns Tableau de SupplierProductRow, potentiellement vide
  */
-export async function findAll(filters: SupplierProductFilters = {}): Promise<SupplierProductRow[]> {
+export async function findAll(orgId: string, filters: SupplierProductFilters = {}): Promise<SupplierProductRow[]> {
   const { supplier_id, product_id, isActive } = filters;
 
   return prisma.supplierProduct.findMany({
     where: {
+      supplier: { organization_id: orgId },
       ...(supplier_id !== undefined ? { supplier_id } : {}),
       ...(product_id  !== undefined ? { product_id  } : {}),
       ...(isActive    !== undefined ? { is_active: isActive } : {}),
@@ -145,9 +146,9 @@ export async function findAll(filters: SupplierProductFilters = {}): Promise<Sup
  *
  * @param id - UUID de l'enregistrement
  */
-export async function findById(id: string): Promise<SupplierProductRow | null> {
+export async function findById(id: string, orgId: string): Promise<SupplierProductRow | null> {
   return prisma.supplierProduct.findUnique({
-    where:  { id },
+    where:  { id, supplier: { organization_id: orgId } },
     select: SUPPLIER_PRODUCT_SELECT,
   }) as unknown as Promise<SupplierProductRow | null>;
 }
@@ -161,12 +162,14 @@ export async function findById(id: string): Promise<SupplierProductRow | null> {
  * @param packagingFormatId - UUID du format de conditionnement
  */
 export async function findBySupplierProductAndFormat(
-  supplierId:        string,
-  productId:         string,
-  packagingFormatId: string,
+  orgId:              string,
+  supplierId:         string,
+  productId:          string,
+  packagingFormatId:  string,
 ): Promise<SupplierProductRow | null> {
   return prisma.supplierProduct.findFirst({
     where: {
+      supplier:             { organization_id: orgId },
       supplier_id:          supplierId,
       product_id:           productId,
       packaging_format_id:  packagingFormatId,
@@ -217,23 +220,24 @@ export async function create(
  * @throws Prisma P2025 si l'enregistrement n'existe pas
  */
 export async function update(
+  orgId: string,
   id: string,
   data: UpdateSupplierProductData,
   tx?: Prisma.TransactionClient,
 ): Promise<SupplierProductRow> {
   const client = tx ?? prisma;
   const updateData: Record<string, unknown> = {};
-  if (data.supplier_ref        !== undefined) updateData.supplier_ref        = data.supplier_ref;
-  if (data.purchase_price      !== undefined) updateData.purchase_price      = data.purchase_price;
+  if (data.supplier_ref !== undefined) updateData.supplier_ref = data.supplier_ref;
+  if (data.purchase_price !== undefined) updateData.purchase_price = data.purchase_price;
   if (data.packaging_format_id !== undefined) updateData.packaging_format_id = data.packaging_format_id;
-  if (data.min_order_qty       !== undefined) updateData.min_order_qty       = data.min_order_qty;
-  if (data.is_preferred        !== undefined) updateData.is_preferred        = data.is_preferred;
-  if (data.is_active           !== undefined) updateData.is_active           = data.is_active;
+  if (data.min_order_qty !== undefined) updateData.min_order_qty = data.min_order_qty;
+  if (data.is_preferred !== undefined) updateData.is_preferred = data.is_preferred;
+  if (data.is_active !== undefined) updateData.is_active = data.is_active;
 
   try {
     return await client.supplierProduct.update({
-      where:  { id },
-      data:   updateData,
+      where: { id, supplier: { organization_id: orgId } },
+      data: updateData,
       select: SUPPLIER_PRODUCT_SELECT,
     }) as unknown as SupplierProductRow;
   } catch (err: unknown) {
@@ -247,14 +251,15 @@ export async function update(
 /**
  * Active ou désactive un enregistrement du catalogue fournisseur (soft delete).
  *
+ * @param orgId    - UUID de l'organisation courante
  * @param id       - UUID de l'enregistrement
  * @param isActive - true pour activer, false pour désactiver
  * @returns L'enregistrement mis à jour
  */
-export async function setActive(id: string, isActive: boolean): Promise<SupplierProductRow> {
+export async function setActive(orgId: string, id: string, isActive: boolean): Promise<SupplierProductRow> {
   return prisma.supplierProduct.update({
-    where:  { id },
-    data:   { is_active: isActive },
+    where: { id, supplier: { organization_id: orgId } },
+    data: { is_active: isActive },
     select: SUPPLIER_PRODUCT_SELECT,
   }) as unknown as SupplierProductRow;
 }
@@ -264,12 +269,17 @@ export async function setActive(id: string, isActive: boolean): Promise<Supplier
  * Appelé avant toute création/mise à jour avec is_preferred = true pour garantir
  * qu'un seul fournisseur est marqué comme préféré par produit.
  *
+ * @param orgId     - UUID de l'organisation courante
  * @param productId - UUID du produit dont on veut réinitialiser le fournisseur préféré
  */
-export async function clearPreferred(productId: string, tx?: Prisma.TransactionClient): Promise<void> {
+export async function clearPreferred(orgId: string, productId: string, tx?: Prisma.TransactionClient): Promise<void> {
   const client = tx ?? prisma;
   await client.supplierProduct.updateMany({
-    where: { product_id: productId, is_preferred: true },
-    data:  { is_preferred: false },
+    where: {
+      product_id: productId,
+      is_preferred: true,
+      supplier: { organization_id: orgId },
+    },
+    data: { is_preferred: false },
   });
 }

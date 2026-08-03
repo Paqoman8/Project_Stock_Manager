@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getPurchaseOrders,
   getPurchaseOrderById,
@@ -23,8 +24,8 @@ import {
 
 const purchaseOrderRouter = Router();
 
-const superAdminOnly   = [requireAuth, requireRole('Super Administrateur')];
-const receptionReaders = [requireAuth, requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin')];
+const superAdminOnly   = [requireAuth, requireOrg, requireRole('Super Administrateur')];
+const receptionReaders = [requireAuth, requireOrg, requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin')];
 
 // GET /api/purchase-orders — liste les commandes (filtres : supplier_id, destination_store_id, status)
 purchaseOrderRouter.get('/', receptionReaders, getPurchaseOrders);
@@ -48,7 +49,7 @@ purchaseOrderRouter.patch('/:id/cancel', superAdminOnly, cancelPurchaseOrder);
 // Accessible : SA, Admin, Manager (décision opérationnelle après entente fournisseur)
 purchaseOrderRouter.patch(
   '/:id/close',
-  [requireAuth, requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin')],
+  [requireAuth, requireOrg, requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin')],
   closePurchaseOrder,
 );
 

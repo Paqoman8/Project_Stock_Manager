@@ -4,7 +4,8 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as clientService from '../services/client.service';
 import * as transactionService from '../services/transaction.service';
-
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // VALIDATION SCHEMAS                                                       
@@ -62,27 +63,6 @@ const listTransactionsQuerySchema = z.object({
 
 
 // ---------------------------------------------------------------------------
-// HELPER FUNCTIONS                                                         
-// ---------------------------------------------------------------------------
-
-/**
- * Formats Zod validation errors into readable strings.
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
-}
-
-/**
- * Extracts client IP from request headers (X-Forwarded-For or socket.ip).
- */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  return req.ip ?? '';
-}
-
-
-// ---------------------------------------------------------------------------
 // ROUTE HANDLERS                                                           
 // ---------------------------------------------------------------------------
 
@@ -102,6 +82,7 @@ export async function createTransaction(req: AuthenticatedRequest, res: Response
 
   const actorId  = req.user!.userId;
   const storeId  = req.user!.storeId;
+  const orgId    = req.user!.orgId;
   const ip       = extractIp(req);
 
   try {
@@ -111,6 +92,7 @@ export async function createTransaction(req: AuthenticatedRequest, res: Response
     ]);
 
     const transaction = await transactionService.createSale(
+      orgId,
       parsed.data,
       actorId,
       actorName,
@@ -148,6 +130,7 @@ export async function createTransaction(req: AuthenticatedRequest, res: Response
  * GET /api/transactions — Fetch paginated transactions for the user's store.
  */
 export async function listTransactions(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId       = req.user!.orgId;
   const parsedQuery = listTransactionsQuerySchema.safeParse(req.query);
   if (!parsedQuery.success) {
     return void res.status(400).json({
@@ -160,7 +143,7 @@ export async function listTransactions(req: AuthenticatedRequest, res: Response)
   const { page, limit, search, type, payment_method } = parsedQuery.data;
 
   try {
-    const result = await transactionService.listTransactionsForStore({
+    const result = await transactionService.listTransactionsForStore(orgId, {
       storeId: req.user!.storeId,
       search,
       type,
@@ -182,10 +165,11 @@ export async function listTransactions(req: AuthenticatedRequest, res: Response)
  */
 export async function searchTransactionClients(req: AuthenticatedRequest, res: Response): Promise<void> {
     const query = typeof req.query.q === 'string' ? req.query.q : '';
+  const orgId   = req.user!.orgId;
   const storeId = req.user!.storeId;
 
   try {
-    const clients = await clientService.searchClients(query, storeId);
+    const clients = await clientService.searchClients(orgId, query, storeId);
     res.status(200).json({ success: true, clients });
   } catch (error) {
     console.error('Erreur searchTransactionClients:', error);
@@ -198,6 +182,7 @@ export async function searchTransactionClients(req: AuthenticatedRequest, res: R
  * Accepts optional ?date=YYYY-MM-DD query parameter; defaults to today.
  */
 export async function getSummary(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const storeId = req.user!.storeId;
   const dateParam = req.query.date as string | undefined;
 
@@ -220,7 +205,7 @@ export async function getSummary(req: AuthenticatedRequest, res: Response): Prom
 
   try {
     const date = dateParam ? new Date(dateParam) : undefined;
-    const summary = await transactionService.getDailySummary(storeId, date);
+    const summary = await transactionService.getDailySummary(orgId, storeId, date);
     res.status(200).json({ success: true, summary });
   } catch (error) {
     console.error('Erreur getSummary:', error);
@@ -242,6 +227,7 @@ export async function refundTransaction(req: AuthenticatedRequest, res: Response
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
   const parsedBody = refundSchema.safeParse(req.body ?? {});
   if (!parsedBody.success) {
@@ -259,6 +245,7 @@ export async function refundTransaction(req: AuthenticatedRequest, res: Response
     ]);
 
     const refund = await transactionService.refundSale(
+      orgId,
       id,
       actorId,
       actorName,

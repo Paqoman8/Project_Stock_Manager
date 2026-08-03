@@ -113,9 +113,13 @@ const REPORT_INCLUDE = {
 // Fonctions
 // ---------------------------------------------------------------------------
 
-export async function findAll(filters: ReportFilters = {}): Promise<InventoryReportRow[]> {
+export async function findAll(
+  orgId: string,
+  filters: ReportFilters = {},
+): Promise<InventoryReportRow[]> {
   return prisma.inventoryReport.findMany({
     where: {
+      store: { organization_id: orgId },
       ...(filters.store_id ? { store_id: filters.store_id } : {}),
       ...(filters.status   ? { status:   filters.status }   : {}),
     },
@@ -124,9 +128,9 @@ export async function findAll(filters: ReportFilters = {}): Promise<InventoryRep
   }) as unknown as InventoryReportRow[];
 }
 
-export async function findById(id: string): Promise<InventoryReportRow | null> {
+export async function findById(id: string, orgId: string): Promise<InventoryReportRow | null> {
   return prisma.inventoryReport.findUnique({
-    where:   { id },
+    where: { id, store: { organization_id: orgId } },
     include: REPORT_INCLUDE,
   }) as unknown as InventoryReportRow | null;
 }
@@ -169,6 +173,7 @@ export async function create(data: CreateReportData): Promise<InventoryReportRow
  * Recalcule les variances à la volée.
  */
 export async function updateLines(
+  orgId: string,
   reportId: string,
   data: UpdateLinesData,
 ): Promise<InventoryReportRow> {
@@ -222,26 +227,27 @@ export async function updateLines(
     }
   });
 
-  return findById(reportId) as Promise<InventoryReportRow>;
+  return findById(reportId, orgId) as Promise<InventoryReportRow>;
 }
 
 export async function updateStatus(
+  orgId: string,
   id: string,
   status: ReportStatus,
   opts?: {
-    submitted_at?:          Date;
-    validated_at?:          Date;
-    validated_by_id?:       string;
-    rejection_reason?:      string;
+    submitted_at?: Date;
+    validated_at?: Date;
+    validated_by_id?: string;
+    rejection_reason?: string;
   },
 ): Promise<InventoryReportRow> {
   return prisma.inventoryReport.update({
-    where: { id },
-    data:  {
+    where: { id, store: { organization_id: orgId } },
+    data: {
       status,
-      ...(opts?.submitted_at     ? { submitted_at:     opts.submitted_at }     : {}),
-      ...(opts?.validated_at     ? { validated_at:     opts.validated_at }     : {}),
-      ...(opts?.validated_by_id  ? { validated_by_id:  opts.validated_by_id }  : {}),
+      ...(opts?.submitted_at ? { submitted_at: opts.submitted_at } : {}),
+      ...(opts?.validated_at ? { validated_at: opts.validated_at } : {}),
+      ...(opts?.validated_by_id ? { validated_by_id: opts.validated_by_id } : {}),
       ...(opts?.rejection_reason !== undefined ? { rejection_reason: opts.rejection_reason } : {}),
     },
     include: REPORT_INCLUDE,
@@ -251,10 +257,10 @@ export async function updateStatus(
 /**
  * Marque le rapport comme ayant ses ajustements appliqués (opération irréversible).
  */
-export async function setAdjustmentsApplied(id: string): Promise<InventoryReportRow> {
+export async function setAdjustmentsApplied(orgId: string, id: string): Promise<InventoryReportRow> {
   return prisma.inventoryReport.update({
-    where: { id },
-    data:  { adjustments_applied_at: new Date() },
+    where: { id, store: { organization_id: orgId } },
+    data: { adjustments_applied_at: new Date() },
     include: REPORT_INCLUDE,
   }) as unknown as InventoryReportRow;
 }
@@ -262,12 +268,11 @@ export async function setAdjustmentsApplied(id: string): Promise<InventoryReport
 /**
  * Génère une référence INV-YYYY-XXXX via séquence atomique PostgreSQL.
  */
-export async function generateReference(): Promise<string> {
-  const year = new Date().getFullYear();
+export async function generateReference(orgId: string, year: number): Promise<string> {
   const result = await prisma.$queryRaw<[{ last_seq: bigint }]>`
-    INSERT INTO inventory_report_sequences (year, last_seq)
-    VALUES (${year}, 1)
-    ON CONFLICT (year) DO UPDATE
+    INSERT INTO inventory_report_sequences (organization_id, year, last_seq)
+    VALUES (${orgId}, ${year}, 1)
+    ON CONFLICT (organization_id, year) DO UPDATE
     SET last_seq = inventory_report_sequences.last_seq + 1
     RETURNING last_seq
   `;

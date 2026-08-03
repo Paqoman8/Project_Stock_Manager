@@ -47,7 +47,7 @@ function verifierPolitiqueMotDePasse(password: string): void {
     /[A-Z]/.test(password) &&
     /[a-z]/.test(password) &&
     /[0-9]/.test(password) &&
-    /[^a-zA-Z0-9]/.test(password);
+    /[^a-zA-Z0-9\s]/.test(password);
 
   if (!valide) {
     throw new Error('Le mot de passe ne respecte pas les critères de sécurité requis.');
@@ -64,7 +64,7 @@ function verifierPolitiqueMotDePasse(password: string): void {
  */
 export type CreateUserInput = {
   username: string;
-  email?: string;
+  email: string;
   password: string;
   roleId: string;
   storeIds: string[];
@@ -111,6 +111,18 @@ async function getNomRole(roleId: string): Promise<string | null> {
   return role?.name ?? null;
 }
 
+/**
+ * Vérifie qu'un utilisateur cible appartient bien à l'organisation courante.
+ * Levé une erreur métier "Utilisateur introuvable" si ce n'est pas le cas,
+ * afin de ne pas révéler l'existence d'un compte dans une autre organisation.
+ */
+async function verifierAppartenanceOrganisation(userId: string, orgId: string): Promise<void> {
+  const appartient = await userRepository.belongsToOrganization(userId, orgId);
+  if (!appartient) {
+    throw new Error('Utilisateur introuvable');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fonctions du service — logique métier, validations, orchestration
 // ---------------------------------------------------------------------------
@@ -123,8 +135,8 @@ async function getNomRole(roleId: string): Promise<string | null> {
  *   (actifs et inactifs) sans avoir à passer un paramètre explicite.
  * @returns Liste des utilisateurs enrichis, sans pwd_hash
  */
-export async function getAllUsers(includeInactive = true): Promise<UserWithDetails[]> {
-  return userRepository.findAll(includeInactive);
+export async function getAllUsers(orgId: string, includeInactive = true): Promise<UserWithDetails[]> {
+  return userRepository.findAll(orgId, includeInactive);
 }
 
 /**
@@ -147,6 +159,7 @@ export async function getAllUsers(includeInactive = true): Promise<UserWithDetai
  * @throws Error avec message métier si une validation échoue
  */
 export async function createUser(
+  orgId: string,
   input: CreateUserInput,
   requester: RequesterInfo,
 ): Promise<UserWithDetails> {
@@ -159,6 +172,10 @@ export async function createUser(
   if (input.email && !EMAIL_REGEX.test(input.email)) {
     throw new Error("Format d'adresse email invalide.");
   }
+
+  // Normalisation de l'email en minuscules sans espaces —
+  // garantit que les recherches ultérieures (login, forgot-password) matchent
+  const emailLower = input.email.toLowerCase().trim();
 
   // Validation de la politique de mot de passe
   verifierPolitiqueMotDePasse(input.password);
@@ -209,7 +226,7 @@ export async function createUser(
   // Étape 2 : Unicité de l'email (seulement si fourni)
   if (input.email) {
     const emailExistant = await prisma.user.findUnique({
-      where: { email: input.email },
+      where: { email: emailLower },
       select: { id: true },
     });
     if (emailExistant) {
@@ -221,7 +238,7 @@ export async function createUser(
   // On fait une seule requête avec findMany et on compare les longueurs.
   if (input.storeIds.length > 0) {
     const magasinsTrouves = await prisma.store.findMany({
-      where: { id: { in: input.storeIds } },
+      where: { id: { in: input.storeIds }, organization_id: orgId },
       select: { id: true },
     });
     if (magasinsTrouves.length !== input.storeIds.length) {
@@ -233,13 +250,13 @@ export async function createUser(
   const motDePasseHache = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
 
   // Étape 6 : Création atomique via le repository
-  const nouvelUtilisateur = await userRepository.create({
-    username: input.username,
-    email: input.email,
-    pwd_hash: motDePasseHache,
-    role_id: input.roleId,
-    store_ids: input.storeIds,
-  });
+    const nouvelUtilisateur = await userRepository.create({
+      username: input.username,
+      email: emailLower,
+      pwd_hash: motDePasseHache,
+      role_id: input.roleId,
+      store_ids: input.storeIds,
+    });
 
   // Audit — non-bloquant
   // On résout les noms de magasins pour la dénormalisation (jamais les UUIDs dans les logs)
@@ -257,6 +274,7 @@ export async function createUser(
     targetType: 'USER',
     targetId:   nouvelUtilisateur.id,
     targetName: nouvelUtilisateur.username,
+    orgId,
     storeId:    requester.storeId,
     storeName,
     ipAddress:  requester.ipAddress,
@@ -291,6 +309,7 @@ export async function createUser(
  * @throws Error avec message métier si une validation échoue
  */
 export async function updateUser(
+  orgId: string,
   id: string,
   input: UpdateUserInput,
   requester: RequesterInfo,
@@ -308,6 +327,10 @@ export async function updateUser(
   if (!utilisateurExistant) {
     throw new Error('Utilisateur introuvable');
   }
+
+  // Isolation multi-tenant : l'utilisateur cible doit appartenir à l'organisation
+  // courante. Cette vérification est faite avant toute règle métier.
+  await verifierAppartenanceOrganisation(id, orgId);
 
   // Règle de sécurité absolue : seul le SA peut modifier son propre compte.
   // Aucun autre utilisateur, y compris un Administrateur, ne peut toucher
@@ -376,6 +399,11 @@ export async function updateUser(
     throw new Error("Format d'adresse email invalide.");
   }
 
+  // Normalisation de l'email en minuscules sans espaces
+  const emailLowerUpdate = input.email !== undefined
+    ? input.email.toLowerCase().trim()
+    : undefined;
+
   // Validation de la politique de mot de passe si fourni
   if (input.password !== undefined) {
     verifierPolitiqueMotDePasse(input.password);
@@ -396,10 +424,10 @@ export async function updateUser(
   }
 
   // Étape 3 : Unicité de l'email (si fourni) — on exclut l'utilisateur en cours
-  if (input.email !== undefined) {
+  if (emailLowerUpdate !== undefined) {
     const conflitEmail = await prisma.user.findFirst({
       where: {
-        email: input.email,
+        email: emailLowerUpdate,
         NOT: { id },
       },
       select: { id: true },
@@ -412,7 +440,7 @@ export async function updateUser(
   // Étape 5 : Vérification de l'existence de tous les magasins si fournis
   if (input.storeIds !== undefined && input.storeIds.length > 0) {
     const magasinsTrouves = await prisma.store.findMany({
-      where: { id: { in: input.storeIds } },
+      where: { id: { in: input.storeIds }, organization_id: orgId },
       select: { id: true },
     });
     if (magasinsTrouves.length !== input.storeIds.length) {
@@ -434,19 +462,23 @@ export async function updateUser(
     }
   }
 
-  // Étape 6 : Hachage du mot de passe si un nouveau est fourni
+  // Étape 6 : Hachage du mot de passe si un nouveau est fourni.
+  // On met à jour password_updated_at pour garder une trace cohérente.
   let motDePasseHache: string | undefined;
+  let passwordUpdatedAt: Date | undefined;
   if (input.password !== undefined) {
     motDePasseHache = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+    passwordUpdatedAt = new Date();
   }
 
   // Mise à jour via le repository — la transaction est gérée dedans
   const utilisateurMisAJour = await userRepository.update(id, {
     username: input.username,
-    email: input.email,
+    email: emailLowerUpdate,
     pwd_hash: motDePasseHache,
     role_id: input.roleId,
     store_ids: input.storeIds,
+    password_updated_at: passwordUpdatedAt,
   });
 
   // Audit — construction du diff avant/après (noms lisibles, jamais d'UUIDs ni de hash)
@@ -455,8 +487,8 @@ export async function updateUser(
   if (input.username !== undefined && input.username !== utilisateurExistant.username) {
     modifications.identifiant = { avant: utilisateurExistant.username, apres: input.username };
   }
-  if (input.email !== undefined && input.email !== (utilisateurExistant.email ?? '')) {
-    modifications.email = { avant: utilisateurExistant.email ?? null, apres: input.email };
+  if (emailLowerUpdate !== undefined && emailLowerUpdate !== (utilisateurExistant.email ?? '')) {
+    modifications.email = { avant: utilisateurExistant.email ?? null, apres: emailLowerUpdate };
   }
   if (input.password !== undefined) {
     modifications.mot_de_passe = { modifie: true };
@@ -495,6 +527,7 @@ export async function updateUser(
     targetType: 'USER',
     targetId:   utilisateurExistant.id,
     targetName: utilisateurExistant.username,
+    orgId,
     storeId:    requester.storeId,
     storeName,
     ipAddress:  requester.ipAddress,
@@ -519,6 +552,7 @@ export async function updateUser(
  *         une règle de sécurité est enfreinte
  */
 export async function deactivateUser(
+  orgId: string,
   id: string,
   requester: RequesterInfo,
   reason?: string,
@@ -531,6 +565,9 @@ export async function deactivateUser(
   if (!utilisateur) {
     throw new Error('Utilisateur introuvable');
   }
+
+  // Isolation multi-tenant : l'utilisateur cible doit appartenir à l'organisation courante.
+  await verifierAppartenanceOrganisation(id, orgId);
 
   // Règle de sécurité absolue : le compte SA ne peut jamais être désactivé.
   if (utilisateur.role.name === ROLE_SUPER_ADMIN) {
@@ -560,6 +597,7 @@ export async function deactivateUser(
     targetType: 'USER',
     targetId:   utilisateur.id,
     targetName: utilisateur.username,
+    orgId,
     storeId:    requester.storeId,
     storeName,
     ipAddress:  requester.ipAddress,
@@ -582,6 +620,7 @@ export async function deactivateUser(
  * @throws Error avec message métier si une règle est enfreinte
  */
 export async function reactivateUser(
+  orgId: string,
   id: string,
   requester: RequesterInfo,
 ): Promise<UserWithDetails> {
@@ -593,6 +632,9 @@ export async function reactivateUser(
   if (!utilisateur) {
     throw new Error('Utilisateur introuvable');
   }
+
+  // Isolation multi-tenant : l'utilisateur cible doit appartenir à l'organisation courante.
+  await verifierAppartenanceOrganisation(id, orgId);
 
   // Garde défensive : le compte SA ne doit jamais être manipulé par cette route.
   if (utilisateur.role.name === ROLE_SUPER_ADMIN) {
@@ -627,6 +669,7 @@ export async function reactivateUser(
     targetType: 'USER',
     targetId:   utilisateur.id,
     targetName: utilisateur.username,
+    orgId,
     storeId:    requester.storeId,
     storeName,
     ipAddress:  requester.ipAddress,

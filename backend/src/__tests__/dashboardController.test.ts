@@ -32,7 +32,7 @@ describe('getDashboardOverview', () => {
 
   it('returns 400 for invalid date ranges', async () => {
     const req = {
-      user: { storeId: 'store-001', roleId: 'role-001', roleName: 'Manager Magasin' },
+      user: { orgId: '00000000-0000-0000-0000-000000000010', storeId: 'store-001', roleId: 'role-001', roleName: 'Manager Magasin' },
       query: { from: '2026-06-10', to: '2026-06-01' },
     } as any;
     const res = createResponse();
@@ -45,7 +45,7 @@ describe('getDashboardOverview', () => {
 
   it('passes validated date bounds to the dashboard service', async () => {
     const req = {
-      user: { storeId: 'store-001', roleId: 'role-001', roleName: 'Manager Magasin' },
+      user: { orgId: '00000000-0000-0000-0000-000000000010', storeId: 'store-001', roleId: 'role-001', roleName: 'Manager Magasin' },
       query: { from: '2026-06-01', to: '2026-06-07' },
     } as any;
     const res = createResponse();
@@ -54,6 +54,7 @@ describe('getDashboardOverview', () => {
     await getDashboardOverview(req, res);
 
     expect(mockGetDashboardOverview).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       'store-001',
       'Manager Magasin',
       expect.objectContaining({
@@ -61,7 +62,7 @@ describe('getDashboardOverview', () => {
         to: expect.any(Date),
       }),
     );
-    const period = mockGetDashboardOverview.mock.calls[0][2];
+    const period = mockGetDashboardOverview.mock.calls[0][3];
     expect(period.from.getFullYear()).toBe(2026);
     expect(period.from.getMonth()).toBe(5);
     expect(period.from.getDate()).toBe(1);

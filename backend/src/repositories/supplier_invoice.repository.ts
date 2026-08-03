@@ -109,9 +109,10 @@ const INVOICE_DETAIL_INCLUDE = {
  * Retourne la liste de toutes les factures avec filtres optionnels.
  * Triées de la plus récente à la plus ancienne (issued_at desc).
  */
-export async function findAll(filters: InvoiceFilters = {}): Promise<SupplierInvoiceRow[]> {
+export async function findAll(orgId: string, filters: InvoiceFilters = {}): Promise<SupplierInvoiceRow[]> {
   return prisma.supplierInvoice.findMany({
     where: {
+      order: { supplier: { organization_id: orgId } },
       ...(filters.status      ? { status: filters.status }                                   : {}),
       ...(filters.supplier_id ? { order: { supplier_id: filters.supplier_id } }             : {}),
     },
@@ -123,9 +124,9 @@ export async function findAll(filters: InvoiceFilters = {}): Promise<SupplierInv
 /**
  * Retourne une facture par son UUID avec ses lignes de commande, ou null si elle n'existe pas.
  */
-export async function findById(id: string): Promise<SupplierInvoiceRow | null> {
+export async function findById(id: string, orgId: string): Promise<SupplierInvoiceRow | null> {
   return prisma.supplierInvoice.findUnique({
-    where:   { id },
+    where:   { id, order: { supplier: { organization_id: orgId } } },
     include: INVOICE_DETAIL_INCLUDE,
   }) as unknown as SupplierInvoiceRow | null;
 }
@@ -133,9 +134,9 @@ export async function findById(id: string): Promise<SupplierInvoiceRow | null> {
 /**
  * Retourne la facture liée à une commande, ou null si aucune n'existe.
  */
-export async function findByOrderId(orderId: string): Promise<SupplierInvoiceRow | null> {
+export async function findByOrderId(orderId: string, orgId: string): Promise<SupplierInvoiceRow | null> {
   return prisma.supplierInvoice.findUnique({
-    where:   { order_id: orderId },
+    where:   { order_id: orderId, order: { supplier: { organization_id: orgId } } },
     include: INVOICE_INCLUDE,
   }) as unknown as SupplierInvoiceRow | null;
 }

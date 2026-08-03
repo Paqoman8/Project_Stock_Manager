@@ -19,6 +19,8 @@ jest.mock('../config/database', () => ({
 
 import { confirm } from '../repositories/stock_reception.repository';
 
+const ORG_ID = '00000000-0000-0000-0000-000000000010';
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -80,7 +82,7 @@ describe('confirm', () => {
       supplierProduct: { findUnique: mockSupplierProductFindUnique },
     }));
 
-    await confirm('reception-001');
+    await confirm(ORG_ID, 'reception-001');
 
     expect(mockPurchaseOrderUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -109,7 +111,7 @@ describe('confirm', () => {
       supplierProduct: { findUnique: mockSupplierProductFindUnique },
     }));
 
-    await confirm('reception-001');
+    await confirm(ORG_ID, 'reception-001');
 
     expect(mockSupplierProductFindUnique).not.toHaveBeenCalled();
   });

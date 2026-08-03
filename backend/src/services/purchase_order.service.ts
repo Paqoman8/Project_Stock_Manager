@@ -52,9 +52,10 @@ export interface CreateOrderInput {
  * @returns Tableau de PurchaseOrderRow
  */
 export async function getPurchaseOrders(
+  orgId: string,
   filters: PurchaseOrderFilters = {},
 ): Promise<PurchaseOrderRow[]> {
-  return orderRepo.findAll(filters);
+  return orderRepo.findAll(orgId, filters);
 }
 
 /**
@@ -64,8 +65,8 @@ export async function getPurchaseOrders(
  * @returns La commande trouvée
  * @throws Error('ORDER_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
-export async function getPurchaseOrderById(id: string): Promise<PurchaseOrderRow> {
-  const order = await orderRepo.findById(id);
+export async function getPurchaseOrderById(orgId: string, id: string): Promise<PurchaseOrderRow> {
+  const order = await orderRepo.findById(id, orgId);
   if (!order) {
     throw new Error('ORDER_NOT_FOUND');
   }
@@ -95,6 +96,7 @@ export async function getPurchaseOrderById(id: string): Promise<PurchaseOrderRow
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND') si un supplier_product est invalide
  */
 export async function createPurchaseOrder(
+  orgId: string,
   input: CreateOrderInput,
   actorId: string,
   actorName: string,
@@ -103,13 +105,13 @@ export async function createPurchaseOrder(
   ipAddress?: string,
 ): Promise<PurchaseOrderRow> {
   // Vérification du fournisseur
-  const supplier = await prisma.supplier.findUnique({ where: { id: input.supplier_id } });
+  const supplier = await prisma.supplier.findUnique({ where: { id: input.supplier_id, organization_id: orgId } });
   if (!supplier || !supplier.is_active) {
     throw new Error('SUPPLIER_NOT_FOUND');
   }
 
   // Vérification du magasin de destination
-  const store = await prisma.store.findUnique({ where: { id: input.destination_store_id } });
+  const store = await prisma.store.findUnique({ where: { id: input.destination_store_id, organization_id: orgId } });
   if (!store) {
     throw new Error('STORE_NOT_FOUND');
   }
@@ -159,7 +161,7 @@ export async function createPurchaseOrder(
   );
 
   // Génération de la référence
-  const reference = await orderRepo.getNextReference(new Date().getFullYear());
+  const reference = await orderRepo.getNextReference(orgId, new Date().getFullYear());
 
   const createData: CreatePurchaseOrderData = {
     reference,
@@ -171,7 +173,7 @@ export async function createPurchaseOrder(
     items:                enrichedItems,
   };
 
-  const order = await orderRepo.create(createData);
+  const order = await orderRepo.create(createData, orgId);
 
   // Audit — non-bloquant
   try {
@@ -182,6 +184,7 @@ export async function createPurchaseOrder(
       targetType: 'PURCHASE_ORDER',
       targetId:   order.id,
       targetName: order.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -218,6 +221,7 @@ export async function createPurchaseOrder(
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND') si un supplier_product est invalide
  */
 export async function updatePurchaseOrder(
+  orgId: string,
   id: string,
   data: UpdatePurchaseOrderData,
   actorId: string,
@@ -226,7 +230,7 @@ export async function updatePurchaseOrder(
   storeName?: string,
   ipAddress?: string,
 ): Promise<PurchaseOrderRow> {
-  const existing = await orderRepo.findById(id);
+  const existing = await orderRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('ORDER_NOT_FOUND');
   }
@@ -236,7 +240,7 @@ export async function updatePurchaseOrder(
 
   // Validate destination store if provided
   if (data.destination_store_id) {
-    const store = await prisma.store.findUnique({ where: { id: data.destination_store_id } });
+    const store = await prisma.store.findUnique({ where: { id: data.destination_store_id, organization_id: orgId } });
     if (!store) throw new Error('STORE_NOT_FOUND');
   }
 
@@ -286,7 +290,7 @@ export async function updatePurchaseOrder(
     );
   }
 
-  const order = await orderRepo.update(id, data);
+  const order = await orderRepo.update(orgId, id, data);
 
   // Audit — non-bloquant
   try {
@@ -297,6 +301,7 @@ export async function updatePurchaseOrder(
       targetType: 'PURCHASE_ORDER',
       targetId:   order.id,
       targetName: order.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -334,6 +339,7 @@ export async function updatePurchaseOrder(
  * @throws Error('INACTIVE_ORDER_ITEMS')      si au moins une ligne pointe vers un produit/catalogue désactivé
  */
 export async function sendPurchaseOrder(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -341,7 +347,7 @@ export async function sendPurchaseOrder(
   storeName?: string,
   ipAddress?: string,
 ): Promise<PurchaseOrderRow> {
-  const existing = await orderRepo.findById(id);
+  const existing = await orderRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('ORDER_NOT_FOUND');
   }
@@ -382,7 +388,7 @@ export async function sendPurchaseOrder(
     throw err;
   }
 
-  const order = await orderRepo.updateStatus(id, PurchaseOrderStatus.SENT, { sent_at: true });
+  const order = await orderRepo.updateStatus(orgId, id, PurchaseOrderStatus.SENT, { sent_at: true });
 
   // Audit — non-bloquant
   try {
@@ -393,6 +399,7 @@ export async function sendPurchaseOrder(
       targetType: 'PURCHASE_ORDER',
       targetId:   order.id,
       targetName: order.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -415,6 +422,7 @@ export async function sendPurchaseOrder(
  * @throws Error('INVALID_STATUS_TRANSITION') si la commande n'est pas PARTIALLY_RECEIVED
  */
 export async function closePurchaseOrder(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -422,13 +430,13 @@ export async function closePurchaseOrder(
   storeName?: string,
   ipAddress?: string,
 ): Promise<PurchaseOrderRow> {
-  const existing = await orderRepo.findById(id);
+  const existing = await orderRepo.findById(id, orgId);
   if (!existing) throw new Error('ORDER_NOT_FOUND');
   if (existing.status !== PurchaseOrderStatus.PARTIALLY_RECEIVED) {
     throw new Error('INVALID_STATUS_TRANSITION');
   }
 
-  const order = await orderRepo.updateStatus(id, PurchaseOrderStatus.RECEIVED);
+  const order = await orderRepo.updateStatus(orgId, id, PurchaseOrderStatus.RECEIVED);
 
   try {
     await logAction({
@@ -438,6 +446,7 @@ export async function closePurchaseOrder(
       targetType: 'PURCHASE_ORDER',
       targetId:   order.id,
       targetName: order.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -466,6 +475,7 @@ export async function closePurchaseOrder(
  * @throws Error('INVALID_STATUS_TRANSITION') si la commande n'est pas en DRAFT ou SENT
  */
 export async function cancelPurchaseOrder(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -473,7 +483,7 @@ export async function cancelPurchaseOrder(
   storeName?: string,
   ipAddress?: string,
 ): Promise<PurchaseOrderRow> {
-  const existing = await orderRepo.findById(id);
+  const existing = await orderRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('ORDER_NOT_FOUND');
   }
@@ -484,7 +494,7 @@ export async function cancelPurchaseOrder(
     throw new Error('INVALID_STATUS_TRANSITION');
   }
 
-  const order = await orderRepo.updateStatus(id, PurchaseOrderStatus.CANCELLED);
+  const order = await orderRepo.updateStatus(orgId, id, PurchaseOrderStatus.CANCELLED);
 
   // Audit — non-bloquant
   try {
@@ -495,6 +505,7 @@ export async function cancelPurchaseOrder(
       targetType: 'PURCHASE_ORDER',
       targetId:   order.id,
       targetName: order.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,

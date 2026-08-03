@@ -1,9 +1,10 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import http from 'http';
 import { Server } from 'socket.io';
+import rateLimit from 'express-rate-limit';
 import authRouter from './routes/authRoutes';
 import userRouter from './routes/userRoutes';
 import roleRouter from './routes/roleRoutes';
@@ -24,6 +25,7 @@ import productFormatRouter    from './routes/productFormatRoutes';
 import transferRouter         from './routes/transferRoutes';
 import transactionRouter      from './routes/transactionRoutes';
 import dashboardRouter        from './routes/dashboardRoutes';
+import platformRouter          from './routes/platformRoutes';
 
 
 // ---------------------------------------------------------------------------
@@ -40,15 +42,62 @@ const server = http.createServer(app);
 // GLOBAL MIDDLEWARES                                                       
 // ---------------------------------------------------------------------------
 
-// Trust one proxy hop (Next.js dev server / reverse proxy in prod)
+// Trust proxy — configurable via env for safer deployments
 // Required for express-rate-limit to read X-Forwarded-For correctly
-app.set('trust proxy', 1);
+function configureTrustProxy(): void {
+  const raw = process.env.TRUST_PROXY;
+  if (raw === undefined) {
+    app.set('trust proxy', 1);
+    return;
+  }
+  const num = Number(raw);
+  if (!Number.isNaN(num)) {
+    app.set('trust proxy', num);
+  } else if (['true', 'false', 'loopback', 'linklocal', 'uniquelocal'].includes(raw)) {
+    app.set('trust proxy', raw === 'true' ? true : raw === 'false' ? false : raw);
+  } else {
+    app.set('trust proxy', raw.split(',').map((s) => s.trim()));
+  }
+}
+configureTrustProxy();
 
 // CORS configuration — restrict to frontend origin only
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
 }));
+
+// Global rate limiting — protection basique contre le scraping / brute-force
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requêtes par IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Trop de requêtes. Veuillez réessayer plus tard.' },
+});
+app.use(globalLimiter);
+
+// Security headers — équivalent léger à Helmet sans nouvelle dépendance
+app.disable('x-powered-by');
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=()',
+  );
+  // CSP restrictive ; ajuster si des ressources externes sont nécessaires
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';",
+  );
+  // HSTS en production uniquement
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+  next();
+});
 
 // JSON request parsing
 app.use(express.json());
@@ -82,6 +131,9 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // ── AUTHENTICATION ────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
+
+// ── PLATFORM MANAGER ──────────────────────────────────────────────────
+app.use('/api/platform', platformRouter);
 
 
 // ── USER & ROLE MANAGEMENT ──────────────────────────────────────────

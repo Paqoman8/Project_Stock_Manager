@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
     authInterrupts: true,
   },
   turbopack: {
-    root: path.join(__dirname),
+    root: path.join(__dirname, '..'),
   },
   allowedDevOrigins: ['192.168.2.22', 'localhost'],
   async rewrites() {

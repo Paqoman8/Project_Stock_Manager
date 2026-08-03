@@ -91,6 +91,7 @@ import * as transactionService from '../services/transaction.service';
 const ACTOR_ID   = 'actor-uuid-001';
 const ACTOR_NAME = 'Test Caissier';
 const STORE_ID   = 'store-uuid-001';
+const ORG_ID     = '00000000-0000-0000-0000-000000000010';
 
 const SALE_INPUT: transactionService.CreateSaleInput = {
   payment_method: 'CASH',
@@ -195,7 +196,7 @@ describe('createSale', () => {
     setupSuccessfulPrismaTransaction();
 
     const result = await transactionService.createSale(
-      SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID,
+      ORG_ID, SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID,
     );
 
     expect(result).toBe(MOCK_TRANSACTION);
@@ -208,7 +209,7 @@ describe('createSale', () => {
     mockProductFindMany.mockResolvedValue([{ id: 'prod-001' }]);
 
     await expect(
-      transactionService.createSale(SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID),
+      transactionService.createSale(ORG_ID, SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID),
     ).rejects.toThrow('PRODUCT_NOT_FOUND');
 
     expect(mockPrismaTransaction).not.toHaveBeenCalled();
@@ -235,7 +236,7 @@ describe('createSale', () => {
     });
 
     await expect(
-      transactionService.createSale(SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID),
+      transactionService.createSale(ORG_ID, SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID),
     ).rejects.toThrow('INSUFFICIENT_STOCK');
 
     expect(mockPrismaTransaction).toHaveBeenCalledTimes(1);
@@ -260,6 +261,7 @@ describe('createSale', () => {
 
     await expect(
       transactionService.createSale(
+        ORG_ID,
         {
           payment_method: 'CASH',
           items: [
@@ -282,7 +284,7 @@ describe('createSale', () => {
     mockPrismaTransaction.mockRejectedValue(new Error('DB_ROLLBACK'));
 
     await expect(
-      transactionService.createSale(SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID),
+      transactionService.createSale(ORG_ID, SALE_INPUT, ACTOR_ID, ACTOR_NAME, STORE_ID),
     ).rejects.toThrow('DB_ROLLBACK');
 
     // Repository create must NOT have been called inside the failed transaction
@@ -312,6 +314,7 @@ describe('createSale', () => {
     mockCreateTransaction.mockResolvedValue(MOCK_TRANSACTION);
 
     await transactionService.createSale(
+      ORG_ID,
       {
         payment_method: 'CASH',
         items: [
@@ -399,6 +402,7 @@ describe('createSale', () => {
     mockCreateTransaction.mockResolvedValue(MOCK_TRANSACTION);
 
     await transactionService.createSale(
+      ORG_ID,
       {
         ...SALE_INPUT,
         client: {
@@ -429,7 +433,7 @@ describe('refundSale', () => {
     mockGetTransactionById.mockResolvedValue(null);
 
     await expect(
-      transactionService.refundSale('non-existent', ACTOR_ID, ACTOR_NAME, STORE_ID),
+      transactionService.refundSale(ORG_ID, 'non-existent', ACTOR_ID, ACTOR_NAME, STORE_ID),
     ).rejects.toThrow('TRANSACTION_NOT_FOUND');
   });
 
@@ -441,7 +445,7 @@ describe('refundSale', () => {
     });
 
     await expect(
-      transactionService.refundSale('tx-refund-001', ACTOR_ID, ACTOR_NAME, STORE_ID),
+      transactionService.refundSale(ORG_ID, 'tx-refund-001', ACTOR_ID, ACTOR_NAME, STORE_ID),
     ).rejects.toThrow('ONLY_SALES_CAN_BE_REFUNDED');
   });
 
@@ -476,7 +480,7 @@ describe('refundSale', () => {
     });
 
     await expect(
-      transactionService.refundSale(MOCK_TRANSACTION.id, ACTOR_ID, ACTOR_NAME, STORE_ID),
+      transactionService.refundSale(ORG_ID, MOCK_TRANSACTION.id, ACTOR_ID, ACTOR_NAME, STORE_ID),
     ).rejects.toThrow('TRANSACTION_ALREADY_REFUNDED');
   });
 
@@ -496,6 +500,7 @@ describe('refundSale', () => {
     mockCreateTransaction.mockResolvedValue(refundTx);
 
     const result = await transactionService.refundSale(
+      ORG_ID,
       MOCK_TRANSACTION.id, ACTOR_ID, ACTOR_NAME, STORE_ID,
     );
 
@@ -519,6 +524,7 @@ describe('refundSale', () => {
     mockCreateTransaction.mockResolvedValue(refundTx);
 
     await transactionService.refundSale(
+      ORG_ID,
       MOCK_TRANSACTION.id,
       ACTOR_ID,
       ACTOR_NAME,
@@ -595,6 +601,7 @@ describe('refundSale', () => {
 
     await expect(
       transactionService.refundSale(
+        ORG_ID,
         duplicatedTransaction.id,
         ACTOR_ID,
         ACTOR_NAME,
@@ -646,6 +653,7 @@ describe('refundSale', () => {
     // Second refund tries to return 2 more — only 1 remains
     await expect(
       transactionService.refundSale(
+        ORG_ID,
         transactionWithQty3.id,
         ACTOR_ID,
         ACTOR_NAME,
@@ -664,7 +672,7 @@ describe('getDailySummary', () => {
   it('returns zero totals when no sales exist for the day', async () => {
     mockTransactionAggregate.mockResolvedValue({ _count: { id: 0 }, _sum: { total_amount: null } });
 
-    const summary = await transactionService.getDailySummary(STORE_ID);
+    const summary = await transactionService.getDailySummary(ORG_ID, STORE_ID);
 
     expect(summary.total_sales).toBe(0);
     expect(summary.total_amount).toBe(0);
@@ -673,7 +681,7 @@ describe('getDailySummary', () => {
   it('sums total_amount correctly across multiple sales', async () => {
     mockTransactionAggregate.mockResolvedValue({ _count: { id: 2 }, _sum: { total_amount: '3000' } });
 
-    const summary = await transactionService.getDailySummary(STORE_ID);
+    const summary = await transactionService.getDailySummary(ORG_ID, STORE_ID);
 
     expect(summary.total_sales).toBe(2);
     expect(summary.total_amount).toBe(3000);
@@ -685,7 +693,7 @@ describe('getDailySummary', () => {
     // setHours(0,0,0,0) in any UTC-offset timezone still lands on the same calendar day.
     const target = new Date('2026-06-02T12:00:00Z');
 
-    const summary = await transactionService.getDailySummary(STORE_ID, target);
+    const summary = await transactionService.getDailySummary(ORG_ID, STORE_ID, target);
 
     expect(summary.date).toBe('2026-06-02');
   });
@@ -701,7 +709,7 @@ describe('listTransactionsForStore', () => {
       totalPages: 1,
     });
 
-    const result = await transactionService.listTransactionsForStore({
+    const result = await transactionService.listTransactionsForStore(ORG_ID, {
       storeId: STORE_ID,
       page: 1,
       limit: 10,
@@ -711,6 +719,7 @@ describe('listTransactionsForStore', () => {
     expect(result.page).toBe(1);
     expect(result.totalPages).toBe(1);
     expect(mockListTransactionsPaginated).toHaveBeenCalledWith(
+      ORG_ID,
       expect.objectContaining({ store_id: STORE_ID, page: 1, limit: 10 }),
     );
   });
@@ -723,7 +732,7 @@ describe('listTransactionsForStore', () => {
       totalPages: 0,
     });
 
-    await transactionService.listTransactionsForStore({
+    await transactionService.listTransactionsForStore(ORG_ID, {
       storeId: STORE_ID,
       search: 'caissier',
       type: 'SALE',
@@ -733,6 +742,7 @@ describe('listTransactionsForStore', () => {
     });
 
     expect(mockListTransactionsPaginated).toHaveBeenCalledWith(
+      ORG_ID,
       expect.objectContaining({
         store_id: STORE_ID,
         search: 'caissier',
@@ -752,7 +762,7 @@ describe('listTransactionsForStore', () => {
       totalPages: 3,
     });
 
-    const result = await transactionService.listTransactionsForStore({
+    const result = await transactionService.listTransactionsForStore(ORG_ID, {
       storeId: STORE_ID,
       page: 1,
       limit: 10,

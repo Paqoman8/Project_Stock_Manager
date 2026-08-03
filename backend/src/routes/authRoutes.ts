@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { login, logout, getStores, getMe, getRoles, getAccessibleStores } from '../controllers/authController';
+import { login, logout, getStores, getMe, getRoles, getAccessibleStores, changePassword, resetPassword, initiatePasswordReset, verifyResetOtp, completePasswordReset } from '../controllers/authController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
+import { ROLE_SUPER_ADMIN, ROLE_ADMIN } from '../config/roles';
 
 const authRouter = Router();
 
@@ -31,6 +33,19 @@ const loginRateLimiter = rateLimit({
 // GET /api/auth/stores
 authRouter.get('/stores', getStores);
 
+// ── MOT DE PASSE OUBLIÉ (flux OTP en 3 étapes) ─────────────────────────
+// Route publique — étape 1 : demande d'OTP par email.
+// POST /api/auth/forgot-password
+authRouter.post('/forgot-password', initiatePasswordReset);
+
+// Route publique — étape 2 : vérification de l'OTP.
+// POST /api/auth/verify-reset-otp
+authRouter.post('/verify-reset-otp', verifyResetOtp);
+
+// Route protégée (scope reset-password) — étape 3 : nouveau mot de passe.
+// POST /api/auth/reset-password
+authRouter.post('/reset-password', requireAuth, completePasswordReset);
+
 // Route publique avec rate limiting — accessible sans être connecté.
 // Le rate limiter protège contre les attaques par force brute.
 // POST /api/auth/login
@@ -39,6 +54,20 @@ authRouter.post('/login', loginRateLimiter, login);
 // Route protégée — nécessite d'être connecté (le middleware vérifie le token JWT).
 // POST /api/auth/logout
 authRouter.post('/logout', requireAuth, logout);
+
+// Route protégée — change le mot de passe de l'utilisateur connecte.
+// POST /api/auth/change-password
+authRouter.post('/change-password', requireAuth, requireOrg, changePassword);
+
+// Route protégée — réinitialise le mot de passe d'un utilisateur (admin only).
+// POST /api/auth/admin-reset-password
+authRouter.post(
+  '/admin-reset-password',
+  requireAuth,
+  requireOrg,
+  requireRole(ROLE_SUPER_ADMIN, ROLE_ADMIN),
+  resetPassword,
+);
 
 // Route protégée — retourne le profil complet de l'utilisateur connecté.
 // Sans rate limit : appel léger, prévu pour être appelé fréquemment par le frontend
@@ -53,7 +82,8 @@ authRouter.get('/me', requireAuth, getMe);
 authRouter.get(
   '/accessible-stores',
   requireAuth,
-  requireRole('Super Administrateur', 'Administrateur'),
+  requireOrg,
+  requireRole(ROLE_SUPER_ADMIN, ROLE_ADMIN),
   getAccessibleStores,
 );
 

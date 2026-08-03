@@ -4,6 +4,8 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as authService from '../services/auth.service';
 import * as transferService from '../services/transfer.service';
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // PostgreSQL accepte n'importe quel format UUID (v1-v5 et UUID nil). La validation
 // Zod .uuid() par défaut exige un UUID v4, ce qui rejetterait les identifiants
@@ -34,16 +36,6 @@ const listTransfersQuerySchema = z.object({
   status: z.enum(['PENDING', 'DONE', 'CANCEL']).optional(),
 });
 
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
-}
-
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  return req.ip ?? '';
-}
-
 export async function createTransfer(req: AuthenticatedRequest, res: Response): Promise<void> {
   const parsed = createTransferSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -56,11 +48,13 @@ export async function createTransfer(req: AuthenticatedRequest, res: Response): 
 
   const actorId = req.user!.userId;
   const actorStoreId = req.user!.storeId;
+  const orgId = req.user!.orgId;
   const ip = extractIp(req);
 
   try {
     const roleName = req.user!.roleName;
     const accessibleSourceStores = await authService.getAccessibleStores(
+      orgId,
       actorId,
       roleName === 'Super Administrateur',
     );
@@ -76,7 +70,7 @@ export async function createTransfer(req: AuthenticatedRequest, res: Response): 
       resolveStoreName(actorStoreId),
     ]);
 
-    const transfer = await transferService.createTransfer(parsed.data, actorId, actorName, actorStoreId, actorStoreName, ip);
+    const transfer = await transferService.createTransfer(orgId, parsed.data, actorId, actorName, actorStoreId, actorStoreName, ip);
     res.status(201).json({ success: true, transfer });
   } catch (error) {
     if (error instanceof Error) {
@@ -109,11 +103,12 @@ export async function listTransfers(req: AuthenticatedRequest, res: Response): P
   }
 
   const { page, limit, search, status } = parsedQuery.data;
+  const orgId = req.user!.orgId;
 
   try {
     const roleName = req.user!.roleName;
     const forceRequesterScope = roleName === 'Manager Magasin';
-    const result = await transferService.listTransfers({
+    const result = await transferService.listTransfers(orgId, {
       status,
       requesterStoreId: req.user!.storeId,
       forceRequesterScope,
@@ -130,10 +125,12 @@ export async function listTransfers(req: AuthenticatedRequest, res: Response): P
 }
 
 export async function getTransferById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
   try {
     const roleName = req.user!.roleName;
     const transfer = await transferService.getTransferById(
+      orgId,
       id,
       req.user!.storeId,
       roleName === 'Manager Magasin',
@@ -157,6 +154,7 @@ export async function confirmTransfer(req: AuthenticatedRequest, res: Response):
   const id = req.params.id as string;
   const actorId = req.user!.userId;
   const actorStoreId = req.user!.storeId;
+  const orgId = req.user!.orgId;
   const ip = extractIp(req);
 
   try {
@@ -167,6 +165,7 @@ export async function confirmTransfer(req: AuthenticatedRequest, res: Response):
     ]);
 
     const transfer = await transferService.confirmTransfer(
+      orgId,
       id,
       actorId,
       actorName,
@@ -197,6 +196,7 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
   const id = req.params.id as string;
   const actorId = req.user!.userId;
   const actorStoreId = req.user!.storeId;
+  const orgId = req.user!.orgId;
   const ip = extractIp(req);
 
   try {
@@ -207,6 +207,7 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const transfer = await transferService.cancelTransfer(
+      orgId,
       id,
       actorId,
       actorName,
@@ -232,13 +233,15 @@ export async function cancelTransfer(req: AuthenticatedRequest, res: Response): 
 }
 
 export async function listTransferDestinationStores(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   try {
     const roleName = req.user!.roleName;
     const sourceStores = await authService.getAccessibleStores(
+      req.user!.orgId,
       req.user!.userId,
       roleName === 'Super Administrateur',
     );
-    const destinationStores = await transferService.listDestinationStores();
+    const destinationStores = await transferService.listDestinationStores(orgId);
     res.status(200).json({
       success: true,
       source_stores: sourceStores,

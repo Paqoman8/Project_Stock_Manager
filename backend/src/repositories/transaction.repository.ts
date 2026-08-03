@@ -123,9 +123,12 @@ export async function createTransaction(
 /**
  * listTransactions — Retrieves all transactions matching filters, sorted newest first.
  */
-export async function listTransactions(filters: TransactionFilters): Promise<TransactionRow[]> {
+export async function listTransactions(
+  orgId: string,
+  filters: TransactionFilters,
+): Promise<TransactionRow[]> {
   return prisma.transaction.findMany({
-    where: buildTransactionWhere(filters),
+    where: buildTransactionWhere(orgId, filters),
     include:  TRANSACTION_INCLUDE,
     orderBy:  { created_at: 'desc' },
     take:     filters.limit ?? 500,
@@ -136,11 +139,12 @@ export async function listTransactions(filters: TransactionFilters): Promise<Tra
  * listTransactionsPaginated — Retrieves a paginated list of transactions matching filters.
  */
 export async function listTransactionsPaginated(
+  orgId: string,
   filters: TransactionPaginationFilters,
 ): Promise<TransactionPaginationResult> {
   const { page, limit } = filters;
   const skip = (page - 1) * limit;
-  const where = buildTransactionWhere(filters);
+  const where = buildTransactionWhere(orgId, filters);
 
   const [total, transactions] = await Promise.all([
     prisma.transaction.count({ where }),
@@ -162,10 +166,12 @@ export async function listTransactionsPaginated(
 }
 
 function buildTransactionWhere(
+  orgId: string,
   filters: TransactionFilters & { search?: string },
 ): Prisma.TransactionWhereInput {
   const andConditions: Prisma.TransactionWhereInput[] = [
     { store_id: filters.store_id },
+    { store: { organization_id: orgId } },
   ];
 
   if (filters.type) {
@@ -220,9 +226,9 @@ function buildTransactionSearchOr(search?: string): Prisma.TransactionWhereInput
 /**
  * getTransactionById — Fetches a single transaction by ID with all nested data.
  */
-export async function getTransactionById(id: string): Promise<TransactionRow | null> {
+export async function getTransactionById(id: string, orgId: string): Promise<TransactionRow | null> {
   return prisma.transaction.findUnique({
-    where:   { id },
+    where:   { id, store: { organization_id: orgId } },
     include: TRANSACTION_INCLUDE,
   });
 }

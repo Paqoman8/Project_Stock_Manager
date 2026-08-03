@@ -26,7 +26,7 @@ function createResponse() {
 
 function createRequest(query: Record<string, unknown> = {}) {
   return {
-    user: { storeId: 'store-001', roleId: 'role-001' },
+    user: { orgId: '00000000-0000-0000-0000-000000000010', storeId: 'store-001', roleId: 'role-001', roleName: 'Super Administrateur' },
     query,
   } as any;
 }
@@ -71,6 +71,7 @@ describe('listTransfers', () => {
     await listTransfers(req, res);
 
     expect(mockListTransfers).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       expect.objectContaining({ page: 1, limit: 10 }),
     );
     expect(res.status).toHaveBeenCalledWith(200);
@@ -99,6 +100,7 @@ describe('listTransfers', () => {
     await listTransfers(req, res);
 
     expect(mockListTransfers).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       expect.objectContaining({
         search: 'magasin',
         status: 'PENDING',

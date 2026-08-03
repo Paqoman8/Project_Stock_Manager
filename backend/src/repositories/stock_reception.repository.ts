@@ -86,9 +86,21 @@ const RECEPTION_INCLUDE = {
  * @param orderId - UUID de la commande parente
  * @returns Tableau de StockReceptionRow, potentiellement vide
  */
-export async function findByOrderId(orderId: string): Promise<StockReceptionRow[]> {
+function orderScopedWhere(orgId: string) {
+  return {
+    OR: [
+      { supplier: { organization_id: orgId } },
+      { destination_store: { organization_id: orgId } },
+    ],
+  };
+}
+
+export async function findByOrderId(orderId: string, orgId: string): Promise<StockReceptionRow[]> {
   return prisma.stockReception.findMany({
-    where:   { order_id: orderId },
+    where: {
+      order_id: orderId,
+      purchase_order: orderScopedWhere(orgId),
+    },
     include: RECEPTION_INCLUDE,
     orderBy: { received_at: 'desc' },
   }) as unknown as StockReceptionRow[];
@@ -98,10 +110,14 @@ export async function findByOrderId(orderId: string): Promise<StockReceptionRow[
  * Retourne une réception par son UUID, ou null si elle n'existe pas.
  *
  * @param id - UUID de la réception
+ * @param orgId - UUID de l'organisation courante (isolation multi-tenant)
  */
-export async function findById(id: string): Promise<StockReceptionRow | null> {
+export async function findById(id: string, orgId: string): Promise<StockReceptionRow | null> {
   return prisma.stockReception.findUnique({
-    where:   { id },
+    where: {
+      id,
+      purchase_order: orderScopedWhere(orgId),
+    },
     include: RECEPTION_INCLUDE,
   }) as unknown as StockReceptionRow | null;
 }
@@ -150,12 +166,15 @@ export async function create(data: CreateReceptionData): Promise<StockReceptionR
  * @returns La réception confirmée avec ses relations
  * @throws Error si la réception n'existe pas
  */
-export async function confirm(id: string): Promise<StockReceptionRow> {
+export async function confirm(orgId: string, id: string): Promise<StockReceptionRow> {
   return prisma.$transaction(async (tx) => {
     // 1. Confirmer la réception
     const reception = await tx.stockReception.update({
-      where: { id },
-      data:  { status: ReceptionStatus.CONFIRMED, confirmed_at: new Date() },
+      where: {
+        id,
+        purchase_order: orderScopedWhere(orgId),
+      },
+      data: { status: ReceptionStatus.CONFIRMED, confirmed_at: new Date() },
       include: RECEPTION_INCLUDE,
     });
 
@@ -166,12 +185,14 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
     for (const item of reception.items) {
       await tx.inventory.upsert({
         where: {
-          store_id_product_id: {
+          organization_id_store_id_product_id: {
+            organization_id: orgId,
             store_id:   destStoreId,
             product_id: item.product_id,
           },
         },
         create: {
+          organization_id: orgId,
           store_id:       destStoreId,
           product_id:     item.product_id,
           stock_physical: item.stock_units_added,
@@ -271,10 +292,13 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
  * @param id - UUID de la réception à annuler
  * @returns La réception mise à jour
  */
-export async function cancel(id: string): Promise<StockReceptionRow> {
+export async function cancel(orgId: string, id: string): Promise<StockReceptionRow> {
   return prisma.stockReception.update({
-    where:   { id },
-    data:    { status: ReceptionStatus.CANCELLED },
+    where: {
+      id,
+      purchase_order: orderScopedWhere(orgId),
+    },
+    data: { status: ReceptionStatus.CANCELLED },
     include: RECEPTION_INCLUDE,
   }) as unknown as StockReceptionRow;
 }

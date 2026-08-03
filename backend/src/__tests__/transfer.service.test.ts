@@ -43,6 +43,7 @@ const ACTOR_ID = 'actor-uuid-001';
 const ACTOR_NAME = 'Manager Test';
 const ACTOR_STORE_ID = 'store-uuid-001';
 const OTHER_STORE_ID = 'store-uuid-999';
+const ORG_ID = '00000000-0000-0000-0000-000000000010';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -57,6 +58,7 @@ describe('createTransfer', () => {
 
     await expect(
       transferService.createTransfer(
+        ORG_ID,
         {
           from_store_id: ACTOR_STORE_ID,
           to_store_id: OTHER_STORE_ID,
@@ -86,7 +88,7 @@ describe('transfer store scoping', () => {
     });
 
     await expect(
-      transferService.getTransferById('transfer-001', ACTOR_STORE_ID, true),
+      transferService.getTransferById(ORG_ID, 'transfer-001', ACTOR_STORE_ID, true),
     ).rejects.toThrow('FORBIDDEN_TRANSFER_ACCESS');
   });
 
@@ -109,7 +111,7 @@ describe('transfer store scoping', () => {
     }));
 
     await expect(
-      transferService.confirmTransfer('transfer-001', ACTOR_ID, ACTOR_NAME, ACTOR_STORE_ID, undefined, undefined, ACTOR_STORE_ID, true),
+      transferService.confirmTransfer(ORG_ID, 'transfer-001', ACTOR_ID, ACTOR_NAME, ACTOR_STORE_ID, undefined, undefined, ACTOR_STORE_ID, true),
     ).rejects.toThrow('FORBIDDEN_TRANSFER_ACCESS');
   });
 });
@@ -123,7 +125,7 @@ describe('listTransfers', () => {
       totalPages: 1,
     });
 
-    const result = await transferService.listTransfers({
+    const result = await transferService.listTransfers(ORG_ID, {
       page: 1,
       limit: 10,
     });
@@ -132,6 +134,7 @@ describe('listTransfers', () => {
     expect(result.page).toBe(1);
     expect(result.totalPages).toBe(1);
     expect(mockListTransfersPaginated).toHaveBeenCalledWith(
+      ORG_ID,
       expect.objectContaining({ page: 1, limit: 10 }),
     );
   });
@@ -144,7 +147,7 @@ describe('listTransfers', () => {
       totalPages: 0,
     });
 
-    await transferService.listTransfers({
+    await transferService.listTransfers(ORG_ID, {
       search: 'produit a',
       status: 'PENDING',
       page: 2,
@@ -152,6 +155,7 @@ describe('listTransfers', () => {
     });
 
     expect(mockListTransfersPaginated).toHaveBeenCalledWith(
+      ORG_ID,
       expect.objectContaining({
         search: 'produit a',
         status: 'PENDING',
@@ -169,7 +173,7 @@ describe('listTransfers', () => {
       totalPages: 0,
     });
 
-    await transferService.listTransfers({
+    await transferService.listTransfers(ORG_ID, {
       requesterStoreId: ACTOR_STORE_ID,
       forceRequesterScope: true,
       page: 1,
@@ -177,6 +181,7 @@ describe('listTransfers', () => {
     });
 
     expect(mockListTransfersPaginated).toHaveBeenCalledWith(
+      ORG_ID,
       expect.objectContaining({ store_id: ACTOR_STORE_ID }),
     );
   });
@@ -189,7 +194,7 @@ describe('listTransfers', () => {
       totalPages: 0,
     });
 
-    await transferService.listTransfers({
+    await transferService.listTransfers(ORG_ID, {
       requesterStoreId: ACTOR_STORE_ID,
       forceRequesterScope: false,
       page: 1,
@@ -197,6 +202,7 @@ describe('listTransfers', () => {
     });
 
     expect(mockListTransfersPaginated).toHaveBeenCalledWith(
+      ORG_ID,
       expect.objectContaining({ store_id: undefined }),
     );
   });
@@ -209,7 +215,7 @@ describe('listTransfers', () => {
       totalPages: 3,
     });
 
-    const result = await transferService.listTransfers({
+    const result = await transferService.listTransfers(ORG_ID, {
       page: 1,
       limit: 10,
     });

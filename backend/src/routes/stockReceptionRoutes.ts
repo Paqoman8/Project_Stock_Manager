@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getReceptionsByOrder,
   getReceptionById,
@@ -23,15 +24,16 @@ const stockReceptionRouter = Router();
 
 // GET /api/receptions/by-order/:orderId — liste les réceptions d'une commande
 // IMPORTANT : cette route est déclarée avant /:id pour éviter le conflit de paramètre
-stockReceptionRouter.get('/by-order/:orderId', requireAuth, getReceptionsByOrder);
+stockReceptionRouter.get('/by-order/:orderId', requireAuth, requireOrg, getReceptionsByOrder);
 
 // GET /api/receptions/:id — récupère une réception par son UUID
-stockReceptionRouter.get('/:id', requireAuth, getReceptionById);
+stockReceptionRouter.get('/:id', requireAuth, requireOrg, getReceptionById);
 
 // POST /api/receptions — crée une réception (SA + Admin + Manager)
 stockReceptionRouter.post(
   '/',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur', 'Manager Magasin'),
   createReception,
 );
@@ -40,6 +42,7 @@ stockReceptionRouter.post(
 stockReceptionRouter.patch(
   '/:id/confirm',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   confirmReception,
 );
@@ -48,6 +51,7 @@ stockReceptionRouter.patch(
 stockReceptionRouter.patch(
   '/:id/cancel',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur'),
   cancelReception,
 );

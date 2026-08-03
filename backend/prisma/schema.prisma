@@ -12,6 +12,16 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
+// MULTI-TENANT ORGANIZATIONS                                               
+// ---------------------------------------------------------------------------
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+// ---------------------------------------------------------------------------
 // AUTHENTICATION & AUTHORIZATION                                           
 // ---------------------------------------------------------------------------
 
@@ -25,24 +35,54 @@ model Role {
 
 
 model User {
-  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  username       String            @unique
-  email          String?           @unique
-  pwd_hash       String
-  role_id        String            @db.Uuid
-  is_active      Boolean           @default(true)
-  role           Role              @relation(fields: [role_id], references: [id])
-  store_access      UserStoreAccess[]
-  sessions          SessionLog[]
-  transactions      Transaction[]
-  acted_audits      AuditLog[]
-  purchase_orders   PurchaseOrder[]
-  receptions        StockReception[]
-  stock_movements   StockMovement[]   @relation("MovementsPerformedBy")
-  created_reports   InventoryReport[] @relation("ReportsCreatedBy")
-  validated_reports InventoryReport[] @relation("ReportsValidatedBy")
+  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username             String            @unique
+  email                String            @unique
+  pwd_hash             String
+  role_id              String            @db.Uuid
+  is_active            Boolean           @default(true)
+  must_change_password Boolean           @default(false)
+  password_updated_at  DateTime?
+  role                 Role              @relation(fields: [role_id], references: [id])
+  store_access         UserStoreAccess[]
+  sessions             SessionLog[]
+  transactions         Transaction[]
+  acted_audits         AuditLog[]
+  purchase_orders      PurchaseOrder[]
+  receptions           StockReception[]
+  stock_movements      StockMovement[]   @relation("MovementsPerformedBy")
+  created_reports      InventoryReport[] @relation("ReportsCreatedBy")
+  validated_reports    InventoryReport[] @relation("ReportsValidatedBy")
+  created_organizations Organization[]   @relation("OrganizationCreator")
 
   @@map("users")
+}
+
+model Organization {
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                      String
+  slug                      String                      @unique
+  status                    OrgStatus                   @default(ACTIVE)
+  is_protected              Boolean                     @default(false)
+  settings                  Json?                       @db.JsonB
+  logo_url                  String?
+  created_by_id             String                      @db.Uuid
+  created_at                DateTime                    @default(now())
+  updated_at                DateTime                    @updatedAt
+  created_by                User                        @relation("OrganizationCreator", fields: [created_by_id], references: [id])
+  stores                    Store[]
+  categories                Category[]
+  products                  Product[]
+  suppliers                 Supplier[]
+  inventories               Inventory[]
+  purchase_order_sequences  PurchaseOrderSequence[]
+  inventory_report_sequences InventoryReportSequence[]
+  sessions                  SessionLog[]
+  user_store_accesses       UserStoreAccess[]
+  product_formats           ProductFormat[]
+  audit_logs                AuditLog[]
+
+  @@map("organizations")
 }
 
 model Client {
@@ -55,7 +95,7 @@ model Client {
   normalized_phone String?
   created_at       DateTime      @default(now())
   updated_at       DateTime      @updatedAt
-  store            Store         @relation(fields: [store_id], references: [id])
+  store            Store         @relation(fields: [store_id], references: [id], onDelete: Cascade)
   transactions     Transaction[]
 
   @@unique([store_id, normalized_email])
@@ -70,6 +110,7 @@ model Client {
 
 model Store {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String            @db.Uuid
   name             String
   location         String?
   color            String            @default("#1D4ED8") @db.VarChar(7)
@@ -79,6 +120,7 @@ model Store {
   phone            String?           @db.VarChar(20)
   description      String?
   is_protected     Boolean           @default(false)
+  organization     Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   clients            Client[]
   user_access        UserStoreAccess[]
   sessions           SessionLog[]
@@ -92,29 +134,36 @@ model Store {
   inventory_reports    InventoryReport[]
   inventory_breakdowns InventoryBreakdown[]
 
+  @@index([organization_id])
   @@map("stores")
 }
 
 
 model UserStoreAccess {
-  user_id  String @db.Uuid
-  store_id String @db.Uuid
-  user     User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  store    Store  @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  user_id          String       @db.Uuid
+  store_id         String       @db.Uuid
+  organization_id  String       @db.Uuid
+  user             User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  store            Store        @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  organization     Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
   @@id([user_id, store_id])
+  @@index([organization_id])
   @@map("user_store_access")
 }
 
 
 model SessionLog {
-  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id  String   @db.Uuid
-  store_id String   @db.Uuid
-  login_at DateTime @default(now())
-  user     User     @relation(fields: [user_id], references: [id])
-  store    Store    @relation(fields: [store_id], references: [id])
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String       @db.Uuid
+  store_id         String       @db.Uuid
+  organization_id  String       @db.Uuid
+  login_at         DateTime     @default(now())
+  user             User         @relation(fields: [user_id], references: [id])
+  store            Store        @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  organization     Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
+  @@index([organization_id])
   @@map("sessions_log")
 }
 
@@ -124,13 +173,16 @@ model SessionLog {
 // ---------------------------------------------------------------------------
 
 model Category {
-  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String
-  parent_id String?    @db.Uuid
-  parent    Category?  @relation("CategoryHierarchy", fields: [parent_id], references: [id])
-  children  Category[] @relation("CategoryHierarchy")
-  products  Product[]
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String       @db.Uuid
+  name            String
+  parent_id       String?      @db.Uuid
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  parent          Category?    @relation("CategoryHierarchy", fields: [parent_id], references: [id], onDelete: SetNull)
+  children        Category[]   @relation("CategoryHierarchy")
+  products        Product[]
 
+  @@index([organization_id])
   @@map("categories")
 }
 
@@ -151,7 +203,8 @@ enum ProductUnit {
 
 model Product {
   id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sku               String            @unique
+  organization_id   String            @db.Uuid
+  sku               String
   name              String
   description       String?
   price             Decimal           @db.Decimal(10, 2)
@@ -160,6 +213,7 @@ model Product {
   created_at        DateTime          @default(now())
   updated_at        DateTime          @updatedAt
   category_id       String            @db.Uuid
+  organization      Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   category          Category          @relation(fields: [category_id], references: [id])
   inventories       Inventory[]
   transfer_items    TransferItem[]
@@ -171,21 +225,23 @@ model Product {
   packaging_formats    PackagingFormat[]
   inventory_breakdowns InventoryBreakdown[]
 
+  @@unique([organization_id, sku])
+  @@index([organization_id])
   @@map("products")
 }
 
 
-// Product format reference list — catalog of reusable packaging label names.
-// Managed by admins; labels are reused as-is in PackagingFormat.label.
+// Product format reference table — available packaging format labels.
+// Scoped per organization so each org can manage its own list independently.
 model ProductFormat {
-  id        String   @id @default(uuid())
-  // Unicité réelle (insensible casse/espaces) appliquée par un index fonctionnel en base
-  // (product_formats_label_ci_key, cf. migration product_formats_case_insensitive_unique) —
-  // non représentable dans le schéma Prisma, donc pas de @unique ici.
-  label     String
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id              String       @id @default(uuid())
+  organization_id String       @db.Uuid
+  label           String
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
+  @@unique([organization_id, label])
   @@map("product_formats")
 }
 
@@ -227,9 +283,9 @@ model InventoryBreakdown {
   product_id          String          @db.Uuid
   packaging_format_id String          @db.Uuid
   quantity            Int             @default(0)  // Nombre de colis de ce format
-  store               Store           @relation(fields: [store_id], references: [id])
-  product             Product         @relation(fields: [product_id], references: [id])
-  packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id])
+  store               Store           @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  product             Product         @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
 
   @@unique([store_id, product_id, packaging_format_id])
   @@map("inventory_breakdowns")
@@ -237,16 +293,18 @@ model InventoryBreakdown {
 
 
 model Inventory {
-  store_id       String  @db.Uuid
-  product_id     String  @db.Uuid
-  stock_physical Int     @default(0)
-  stock_reserved Int     @default(0)
-  stock_min      Int     @default(0)     // Seuil d'alerte stock bas
-  stock_reorder  Int     @default(0)     // Seuil de déclenchement de réapprovisionnement
-  store          Store   @relation(fields: [store_id], references: [id])
-  product        Product @relation(fields: [product_id], references: [id])
+  organization_id String  @db.Uuid
+  store_id        String  @db.Uuid
+  product_id      String  @db.Uuid
+  stock_physical  Int     @default(0)
+  stock_reserved  Int     @default(0)
+  stock_min       Int     @default(0)     // Seuil d'alerte stock bas
+  stock_reorder   Int     @default(0)     // Seuil de déclenchement de reapprovisionnement
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  store           Store    @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  product         Product  @relation(fields: [product_id], references: [id], onDelete: Cascade)
 
-  @@id([store_id, product_id])
+  @@id([organization_id, store_id, product_id])
   @@map("inventory")
 }
 
@@ -269,8 +327,8 @@ model Transfer {
   status        TransferStatus @default(PENDING)
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
-  from_store    Store          @relation("TransfersFrom", fields: [from_store_id], references: [id])
-  to_store      Store          @relation("TransfersTo", fields: [to_store_id], references: [id])
+  from_store    Store          @relation("TransfersFrom", fields: [from_store_id], references: [id], onDelete: Cascade)
+  to_store      Store          @relation("TransfersTo", fields: [to_store_id], references: [id], onDelete: Cascade)
   items         TransferItem[]
 
   @@index([status])
@@ -289,8 +347,8 @@ model TransferItem {
   packaging_format_id String?         @db.Uuid
   packages_count      Int?
   transfer            Transfer        @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
-  product             Product         @relation(fields: [product_id], references: [id])
-  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  product             Product         @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
 
   @@unique([transfer_id, product_id, packaging_format_id])
   @@index([transfer_id])
@@ -328,9 +386,9 @@ model Transaction {
   total_amount   Decimal           @db.Decimal(10, 2)
   refund_of_id   String?           @db.Uuid      // Link to original sale when type = REFUND
   created_at     DateTime          @default(now())
-  store          Store             @relation(fields: [store_id], references: [id])
+  store          Store             @relation(fields: [store_id], references: [id], onDelete: Cascade)
   user           User              @relation(fields: [user_id], references: [id])
-  client         Client?           @relation(fields: [client_id], references: [id])
+  client         Client?           @relation(fields: [client_id], references: [id], onDelete: SetNull)
   refund_of      Transaction?      @relation("TransactionRefunds", fields: [refund_of_id], references: [id])
   refunds        Transaction[]     @relation("TransactionRefunds")
   items          TransactionItem[]
@@ -354,8 +412,8 @@ model TransactionItem {
   packaging_format_id String?          @db.Uuid
   packages_count      Int?
   transaction         Transaction      @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
-  product             Product          @relation(fields: [product_id], references: [id])
-  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  product             Product          @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
 
   @@index([transaction_id])
   @@index([product_id])
@@ -391,6 +449,15 @@ enum AuditAction {
   USER_LOGIN
   USER_LOGIN_FAILED
   USER_LOGOUT
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+
+  // Gestion des organisations
+  ORGANIZATION_CREATED
+  ORGANIZATION_UPDATED
+  ORGANIZATION_SUSPENDED
+  ORGANIZATION_REACTIVATED
+  ORGANIZATION_DELETED
 
   // Gestion des utilisateurs
   USER_CREATED
@@ -477,9 +544,10 @@ enum PaymentTerms {
 
 model Supplier {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String            @db.Uuid
   name             String
   contact_name     String?
-  email            String?           @unique
+  email            String?
   phone            String?           @db.VarChar(20)
   address          String?
   payment_terms    PaymentTerms      @default(NET30)
@@ -487,9 +555,12 @@ model Supplier {
   is_active        Boolean           @default(true)
   created_at       DateTime          @default(now())
   updated_at       DateTime          @updatedAt
+  organization     Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
   supplier_products SupplierProduct[]
   purchase_orders  PurchaseOrder[]
 
+  @@unique([organization_id, email])
+  @@index([organization_id])
   @@map("suppliers")
 }
 
@@ -507,9 +578,9 @@ model SupplierProduct {
   is_active           Boolean         @default(true)
   created_at          DateTime        @default(now())
   updated_at          DateTime        @updatedAt
-  supplier            Supplier        @relation(fields: [supplier_id], references: [id])
-  product             Product         @relation(fields: [product_id], references: [id])
-  packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id])
+  supplier            Supplier        @relation(fields: [supplier_id], references: [id], onDelete: Cascade)
+  product             Product         @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  packaging_format    PackagingFormat @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
   order_items         PurchaseOrderItem[]
 
   @@unique([supplier_id, product_id, packaging_format_id])
@@ -542,8 +613,8 @@ model PurchaseOrder {
   sent_at              DateTime?
   created_at           DateTime            @default(now())
   updated_at           DateTime            @updatedAt
-  supplier             Supplier            @relation(fields: [supplier_id], references: [id])
-  destination_store    Store               @relation("PurchaseOrderDestination", fields: [destination_store_id], references: [id])
+  supplier             Supplier            @relation(fields: [supplier_id], references: [id], onDelete: Cascade)
+  destination_store    Store               @relation("PurchaseOrderDestination", fields: [destination_store_id], references: [id], onDelete: Cascade)
   ordered_by           User                @relation(fields: [ordered_by_id], references: [id])
   items                PurchaseOrderItem[]
   receptions           StockReception[]
@@ -554,11 +625,14 @@ model PurchaseOrder {
 
 
 // Atomic sequence for PO reference generation: BC-YYYY-XXXXXX
-// One record per calendar year, incremented via native PostgreSQL upsert.
+// One record per organization per calendar year, incremented via native PostgreSQL upsert.
 model PurchaseOrderSequence {
-  year     Int @id
-  last_seq Int @default(0)
+  organization_id String       @db.Uuid
+  year            Int
+  last_seq        Int          @default(0)
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
+  @@id([organization_id, year])
   @@map("purchase_order_sequences")
 }
 
@@ -573,7 +647,7 @@ model PurchaseOrderItem {
   snapshotted_units_per_package Int             @default(1)        // Snapshot at order creation time
   order                        PurchaseOrder    @relation(fields: [order_id], references: [id], onDelete: Cascade)
   supplier_product             SupplierProduct  @relation(fields: [supplier_product_id], references: [id])
-  packaging_format             PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  packaging_format             PackagingFormat? @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
   reception_items              ReceptionItem[]
 
   @@unique([order_id, supplier_product_id])
@@ -600,7 +674,7 @@ model StockReception {
   notes           String?
   received_at     DateTime        @default(now())
   confirmed_at    DateTime?
-  order           PurchaseOrder   @relation(fields: [order_id], references: [id])
+  order           PurchaseOrder   @relation(fields: [order_id], references: [id], onDelete: Cascade)
   received_by     User            @relation(fields: [received_by_id], references: [id])
   items           ReceptionItem[]
 
@@ -619,8 +693,8 @@ model ReceptionItem {
   packages_received   Int?             // = received_qty if format set (denormalized for breakdown)
   reception           StockReception   @relation(fields: [reception_id], references: [id], onDelete: Cascade)
   order_item          PurchaseOrderItem? @relation(fields: [order_item_id], references: [id])
-  product             Product          @relation(fields: [product_id], references: [id])
-  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id])
+  product             Product          @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  packaging_format    PackagingFormat? @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
 
   @@map("reception_items")
 }
@@ -648,7 +722,7 @@ model SupplierInvoice {
   due_at      DateTime?
   paid_at     DateTime?
   notes       String?
-  order       PurchaseOrder @relation(fields: [order_id], references: [id])
+  order       PurchaseOrder @relation(fields: [order_id], references: [id], onDelete: Cascade)
 
   @@map("supplier_invoices")
 }
@@ -659,22 +733,25 @@ model SupplierInvoice {
 // ---------------------------------------------------------------------------
 
 model AuditLog {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  created_at  DateTime    @default(now())
-  actor_id    String?     @db.Uuid                    // Nullable for failed login attempts
-  actor_name  String                                  // Denormalized at time of action
-  action      AuditAction
-  target_type String?                                 // Nullable for actions without target (login/logout)
-  target_id   String?     @db.Uuid
-  target_name String?                                 // Denormalized at time of action
-  store_id    String?     @db.Uuid                    // Nullable (failed login may lack store context)
-  store_name  String?                                 // Denormalized
-  ip_address  String?     @db.VarChar(45)             // IPv4 (15 chars) + IPv6 (39 chars max)
-  metadata    Json?       @db.JsonB                   // Contextual data: reason, changes, details
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at      DateTime    @default(now())
+  actor_id        String?     @db.Uuid                    // Nullable for failed login attempts
+  actor_name      String                                  // Denormalized at time of action
+  action          AuditAction
+  target_type     String?                                 // Nullable for actions without target (login/logout)
+  target_id       String?     @db.Uuid
+  target_name     String?                                 // Denormalized at time of action
+  store_id        String?     @db.Uuid                    // Nullable (failed login may lack store context)
+  store_name      String?                                 // Denormalized
+  organization_id String?     @db.Uuid                    // Nullable for platform-level actions (org provisioning)
+  ip_address      String?     @db.VarChar(45)             // IPv4 (15 chars) + IPv6 (39 chars max)
+  metadata        Json?       @db.JsonB                   // Contextual data: reason, changes, details
 
-  actor       User?       @relation(fields: [actor_id], references: [id])
-  store       Store?      @relation("AuditStore", fields: [store_id], references: [id])
+  actor       User?         @relation(fields: [actor_id], references: [id])
+  store       Store?        @relation("AuditStore", fields: [store_id], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organization_id], references: [id], onDelete: SetNull)
 
+  @@index([organization_id])
   @@map("audit_logs")
 }
 
@@ -705,8 +782,8 @@ model StockMovement {
   to_packaging_format_id String?          @db.Uuid @map("to_packaging_format_id") // Destination format (FORMAT_CONVERSION only)
   to_packages_count      Int?             @map("to_packages_count")               // Destination package count
   created_at             DateTime         @default(now())
-  store                  Store            @relation(fields: [store_id], references: [id])
-  product                Product          @relation(fields: [product_id], references: [id])
+  store                  Store            @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  product                Product          @relation(fields: [product_id], references: [id], onDelete: Cascade)
   performed_by           User             @relation("MovementsPerformedBy", fields: [performed_by_id], references: [id])
   packaging_format       PackagingFormat? @relation("SourceFormat", fields: [packaging_format_id], references: [id])
   to_packaging_format    PackagingFormat? @relation("DestFormat", fields: [to_packaging_format_id], references: [id])
@@ -729,9 +806,12 @@ enum ReportStatus {
 
 // Atomic sequence for inventory report reference generation: INV-YYYY-XXXX
 model InventoryReportSequence {
-  year     Int @id
-  last_seq Int @default(0)
+  organization_id String       @db.Uuid
+  year            Int
+  last_seq        Int          @default(0)
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
 
+  @@id([organization_id, year])
   @@map("inventory_report_sequences")
 }
 
@@ -752,7 +832,7 @@ model InventoryReport {
   adjustments_applied_at  DateTime?            // Non-null = adjustments already applied (irreversible)
   created_at              DateTime             @default(now())
   updated_at              DateTime             @updatedAt
-  store                   Store                @relation(fields: [store_id], references: [id])
+  store                   Store                @relation(fields: [store_id], references: [id], onDelete: Cascade)
   created_by              User                 @relation("ReportsCreatedBy", fields: [created_by_id], references: [id])
   validated_by            User?                @relation("ReportsValidatedBy", fields: [validated_by_id], references: [id])
   lines                   InventoryReportLine[]
@@ -770,7 +850,7 @@ model InventoryReportLine {
   variance          Int             @default(0) // stock_counted − stock_theoretical (denormalized)
   note              String?         // Reason if variance significant
   report            InventoryReport @relation(fields: [report_id], references: [id], onDelete: Cascade)
-  product           Product         @relation(fields: [product_id], references: [id])
+  product           Product         @relation(fields: [product_id], references: [id], onDelete: Cascade)
   breakdowns        InventoryReportLineBreakdown[]
 
   @@unique([report_id, product_id])
@@ -789,7 +869,7 @@ model InventoryReportLineBreakdown {
   packages_counted     Int                 @default(0)
   packages_variance    Int                 @default(0) // packages_counted − packages_theoretical
   line                 InventoryReportLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
-  packaging_format     PackagingFormat     @relation(fields: [packaging_format_id], references: [id])
+  packaging_format     PackagingFormat     @relation(fields: [packaging_format_id], references: [id], onDelete: Cascade)
 
   @@unique([line_id, packaging_format_id])
   @@map("inventory_report_line_breakdowns")

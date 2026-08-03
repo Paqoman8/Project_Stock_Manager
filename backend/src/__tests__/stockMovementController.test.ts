@@ -25,7 +25,7 @@ function createResponse() {
 
 function createRequest(body: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
   return {
-    user: { userId: 'user-001', storeId: 'store-001', roleName: 'Super Administrateur' },
+    user: { userId: 'user-001', orgId: '00000000-0000-0000-0000-000000000010', storeId: 'store-001', roleName: 'Super Administrateur' },
     body,
     headers: {},
     ip: '127.0.0.1',
@@ -234,6 +234,7 @@ describe('createConversion controller', () => {
       await createConversion(req, res);
 
       expect(mockCreateConversion).toHaveBeenCalledWith(
+        '00000000-0000-0000-0000-000000000010',
         expect.objectContaining({ performed_by_id: 'user-001' }),
         'user-001',
         'Actor',

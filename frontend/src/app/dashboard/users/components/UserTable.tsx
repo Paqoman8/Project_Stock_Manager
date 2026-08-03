@@ -14,6 +14,7 @@ interface UserTableProps {
   onEdit: (user: UserRow) => void;
   onDeactivate: (user: UserRow) => void;
   onReactivate: (user: UserRow) => void;
+  onResetPassword: (user: UserRow) => void;
 }
 
 const COLUMNS = ['Identifiant', 'Email', 'Rôle', 'Magasins', 'Statut', 'Actions'];
@@ -21,7 +22,7 @@ const COLUMNS = ['Identifiant', 'Email', 'Rôle', 'Magasins', 'Statut', 'Actions
 export default function UserTable({
   users, filteredUsers, isLoading, fetchError,
   sessionUserId, sessionUserRole,
-  onEdit, onDeactivate, onReactivate,
+  onEdit, onDeactivate, onReactivate, onResetPassword,
 }: UserTableProps) {
   return (
     <>
@@ -118,6 +119,17 @@ export default function UserTable({
                             aria-label={`Modifier ${user.username}`}
                           >
                             Modifier
+                          </Button>
+                        )}
+
+                        {user.id !== sessionUserId && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onResetPassword(user)}
+                            aria-label={`Réinitialiser le mot de passe de ${user.username}`}
+                          >
+                            Réinit. MDP
                           </Button>
                         )}
 

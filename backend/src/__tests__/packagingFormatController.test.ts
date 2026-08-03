@@ -33,7 +33,11 @@ function createResponse() {
 }
 
 function createRequest(body: Record<string, unknown>, params: Record<string, string> = {}) {
-  return { params: { productId: 'prod-001', ...params }, body } as any;
+  return {
+    user: { orgId: '00000000-0000-0000-0000-000000000010' },
+    params: { productId: 'prod-001', ...params },
+    body,
+  } as any;
 }
 
 beforeEach(() => {
@@ -60,6 +64,7 @@ describe('createFormat — invariant unité de base / prix', () => {
     await createFormat(req, res);
 
     expect(mockCreate).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       expect.objectContaining({ price: null, is_base_unit: true }),
     );
   });
@@ -72,6 +77,7 @@ describe('createFormat — invariant unité de base / prix', () => {
     await createFormat(req, res);
 
     expect(mockCreate).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       expect.objectContaining({ price: 45000 }),
     );
   });
@@ -92,6 +98,7 @@ describe('updateFormat — patch partiel du prix', () => {
     await updateFormat(req, res);
 
     expect(mockUpdate).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       'fmt-002',
       expect.objectContaining({ price: undefined }),
     );
@@ -128,6 +135,7 @@ describe('updateFormat — patch partiel du prix', () => {
     await updateFormat(req, res);
 
     expect(mockUpdate).toHaveBeenCalledWith(
+      '00000000-0000-0000-0000-000000000010',
       'fmt-002',
       expect.objectContaining({ price: null, is_base_unit: true }),
     );

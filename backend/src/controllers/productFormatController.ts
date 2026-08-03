@@ -11,18 +11,7 @@ import { Response } from 'express';
 import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import * as productFormatService from '../services/productFormat.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/**
- * Formate les erreurs Zod en tableau de messages lisibles pour le client.
- * Exemple : ["label: Le label est obligatoire"]
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schéma Zod — utilisé pour create et update
@@ -57,8 +46,9 @@ export async function getProductFormats(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
+  const orgId = req.user!.orgId;
   try {
-    const formats = await productFormatService.getProductFormats();
+    const formats = await productFormatService.getProductFormats(orgId);
 
     res.status(200).json({
       success: true,
@@ -100,8 +90,10 @@ export async function createProductFormat(
     return;
   }
 
+  const orgId = req.user!.orgId;
+
   try {
-    const format = await productFormatService.createProductFormat(parseResult.data);
+    const format = await productFormatService.createProductFormat(orgId, parseResult.data);
 
     res.status(201).json({
       success: true,
@@ -143,6 +135,7 @@ export async function updateProductFormat(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   // Validation Zod
@@ -157,7 +150,7 @@ export async function updateProductFormat(
   }
 
   try {
-    const format = await productFormatService.updateProductFormat(id, parseResult.data);
+    const format = await productFormatService.updateProductFormat(orgId, id, parseResult.data);
 
     res.status(200).json({
       success: true,
@@ -206,10 +199,11 @@ export async function deleteProductFormat(
   req: AuthenticatedRequest,
   res: Response,
 ): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    await productFormatService.deleteProductFormat(id);
+    await productFormatService.deleteProductFormat(orgId, id);
 
     res.status(200).json({
       success: true,

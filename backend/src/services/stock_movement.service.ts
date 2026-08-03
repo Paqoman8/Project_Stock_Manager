@@ -29,9 +29,10 @@ export type { StockMovementRow };
 // ---------------------------------------------------------------------------
 
 export async function getMovements(
+  orgId: string,
   filters: StockMovementFilters = {},
 ): Promise<StockMovementRow[]> {
-  return movementRepo.findAll(filters);
+  return movementRepo.findAll(orgId, filters);
 }
 
 /**
@@ -46,7 +47,8 @@ export async function getMovements(
  * @throws Error('INSUFFICIENT_FORMAT_STOCK')    si ADJUSTMENT_OUT et ventilation format insuffisante
  */
 export async function createMovement(
-  data: Omit<CreateMovementData, 'performed_by_id'> & { performed_by_id: string },
+  orgId: string,
+  data: Omit<CreateMovementData, 'performed_by_id' | 'orgId'> & { performed_by_id: string },
   actorId:   string,
   actorName: string,
   storeId?:  string,
@@ -55,14 +57,14 @@ export async function createMovement(
 ): Promise<StockMovementRow> {
   // Vérification existence de l'établissement
   const store = await prisma.store.findUnique({
-    where:  { id: data.store_id },
+    where:  { id: data.store_id, organization_id: orgId },
     select: { id: true, name: true },
   });
   if (!store) throw new Error('STORE_NOT_FOUND');
 
   // Vérification existence du produit
   const product = await prisma.product.findUnique({
-    where:  { id: data.product_id },
+    where:  { id: data.product_id, organization_id: orgId },
     select: { id: true, name: true },
   });
   if (!product) throw new Error('PRODUCT_NOT_FOUND');
@@ -97,7 +99,8 @@ export async function createMovement(
   if (data.type === 'INITIAL') {
     const existing = await prisma.inventory.findUnique({
       where: {
-        store_id_product_id: {
+        organization_id_store_id_product_id: {
+          organization_id: orgId,
           store_id:   data.store_id,
           product_id: data.product_id,
         },
@@ -119,6 +122,7 @@ export async function createMovement(
 
   const movement = await movementRepo.create({
     ...data,
+    orgId,
     qty: finalQty,
   });
 
@@ -138,6 +142,7 @@ export async function createMovement(
       targetType: 'STOCK_MOVEMENT',
       targetId:   movement.id,
       targetName: `${product.name} — ${typeLabels[data.type]} (${packagingLabel ?? finalQty})`,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -175,7 +180,8 @@ export async function createMovement(
  * @throws Error('INSUFFICIENT_FORMAT_STOCK')   si stock insuffisant pour le format source
  */
 export async function createConversion(
-  data: Omit<CreateConversionData, 'performed_by_id' | 'to_packages_count' | 'total_units'> & {
+  orgId: string,
+  data: Omit<CreateConversionData, 'performed_by_id' | 'to_packages_count' | 'total_units' | 'orgId'> & {
     performed_by_id: string;
     to_packages_count?: number;
   },
@@ -189,7 +195,7 @@ export async function createConversion(
     throw new Error('SAME_FORMAT_CONVERSION');
   }
 
-  const store = await prisma.store.findUnique({ where: { id: data.store_id }, select: { id: true } });
+  const store = await prisma.store.findUnique({ where: { id: data.store_id, organization_id: orgId }, select: { id: true } });
   if (!store) throw new Error('STORE_NOT_FOUND');
 
   const product = await prisma.product.findUnique({ where: { id: data.product_id }, select: { id: true, name: true } });
@@ -233,6 +239,7 @@ export async function createConversion(
 
   const movement = await movementRepo.createConversion({
     ...data,
+    orgId,
     to_packages_count:  computedToPackagesCount,
     total_units:        fromUnits,
     reason:             data.reason ? `${convReason} — ${data.reason}` : convReason,
@@ -248,6 +255,7 @@ export async function createConversion(
       targetType: 'STOCK_MOVEMENT',
       targetId:   movement.id,
       targetName: `${product.name} — ${convReason}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,

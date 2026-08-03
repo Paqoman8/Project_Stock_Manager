@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getSuppliers,
   getSupplierById,
@@ -18,7 +19,7 @@ import {
 const supplierRouter = Router();
 
 // Raccourci pour la pile de middlewares partagée
-const superAdminOnly = [requireAuth, requireRole('Super Administrateur')];
+const superAdminOnly = [requireAuth, requireOrg, requireRole('Super Administrateur')];
 
 // GET /api/suppliers — liste les fournisseurs (filtres : isActive, search)
 supplierRouter.get('/', superAdminOnly, getSuppliers);

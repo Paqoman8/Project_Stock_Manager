@@ -11,27 +11,8 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as supplierService from '../services/supplier.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  }
-  return req.ip ?? '';
-}
-
-/**
- * Formate les erreurs Zod en tableau de messages lisibles pour le client.
- * Exemple : ["name: Le nom est obligatoire", "email: Email invalide"]
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schéma Zod partagé — utilisé pour create (complet) et update (partiel)
@@ -74,6 +55,7 @@ const updateSupplierSchema = supplierSchema.partial();
  * Sécurité : reserved au Super Administrateur (middlewares sur le routeur).
  */
 export async function getSuppliers(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId      = req.user!.orgId;
   const isActiveRaw = req.query.isActive as string | undefined;
   const search      = req.query.search  as string | undefined;
 
@@ -83,7 +65,7 @@ export async function getSuppliers(req: AuthenticatedRequest, res: Response): Pr
   if (isActiveRaw === 'false') isActive = false;
 
   try {
-    const suppliers = await supplierService.getSuppliers({ isActive, search });
+    const suppliers = await supplierService.getSuppliers(orgId, { isActive, search });
 
     res.status(200).json({
       success: true,
@@ -108,10 +90,11 @@ export async function getSuppliers(req: AuthenticatedRequest, res: Response): Pr
  * Réponse 404 : { success: false, message } si introuvable
  */
 export async function getSupplierById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const supplier = await supplierService.getSupplierById(id);
+    const supplier = await supplierService.getSupplierById(orgId, id);
 
     res.status(200).json({
       success: true,
@@ -160,6 +143,7 @@ export async function createSupplier(req: AuthenticatedRequest, res: Response): 
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -169,6 +153,7 @@ export async function createSupplier(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const supplier = await supplierService.createSupplier(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -236,6 +221,7 @@ export async function updateSupplier(req: AuthenticatedRequest, res: Response): 
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -245,6 +231,7 @@ export async function updateSupplier(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const supplier = await supplierService.updateSupplier(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -294,6 +281,7 @@ export async function updateSupplier(req: AuthenticatedRequest, res: Response): 
  * Réponse 404 : { success: false, message } si introuvable
  */
 export async function deactivateSupplier(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -305,7 +293,7 @@ export async function deactivateSupplier(req: AuthenticatedRequest, res: Respons
       resolveStoreName(storeId),
     ]);
 
-    const supplier = await supplierService.deactivateSupplier(id, actorId, actorName, storeId, storeName, ip);
+    const supplier = await supplierService.deactivateSupplier(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success:  true,
@@ -339,6 +327,7 @@ export async function deactivateSupplier(req: AuthenticatedRequest, res: Respons
  * Réponse 404 : { success: false, message } si introuvable
  */
 export async function reactivateSupplier(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -350,7 +339,7 @@ export async function reactivateSupplier(req: AuthenticatedRequest, res: Respons
       resolveStoreName(storeId),
     ]);
 
-    const supplier = await supplierService.reactivateSupplier(id, actorId, actorName, storeId, storeName, ip);
+    const supplier = await supplierService.reactivateSupplier(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success:  true,

@@ -90,8 +90,8 @@ function assertSurplusHasNote(
  * @param orderId - UUID de la commande parente
  * @returns Tableau de StockReceptionRow
  */
-export async function getReceptionsByOrder(orderId: string): Promise<StockReceptionRow[]> {
-  return receptionRepo.findByOrderId(orderId);
+export async function getReceptionsByOrder(orgId: string, orderId: string): Promise<StockReceptionRow[]> {
+  return receptionRepo.findByOrderId(orderId, orgId);
 }
 
 /**
@@ -101,8 +101,8 @@ export async function getReceptionsByOrder(orderId: string): Promise<StockRecept
  * @returns La réception trouvée
  * @throws Error('RECEPTION_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
-export async function getReceptionById(id: string): Promise<StockReceptionRow> {
-  const reception = await receptionRepo.findById(id);
+export async function getReceptionById(orgId: string, id: string): Promise<StockReceptionRow> {
+  const reception = await receptionRepo.findById(id, orgId);
   if (!reception) {
     throw new Error('RECEPTION_NOT_FOUND');
   }
@@ -131,6 +131,7 @@ export async function getReceptionById(id: string): Promise<StockReceptionRow> {
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND')   si aucun SupplierProduct ne lie le produit à la commande
  */
 export async function createReception(
+  orgId: string,
   input: CreateReceptionInput,
   actorId: string,
   actorName: string,
@@ -141,16 +142,26 @@ export async function createReception(
 ): Promise<StockReceptionRow> {
   // Vérification de la commande
   const order = await prisma.purchaseOrder.findUnique({
-    where:   { id: input.order_id },
+    where: {
+      id: input.order_id,
+      AND: [
+        {
+          OR: [
+            { supplier: { organization_id: orgId } },
+            { destination_store: { organization_id: orgId } },
+          ],
+        },
+      ],
+    },
     include: {
       items: {
         select: {
-          id:                            true,
-          ordered_qty:                   true,
+          id: true,
+          ordered_qty: true,
           snapshotted_units_per_package: true,
           supplier_product: {
             select: {
-              product_id:          true,
+              product_id: true,
               packaging_format_id: true,
             },
           },
@@ -176,6 +187,12 @@ export async function createReception(
     where: {
       order_id: input.order_id,
       status: 'CONFIRMED',
+      purchase_order: {
+        OR: [
+          { supplier: { organization_id: orgId } },
+          { destination_store: { organization_id: orgId } },
+        ],
+      },
     },
     select: {
       items: {
@@ -238,6 +255,7 @@ export async function createReception(
       targetType: 'STOCK_RECEPTION',
       targetId:   reception.id,
       targetName: `Réception #${order.reference}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -268,6 +286,7 @@ export async function createReception(
  * @throws Error('INVALID_STATUS_TRANSITION')  si la réception n'est pas PENDING
  */
 export async function confirmReception(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -275,7 +294,7 @@ export async function confirmReception(
   storeName?: string,
   ipAddress?: string,
 ): Promise<StockReceptionRow> {
-  const existing = await receptionRepo.findById(id);
+  const existing = await receptionRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('RECEPTION_NOT_FOUND');
   }
@@ -283,7 +302,7 @@ export async function confirmReception(
     throw new Error('INVALID_STATUS_TRANSITION');
   }
 
-  const reception = await receptionRepo.confirm(id);
+  const reception = await receptionRepo.confirm(orgId, id);
 
   // Audit — non-bloquant
   try {
@@ -294,6 +313,7 @@ export async function confirmReception(
       targetType: 'STOCK_RECEPTION',
       targetId:   reception.id,
       targetName: `Réception #${reception.order.reference}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -322,6 +342,7 @@ export async function confirmReception(
  * @throws Error('INVALID_STATUS_TRANSITION')  si la réception n'est pas PENDING
  */
 export async function cancelReception(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -329,7 +350,7 @@ export async function cancelReception(
   storeName?: string,
   ipAddress?: string,
 ): Promise<StockReceptionRow> {
-  const existing = await receptionRepo.findById(id);
+  const existing = await receptionRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('RECEPTION_NOT_FOUND');
   }
@@ -337,7 +358,7 @@ export async function cancelReception(
     throw new Error('INVALID_STATUS_TRANSITION');
   }
 
-  const reception = await receptionRepo.cancel(id);
+  const reception = await receptionRepo.cancel(orgId, id);
 
   // Audit — non-bloquant
   try {
@@ -348,6 +369,7 @@ export async function cancelReception(
       targetType: 'STOCK_RECEPTION',
       targetId:   reception.id,
       targetName: `Réception #${reception.order.reference}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,

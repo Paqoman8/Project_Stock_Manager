@@ -27,6 +27,7 @@ export interface InventoryBreakdownRow {
  * Triée par units_per_package croissant (unité → pack → carton → palette).
  */
 export async function findByInventory(
+  orgId:     string,
   storeId:   string,
   productId: string,
 ): Promise<InventoryBreakdownRow[]> {
@@ -47,7 +48,7 @@ export async function findByInventory(
   if (!hasBase) {
     const [inventory, baseFormat] = await Promise.all([
       prisma.inventory.findUnique({
-        where: { store_id_product_id: { store_id: storeId, product_id: productId } },
+        where: { organization_id_store_id_product_id: { organization_id: orgId, store_id: storeId, product_id: productId } },
         select: { stock_physical: true },
       }),
       prisma.packagingFormat.findFirst({
@@ -76,6 +77,7 @@ export async function findByInventory(
  * de transactions de stock_movement.repository.ts.
  */
 export function upsertOp(
+  orgId:     string,
   storeId:   string,
   productId: string,
   formatId:  string,

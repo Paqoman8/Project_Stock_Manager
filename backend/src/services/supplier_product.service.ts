@@ -37,9 +37,10 @@ export type { SupplierProductRow };
  * @returns Tableau de SupplierProductRow
  */
 export async function getSupplierProducts(
+  orgId: string,
   filters: SupplierProductFilters = {},
 ): Promise<SupplierProductRow[]> {
-  return supplierProductRepo.findAll(filters);
+  return supplierProductRepo.findAll(orgId, filters);
 }
 
 /**
@@ -49,8 +50,8 @@ export async function getSupplierProducts(
  * @returns L'enregistrement trouvé
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
-export async function getSupplierProductById(id: string): Promise<SupplierProductRow> {
-  const row = await supplierProductRepo.findById(id);
+export async function getSupplierProductById(orgId: string, id: string): Promise<SupplierProductRow> {
+  const row = await supplierProductRepo.findById(id, orgId);
   if (!row) {
     throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
   }
@@ -81,6 +82,7 @@ export async function getSupplierProductById(id: string): Promise<SupplierProduc
  * @throws Error('SUPPLIER_PRODUCT_ALREADY_EXISTS') si le couple existe déjà
  */
 export async function createSupplierProduct(
+  orgId:      string,
   data:       CreateSupplierProductData,
   actorId:    string,
   actorName:  string,
@@ -89,25 +91,26 @@ export async function createSupplierProduct(
   ipAddress?: string,
 ): Promise<SupplierProductRow> {
   // Vérification existence du fournisseur
-  const supplier = await supplierRepo.findById(data.supplier_id);
+  const supplier = await supplierRepo.findById(orgId, data.supplier_id);
   if (!supplier) {
     throw new Error('SUPPLIER_NOT_FOUND');
   }
 
   // Vérification existence du produit
-  const product = await prisma.product.findUnique({ where: { id: data.product_id } });
+  const product = await prisma.product.findUnique({ where: { id: data.product_id, organization_id: orgId } });
   if (!product) {
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
   // Vérification que le format de conditionnement existe et appartient au bon produit
-  const packagingFormat = await packagingFormatRepo.findById(data.packaging_format_id);
+  const packagingFormat = await packagingFormatRepo.findById(orgId, data.packaging_format_id);
   if (!packagingFormat || packagingFormat.product_id !== data.product_id) {
     throw new Error('PACKAGING_FORMAT_NOT_FOUND');
   }
 
   // Vérification d'unicité : le triplet (fournisseur + produit + format) ne doit pas déjà exister
   const duplicate = await supplierProductRepo.findBySupplierProductAndFormat(
+    orgId,
     data.supplier_id,
     data.product_id,
     data.packaging_format_id,
@@ -119,7 +122,7 @@ export async function createSupplierProduct(
   // Si is_preferred = true : retirer le flag des autres entrées du même produit
   const row = await prisma.$transaction(async (tx) => {
     if (data.is_preferred === true) {
-      await supplierProductRepo.clearPreferred(data.product_id, tx);
+      await supplierProductRepo.clearPreferred(orgId, data.product_id, tx);
     }
     return supplierProductRepo.create(data, tx);
   });
@@ -133,6 +136,7 @@ export async function createSupplierProduct(
       targetType: 'SUPPLIER_PRODUCT',
       targetId:   row.id,
       targetName: `${row.supplier.name} → ${row.product.name}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -163,6 +167,7 @@ export async function createSupplierProduct(
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
 export async function updateSupplierProduct(
+  orgId:      string,
   id:         string,
   data:       UpdateSupplierProductData,
   actorId:    string,
@@ -172,14 +177,14 @@ export async function updateSupplierProduct(
   ipAddress?: string,
 ): Promise<SupplierProductRow> {
   // Vérification d'existence
-  const existing = await supplierProductRepo.findById(id);
+  const existing = await supplierProductRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
   }
 
   // Vérification que le nouveau format de conditionnement appartient au bon produit
   if (data.packaging_format_id) {
-    const packagingFormat = await packagingFormatRepo.findById(data.packaging_format_id);
+    const packagingFormat = await packagingFormatRepo.findById(orgId, data.packaging_format_id);
     if (!packagingFormat || packagingFormat.product_id !== existing.product_id) {
       throw new Error('PACKAGING_FORMAT_NOT_FOUND');
     }
@@ -188,9 +193,9 @@ export async function updateSupplierProduct(
   // Si is_preferred = true : retirer le flag des autres entrées du même produit
   const row = await prisma.$transaction(async (tx) => {
     if (data.is_preferred === true) {
-      await supplierProductRepo.clearPreferred(existing.product_id, tx);
+      await supplierProductRepo.clearPreferred(orgId, existing.product_id, tx);
     }
-    return supplierProductRepo.update(id, data, tx);
+    return supplierProductRepo.update(orgId, id, data, tx);
   });
 
   // Audit — non-bloquant
@@ -202,6 +207,7 @@ export async function updateSupplierProduct(
       targetType: 'SUPPLIER_PRODUCT',
       targetId:   row.id,
       targetName: `${row.supplier.name} → ${row.product.name}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -228,6 +234,7 @@ export async function updateSupplierProduct(
  * @throws Error('SUPPLIER_PRODUCT_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
 export async function deleteSupplierProduct(
+  orgId:      string,
   id:         string,
   actorId:    string,
   actorName:  string,
@@ -236,12 +243,12 @@ export async function deleteSupplierProduct(
   ipAddress?: string,
 ): Promise<SupplierProductRow> {
   // Vérification d'existence
-  const existing = await supplierProductRepo.findById(id);
+  const existing = await supplierProductRepo.findById(id, orgId);
   if (!existing) {
     throw new Error('SUPPLIER_PRODUCT_NOT_FOUND');
   }
 
-  const row = await supplierProductRepo.setActive(id, false);
+  const row = await supplierProductRepo.setActive(orgId, id, false);
 
   // Audit — non-bloquant
   try {
@@ -252,6 +259,7 @@ export async function deleteSupplierProduct(
       targetType: 'SUPPLIER_PRODUCT',
       targetId:   row.id,
       targetName: `${row.supplier.name} → ${row.product.name}`,
+      orgId,
       storeId,
       storeName,
       ipAddress,

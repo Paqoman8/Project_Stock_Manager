@@ -103,7 +103,7 @@ export async function resolveClient(
   });
 }
 
-export async function searchClients(query: string, storeId: string): Promise<ClientRow[]> {
+export async function searchClients(orgId: string, query: string, storeId: string): Promise<ClientRow[]> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
 

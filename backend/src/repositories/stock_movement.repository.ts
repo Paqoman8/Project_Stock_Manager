@@ -35,6 +35,7 @@ export interface StockMovementRow {
 }
 
 export interface CreateConversionData {
+  orgId:                  string;
   store_id:              string;
   product_id:            string;
   from_packaging_format_id: string;
@@ -57,6 +58,7 @@ export interface StockMovementFilters {
 }
 
 export interface CreateMovementData {
+  orgId:                 string;
   store_id:             string;
   product_id:           string;
   type:                 MovementType;
@@ -88,10 +90,12 @@ const MOVEMENT_INCLUDE = {
  * Triés du plus récent au plus ancien.
  */
 export async function findAll(
+  orgId: string,
   filters: StockMovementFilters = {},
 ): Promise<StockMovementRow[]> {
   return prisma.stockMovement.findMany({
     where: {
+      store: { organization_id: orgId },
       ...(filters.store_id   ? { store_id:   filters.store_id }   : {}),
       ...(filters.product_id ? { product_id: filters.product_id } : {}),
       ...(filters.type       ? { type:       filters.type }        : {}),
@@ -153,13 +157,15 @@ export async function create(data: CreateMovementData): Promise<StockMovementRow
     // 2. Upsert inventory (stock_physical)
     await tx.inventory.upsert({
       where: {
-        store_id_product_id: {
+        organization_id_store_id_product_id: {
+          organization_id: data.orgId,
           store_id:   data.store_id,
           product_id: data.product_id,
         },
       },
       update: { stock_physical: { increment: stockDelta } },
       create: {
+        organization_id: data.orgId,
         store_id:       data.store_id,
         product_id:     data.product_id,
         stock_physical: Math.max(0, stockDelta),
@@ -230,7 +236,8 @@ export async function createConversion(data: CreateConversionData): Promise<Stoc
       }
       const inv = await tx.inventory.findUnique({
         where: {
-          store_id_product_id: {
+          organization_id_store_id_product_id: {
+            organization_id: data.orgId,
             store_id:   data.store_id,
             product_id: data.product_id,
           },

@@ -2,25 +2,38 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import {
+  ROLE_PLATFORM_MANAGER,
+  ROLE_SUPER_ADMIN,
+  ROLE_ADMIN,
+  ROLE_MANAGER_MAGASIN,
+  ROLE_OPERATEUR,
+  ROLE_CAISSIER,
+} from '../src/config/roles';
 
-// Connexion à la base via l'adapter Prisma/PostgreSQL
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-// Nombre de "rounds" pour le hachage bcrypt.
-// Plus c'est élevé, plus c'est sécurisé mais lent. 12 est un bon équilibre.
 const BCRYPT_SALT_ROUNDS = 12;
 
 async function main() {
   console.log('Début du seeding...');
 
-  // 1. Création des rôles par défaut
-  // upsert = créer si n'existe pas, ignorer si déjà présent (idempotent)
-  // "Administrateur" est ajouté entre "Super Administrateur" et "Manager Magasin".
-  // Il couvre les opérations d'administration sans les droits réservés au Super Admin.
-  const roles = ['Super Administrateur', 'Administrateur', 'Manager Magasin', 'Opérateur', 'Caissier'];
-  const createdRoles = [];
+  // 1. Création des rôles (idempotent via upsert)
+  // Platform Manager = gestionnaire de la plateforme (provisioning, orgs)
+  // Super Administrateur = admin d'organisation, droits max dans son org
+  // Administrateur = administration sans les droits réservés au SA
+  const roles = [
+    ROLE_PLATFORM_MANAGER,
+    ROLE_SUPER_ADMIN,
+    ROLE_ADMIN,
+    ROLE_MANAGER_MAGASIN,
+    ROLE_OPERATEUR,
+    ROLE_CAISSIER,
+  ];
+
+  const createdRoles: Record<string, string> = {};
 
   for (const roleName of roles) {
     const role = await prisma.role.upsert({
@@ -28,134 +41,93 @@ async function main() {
       update: {},
       create: { name: roleName },
     });
-    createdRoles.push(role);
+    createdRoles[role.name] = role.id;
     console.log(`Rôle créé/vérifié: ${role.name}`);
   }
 
-  const superAdminRole = createdRoles.find(r => r.name === 'Super Administrateur');
+  // 2. Création du compte Platform Manager (super.admin)
+  const platformManagerRoleId = createdRoles[ROLE_PLATFORM_MANAGER];
+  if (!platformManagerRoleId) throw new Error('Role Platform Manager not found');
 
-  // 2. Création du Hub Central
-  // On utilise upsert pour ne pas créer de doublon si le seed est rejoué.
-  // La couleur est incluse dans update tant qu'il n'existe pas d'UI de gestion
-  // des couleurs — une fois cette UI créée, retirer color de update.
-  const hubCentral = await prisma.store.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000001' },
-    update: { color: '#1D4ED8', is_protected: true },
+  const pmEmail = 'manager@gstock.local';
+  const pmUsername = 'platform.manager';
+  const pmPassword = 'Manager@2026!';
+  const pmPwdHash = await bcrypt.hash(pmPassword, BCRYPT_SALT_ROUNDS);
+
+  const pmUser = await prisma.user.upsert({
+    where: { username: pmUsername },
+    update: {
+      pwd_hash: pmPwdHash,
+      email: pmEmail,
+      role_id: platformManagerRoleId,
+    },
     create: {
-      id: '00000000-0000-0000-0000-000000000001',
-      name: 'Hub Central',
-      location: 'Centre de Contrôle Principal',
-      color: '#1D4ED8',  // Bleu primary — siège social
-      is_protected: true,
+      username: pmUsername,
+      email: pmEmail,
+      pwd_hash: pmPwdHash,
+      role_id: platformManagerRoleId,
     },
   });
-  console.log(`Magasin créé/vérifié: ${hubCentral.name}`);
 
-  // 3. Création de l'Administrateur par défaut avec un vrai hash bcrypt
-  if (superAdminRole) {
-    const adminEmail = 'admin@gstock.local';
-    const adminUsername = 'super.admin';
-    const motDePasseTest = 'Admin@2026!'; // Mot de passe de test pour l'admin (à changer en production)
+  console.log(`Platform Manager créé/vérifié: ${pmEmail}`);
 
-    // On hash le mot de passe avant de le stocker. Jamais de mot de passe en clair en base.
-    const motDePasseHashe = await bcrypt.hash(motDePasseTest, BCRYPT_SALT_ROUNDS);
+  // 3. Création de l'organisation par défaut "Global Corp" (idempotent)
+  //    C'est l'organisation système de la plateforme : elle est protégée
+  //    (is_protected=true) pour ne jamais pouvoir être supprimée, même par
+  //    le Platform Manager. La protection est une propriété propre de
+  //    l'organisation, indépendante de la protection des stores.
+  const defaultOrgId = '00000000-0000-0000-0000-000000000010';
+  await prisma.organization.upsert({
+    where: { id: defaultOrgId },
+    update: { name: 'Global Corp', slug: 'default', is_protected: true },
+    create: {
+      id: defaultOrgId,
+      name: 'Global Corp',
+      slug: 'default',
+      status: 'ACTIVE',
+      is_protected: true,
+      created_by_id: pmUser.id,
+    },
+  });
+  console.log('Organisation par défaut créée/vérifiée: Global Corp');
 
-    const admin = await prisma.user.upsert({
-      where: { username: adminUsername },
-      update: {
-        // Si l'admin existe déjà, on s'assure que le hash est à jour
-        pwd_hash: motDePasseHashe,
-        email: adminEmail,
-      },
-      create: {
-        username: adminUsername,
-        email: adminEmail,
-        pwd_hash: motDePasseHashe,
-        role_id: superAdminRole.id,
-      },
-    });
+  // 4. Création d'un magasin par défaut pour le Platform Manager s'il n'en a pas
+  //    et attribution de l'accès. Sans cela, le Platform Manager ne pourrait pas
+  //    s'authentifier car login() exige au moins un magasin actif accessible.
+  const defaultStore = await prisma.store.findFirst({
+    where: { organization_id: defaultOrgId },
+    select: { id: true },
+  });
 
-    console.log(`Administrateur créé/mis à jour: ${admin.email}`);
-    console.log(`Mot de passe de test : ${motDePasseTest}`);
-
-    // Donner accès au Hub Central à l'admin (si pas déjà fait)
-    await prisma.userStoreAccess.upsert({
-      where: {
-        user_id_store_id: {
-          user_id: admin.id,
-          store_id: hubCentral.id,
+  const platformStoreId =
+    defaultStore?.id ??
+    (
+      await prisma.store.create({
+        data: {
+          organization_id: defaultOrgId,
+          name: 'Hub Plateforme',
+          type: 'ENTREPOT',
+          is_protected: true,
         },
+        select: { id: true },
+      })
+    ).id;
+
+  await prisma.userStoreAccess.upsert({
+    where: {
+      user_id_store_id: {
+        user_id: pmUser.id,
+        store_id: platformStoreId,
       },
-      update: {},
-      create: {
-        user_id: admin.id,
-        store_id: hubCentral.id,
-      },
-    });
-    console.log(`Accès au Hub accordé à l'Admin.`);
-  }
-
-  // 4. Création des formats de produit de référence
-  // findFirst (pas upsert) car label n'est pas @unique dans Prisma —
-  // l'unicité est assurée par un index fonctionnel LOWER(TRIM(label)) en base.
-  const formatLabels = ['Unité', 'Carton', 'Boîte'];
-
-  for (const label of formatLabels) {
-    const existing = await prisma.productFormat.findFirst({
-      where: { label: { equals: label, mode: 'insensitive' } },
-    });
-    if (!existing) {
-      await prisma.productFormat.create({ data: { label } });
-    }
-    console.log(`Format créé/vérifié: ${label}`);
-  }
-
-  // 5. Création des catégories et sous-catégories
-  // findFirst + create conditonnel (idempotent sans contrainte unique sur name+parent_id)
-  // const categoriesTree = [
-  //   {
-  //     name: 'Boissons Fonctionnelles & Sucrées',
-  //     children: ['Energy drinks', 'Sirops'],
-  //   },
-  //   {
-  //     name: 'Brasserie',
-  //     children: ['Bières', 'Gazéifiés'],
-  //   },
-  //   {
-  //     name: 'Cave & Spiritueux',
-  //     children: ['Liqueurs', 'Vins'],
-  //   },
-  //   {
-  //     name: 'Eaux & Jus',
-  //     children: ['Eaux', 'Jus de fruits'],
-  //   },
-  // ];
-
-  // for (const cat of categoriesTree) {
-  //   let parent = await prisma.category.findFirst({
-  //     where: { name: cat.name, parent_id: null },
-  //   });
-  //   if (!parent) {
-  //     parent = await prisma.category.create({ data: { name: cat.name } });
-  //     console.log(`Catégorie créée: ${parent.name}`);
-  //   } else {
-  //     console.log(`Catégorie déjà présente: ${parent.name}`);
-  //   }
-
-  //   for (const childName of cat.children) {
-  //     const existing = await prisma.category.findFirst({
-  //       where: { name: childName, parent_id: parent.id },
-  //     });
-  //     if (!existing) {
-  //       const child = await prisma.category.create({
-  //         data: { name: childName, parent_id: parent.id },
-  //       });
-  //       console.log(`  └─ Sous-catégorie créée: ${child.name}`);
-  //     } else {
-  //       console.log(`  └─ Sous-catégorie déjà présente: ${existing.name}`);
-  //     }
-  //   }
-  // }
+    },
+    update: { organization_id: defaultOrgId },
+    create: {
+      user_id: pmUser.id,
+      store_id: platformStoreId,
+      organization_id: defaultOrgId,
+    },
+  });
+  console.log('Accès Platform Manager au magasin par défaut créé/vérifié.');
 
   console.log('Seeding terminé avec succès.');
 }

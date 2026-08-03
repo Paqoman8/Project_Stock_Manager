@@ -11,16 +11,8 @@ import { MovementType } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as movementService from '../services/stock_movement.service';
-
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
-}
-
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  return req.ip ?? '';
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Helpers UUID
@@ -66,6 +58,7 @@ const createMovementSchema = z
  * Query : store_id?, product_id?, type?
  */
 export async function getMovements(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId      = req.user!.orgId;
   const store_id   = req.query.store_id   as string | undefined;
   const product_id = req.query.product_id as string | undefined;
   const typeRaw    = req.query.type       as string | undefined;
@@ -75,7 +68,7 @@ export async function getMovements(req: AuthenticatedRequest, res: Response): Pr
     : undefined;
 
   try {
-    const movements = await movementService.getMovements({ store_id, product_id, type });
+    const movements = await movementService.getMovements(orgId, { store_id, product_id, type });
     res.status(200).json({ success: true, movements });
   } catch (err) {
     console.error('Erreur récupération mouvements :', err);
@@ -96,6 +89,7 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   const { qty, packaging_format_id, packages_count, ...rest } = parseResult.data;
@@ -113,6 +107,7 @@ export async function createMovement(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const movement = await movementService.createMovement(
+      orgId,
       {
         ...rest,
         // qty sera recalculé si format fourni ; sinon on utilise celui envoyé
@@ -180,6 +175,7 @@ export async function createConversion(req: AuthenticatedRequest, res: Response)
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -195,6 +191,7 @@ export async function createConversion(req: AuthenticatedRequest, res: Response)
     ]);
 
     const movement = await movementService.createConversion(
+      orgId,
       { ...parseResult.data, performed_by_id: actorId },
       actorId,
       actorName,

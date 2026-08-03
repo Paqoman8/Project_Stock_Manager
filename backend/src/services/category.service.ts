@@ -26,8 +26,8 @@ export type { CategoryRow };
  *
  * @returns Tableau de CategoryRow
  */
-export async function getCategories(): Promise<CategoryRow[]> {
-  return categoryRepo.findAll();
+export async function getCategories(orgId: string): Promise<CategoryRow[]> {
+  return categoryRepo.findAll(orgId);
 }
 
 /**
@@ -37,8 +37,8 @@ export async function getCategories(): Promise<CategoryRow[]> {
  * @returns La catégorie trouvée
  * @throws Error('CATEGORY_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
-export async function getCategoryById(id: string): Promise<CategoryRow> {
-  const category = await categoryRepo.findById(id);
+export async function getCategoryById(orgId: string, id: string): Promise<CategoryRow> {
+  const category = await categoryRepo.findById(orgId, id);
   if (!category) {
     throw new Error('CATEGORY_NOT_FOUND');
   }
@@ -63,6 +63,7 @@ export async function getCategoryById(id: string): Promise<CategoryRow> {
  * @throws Error('NAME_ALREADY_EXISTS') si le nom est déjà utilisé
  */
 export async function createCategory(
+  orgId: string,
   data: CreateCategoryData,
   actorId: string,
   actorName: string,
@@ -71,12 +72,12 @@ export async function createCategory(
   ipAddress?: string,
 ): Promise<CategoryRow> {
   // Vérification unicité du nom
-  const existing = await categoryRepo.findByName(data.name);
+  const existing = await categoryRepo.findByName(orgId, data.name);
   if (existing) {
     throw new Error('NAME_ALREADY_EXISTS');
   }
 
-  const category = await categoryRepo.create(data);
+  const category = await categoryRepo.create(orgId, data);
 
   // Audit — non-bloquant
   try {
@@ -87,6 +88,7 @@ export async function createCategory(
       targetType: 'CATEGORY',
       targetId:   category.id,
       targetName: category.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -117,6 +119,7 @@ export async function createCategory(
  * @throws Error('NAME_ALREADY_EXISTS') si le nouveau nom est déjà utilisé par une autre catégorie
  */
 export async function updateCategory(
+  orgId: string,
   id: string,
   data: UpdateCategoryData,
   actorId: string,
@@ -126,20 +129,20 @@ export async function updateCategory(
   ipAddress?: string,
 ): Promise<CategoryRow> {
   // Vérification d'existence
-  const existing = await categoryRepo.findById(id);
+  const existing = await categoryRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('CATEGORY_NOT_FOUND');
   }
 
   // Vérification unicité du nom (uniquement si le nom change)
   if (data.name && data.name.toLowerCase() !== existing.name.toLowerCase()) {
-    const nameOwner = await categoryRepo.findByName(data.name, id);
+    const nameOwner = await categoryRepo.findByName(orgId, data.name, id);
     if (nameOwner) {
       throw new Error('NAME_ALREADY_EXISTS');
     }
   }
 
-  const category = await categoryRepo.update(id, data);
+  const category = await categoryRepo.update(orgId, id, data);
 
   // Audit — non-bloquant
   try {
@@ -150,6 +153,7 @@ export async function updateCategory(
       targetType: 'CATEGORY',
       targetId:   category.id,
       targetName: category.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -179,6 +183,7 @@ export async function updateCategory(
  * @throws Error('CATEGORY_IN_USE')    si la catégorie a des produits ou des sous-catégories
  */
 export async function deleteCategory(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -187,7 +192,7 @@ export async function deleteCategory(
   ipAddress?: string,
 ): Promise<void> {
   // Vérification d'existence
-  const existing = await categoryRepo.findById(id);
+  const existing = await categoryRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('CATEGORY_NOT_FOUND');
   }
@@ -201,7 +206,7 @@ export async function deleteCategory(
   const categoryName = existing.name;
   const categoryId   = existing.id;
 
-  await categoryRepo.deleteById(id);
+  await categoryRepo.deleteById(orgId, id);
 
   // Audit — non-bloquant
   try {
@@ -212,6 +217,7 @@ export async function deleteCategory(
       targetType: 'CATEGORY',
       targetId:   categoryId,
       targetName: categoryName,
+      orgId,
       storeId,
       storeName,
       ipAddress,

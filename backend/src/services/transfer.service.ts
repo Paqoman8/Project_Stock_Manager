@@ -16,14 +16,14 @@ export type CreateTransferInput = {
   }>;
 };
 
-async function ensureStoreExists(storeId: string): Promise<void> {
-  const found = await prisma.store.findUnique({ where: { id: storeId }, select: { id: true } });
+async function ensureStoreExists(orgId: string, storeId: string): Promise<void> {
+  const found = await prisma.store.findUnique({ where: { id: storeId, organization_id: orgId }, select: { id: true } });
   if (!found) throw new Error('STORE_NOT_FOUND');
 }
 
-async function ensureProductsExist(productIds: string[]): Promise<void> {
+async function ensureProductsExist(orgId: string, productIds: string[]): Promise<void> {
   const rows = await prisma.product.findMany({
-    where: { id: { in: productIds } },
+    where: { id: { in: productIds }, organization_id: orgId },
     select: { id: true },
   });
   if (rows.length !== new Set(productIds).size) throw new Error('PRODUCT_NOT_FOUND');
@@ -75,7 +75,6 @@ async function normalizeTransferItems(items: CreateTransferInput['items']): Prom
 }
 
 async function ensureEnoughSourceStock(sourceStoreId: string, items: NormalizedTransferItem[]): Promise<void> {
-  // Items with a format: check the specific inventory_breakdowns entry
   const formatItems = items.filter((i) => i.packaging_format_id && i.packages_count !== undefined);
   for (const item of formatItems) {
     const breakdown = await prisma.inventoryBreakdown.findUnique({
@@ -93,7 +92,6 @@ async function ensureEnoughSourceStock(sourceStoreId: string, items: NormalizedT
     }
   }
 
-  // Items without a format: check global stock_physical
   const plainItems = items.filter((i) => !i.packaging_format_id);
   if (plainItems.length === 0) return;
 
@@ -125,6 +123,7 @@ function assertTransferStoreAccess(
 }
 
 export async function createTransfer(
+  orgId: string,
   input: CreateTransferInput,
   actorId: string,
   actorName: string,
@@ -137,9 +136,9 @@ export async function createTransfer(
   const normalizedItems = await normalizeTransferItems(input.items);
 
   await Promise.all([
-    ensureStoreExists(input.from_store_id),
-    ensureStoreExists(input.to_store_id),
-    ensureProductsExist(normalizedItems.map((i) => i.product_id)),
+    ensureStoreExists(orgId, input.from_store_id),
+    ensureStoreExists(orgId, input.to_store_id),
+    ensureProductsExist(orgId, normalizedItems.map((i) => i.product_id)),
   ]);
   await ensureEnoughSourceStock(input.from_store_id, normalizedItems);
 
@@ -155,6 +154,7 @@ export async function createTransfer(
     targetType: 'TRANSFER',
     targetId: transfer.id,
     targetName: `Transfert ${transfer.id}`,
+    orgId,
     storeId: actorStoreId,
     storeName: actorStoreName,
     ipAddress,
@@ -179,8 +179,8 @@ export type ListTransfersOptions = {
 
 export type ListTransfersResult = transferRepo.TransferPaginationResult;
 
-export async function listTransfers(options: ListTransfersOptions): Promise<ListTransfersResult> {
-  return transferRepo.listTransfersPaginated({
+export async function listTransfers(orgId: string, options: ListTransfersOptions): Promise<ListTransfersResult> {
+  return transferRepo.listTransfersPaginated(orgId, {
     status: options.status,
     store_id: options.forceRequesterScope ? options.requesterStoreId : undefined,
     search: options.search,
@@ -190,17 +190,19 @@ export async function listTransfers(options: ListTransfersOptions): Promise<List
 }
 
 export async function getTransferById(
+  orgId: string,
   id: string,
   requesterStoreId?: string,
   enforceRequesterScope?: boolean,
 ): Promise<transferRepo.TransferRow> {
-  const transfer = await transferRepo.getTransferById(id);
+  const transfer = await transferRepo.getTransferById(id, orgId);
   if (!transfer) throw new Error('TRANSFER_NOT_FOUND');
   assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
   return transfer;
 }
 
 export async function confirmTransfer(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -222,7 +224,6 @@ export async function confirmTransfer(
     assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
     if (transfer.status !== 'PENDING') throw new Error('TRANSFER_NOT_CONFIRMABLE');
 
-    // Format-specific items: check inventory_breakdowns
     for (const item of transfer.items) {
       const itemExt = item as typeof item & { packaging_format_id: string | null; packages_count: number | null };
       if (itemExt.packaging_format_id && itemExt.packages_count != null) {
@@ -240,7 +241,6 @@ export async function confirmTransfer(
       }
     }
 
-    // Plain items (no format): check global stock_physical
     const plainItems = transfer.items.filter((i) => {
       const e = i as typeof i & { packaging_format_id: string | null };
       return !e.packaging_format_id;
@@ -266,13 +266,15 @@ export async function confirmTransfer(
 
       await tx.inventory.upsert({
         where: {
-          store_id_product_id: {
+          organization_id_store_id_product_id: {
+            organization_id: orgId,
             store_id: transfer.from_store_id,
             product_id: item.product_id,
           },
         },
         update: { stock_physical: { decrement: item.qty } },
         create: {
+          organization_id: orgId,
           store_id: transfer.from_store_id,
           product_id: item.product_id,
           stock_physical: 0,
@@ -281,22 +283,22 @@ export async function confirmTransfer(
 
       await tx.inventory.upsert({
         where: {
-          store_id_product_id: {
+          organization_id_store_id_product_id: {
+            organization_id: orgId,
             store_id: transfer.to_store_id,
             product_id: item.product_id,
           },
         },
         update: { stock_physical: { increment: item.qty } },
         create: {
+          organization_id: orgId,
           store_id: transfer.to_store_id,
           product_id: item.product_id,
           stock_physical: item.qty,
         },
       });
 
-      // Update inventory_breakdowns for format-specific items
       if (itemExt.packaging_format_id && itemExt.packages_count != null) {
-        // Debit source breakdown
         await tx.inventoryBreakdown.update({
           where: {
             store_id_product_id_packaging_format_id: {
@@ -307,7 +309,6 @@ export async function confirmTransfer(
           },
           data: { quantity: { decrement: itemExt.packages_count } },
         });
-        // Credit destination breakdown
         await tx.inventoryBreakdown.upsert({
           where: {
             store_id_product_id_packaging_format_id: {
@@ -361,7 +362,7 @@ export async function confirmTransfer(
     return transfer.id;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-  const updated = await transferRepo.getTransferById(result);
+  const updated = await transferRepo.getTransferById(result, orgId);
   if (!updated) throw new Error('TRANSFER_NOT_FOUND');
 
   void logAction({
@@ -371,6 +372,7 @@ export async function confirmTransfer(
     targetType: 'TRANSFER',
     targetId: updated.id,
     targetName: `Transfert ${updated.id}`,
+    orgId,
     storeId: actorStoreId,
     storeName: actorStoreName,
     ipAddress,
@@ -380,6 +382,7 @@ export async function confirmTransfer(
 }
 
 export async function cancelTransfer(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -389,12 +392,12 @@ export async function cancelTransfer(
   requesterStoreId?: string,
   enforceRequesterScope?: boolean,
 ): Promise<transferRepo.TransferRow> {
-  const transfer = await transferRepo.getTransferById(id);
+  const transfer = await transferRepo.getTransferById(id, orgId);
   if (!transfer) throw new Error('TRANSFER_NOT_FOUND');
   assertTransferStoreAccess(transfer, requesterStoreId, enforceRequesterScope);
   if (transfer.status !== 'PENDING') throw new Error('TRANSFER_NOT_CANCELLABLE');
 
-  const updated = await transferRepo.updateTransferStatus(id, 'CANCEL');
+  const updated = await transferRepo.updateTransferStatus(id, 'CANCEL', orgId);
 
   void logAction({
     actorId,
@@ -403,6 +406,7 @@ export async function cancelTransfer(
     targetType: 'TRANSFER',
     targetId: updated.id,
     targetName: `Transfert ${updated.id}`,
+    orgId,
     storeId: actorStoreId,
     storeName: actorStoreName,
     ipAddress,
@@ -411,6 +415,6 @@ export async function cancelTransfer(
   return updated;
 }
 
-export async function listDestinationStores(excludedStoreId?: string): Promise<Array<{ id: string; name: string }>> {
-  return transferRepo.listDestinationStoresForUserStore(excludedStoreId);
+export async function listDestinationStores(orgId: string, excludedStoreId?: string): Promise<Array<{ id: string; name: string }>> {
+  return transferRepo.listDestinationStoresForUserStore(orgId, excludedStoreId);
 }
