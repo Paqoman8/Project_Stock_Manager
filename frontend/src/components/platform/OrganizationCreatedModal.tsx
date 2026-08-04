@@ -7,6 +7,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Portal } from '@/components/ui/Portal';
 
 interface OrganizationCreatedModalProps {
   organizationName: string;
@@ -58,6 +59,7 @@ export function OrganizationCreatedModal({
   }, []);
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -97,5 +99,6 @@ export function OrganizationCreatedModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

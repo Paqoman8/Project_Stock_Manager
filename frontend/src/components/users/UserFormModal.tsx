@@ -26,6 +26,7 @@ import { z } from 'zod';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Portal } from '@/components/ui/Portal';
 import apiClient from '@/lib/apiClient';
 
 // ---------------------------------------------------------------------------
@@ -306,6 +307,7 @@ export function UserFormModal({
       : 'Créer un utilisateur';
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -587,5 +589,6 @@ export function UserFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }

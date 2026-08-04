@@ -24,6 +24,7 @@ import React, {
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -253,6 +254,7 @@ function SupplierFormModal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -445,6 +447,7 @@ function SupplierFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -502,6 +505,7 @@ function DeactivateSupplierModal({
   if (!supplier) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -552,6 +556,7 @@ function DeactivateSupplierModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -609,6 +614,7 @@ function ReactivateSupplierModal({
   if (!supplier) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -655,6 +661,7 @@ function ReactivateSupplierModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

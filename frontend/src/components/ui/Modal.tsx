@@ -8,6 +8,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Button } from './Button';
+import { Portal } from './Portal';
 
 interface ModalProps {
   isOpen: boolean;
@@ -58,6 +59,7 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -102,5 +104,6 @@ export function Modal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

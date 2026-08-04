@@ -24,6 +24,7 @@ import React, {
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -278,6 +279,7 @@ function StoreFormModal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -477,6 +479,7 @@ function StoreFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -534,6 +537,7 @@ function CloseStoreModal({
   if (!store) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -573,6 +577,7 @@ function CloseStoreModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -630,6 +635,7 @@ function ReopenStoreModal({
   if (!store) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -669,6 +675,7 @@ function ReopenStoreModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -727,6 +734,7 @@ function DeleteStoreModal({
   if (!store) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -769,6 +777,7 @@ function DeleteStoreModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

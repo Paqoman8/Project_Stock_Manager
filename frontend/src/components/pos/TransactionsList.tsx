@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 import {
@@ -544,6 +545,7 @@ export default function TransactionsList(): React.JSX.Element {
         const hasSelection = refundItemQtys.some((refundItem) => refundItem.qty > 0 || refundItem.packages_count > 0);
 
         return (
+          <Portal>
           <div
             role="dialog"
             aria-modal="true"
@@ -668,6 +670,7 @@ export default function TransactionsList(): React.JSX.Element {
               </div>
             </div>
           </div>
+          </Portal>
         );
       })()}
     </div>

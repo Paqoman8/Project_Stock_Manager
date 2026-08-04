@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect } from 'react';
+import { Portal } from '@/components/ui/Portal';
 
 interface ResetPasswordModalProps {
   username: string;
@@ -28,6 +29,7 @@ export function ResetPasswordModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -81,5 +83,6 @@ export function ResetPasswordModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

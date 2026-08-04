@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -161,6 +162,7 @@ function EditThresholdsModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -264,6 +266,7 @@ function EditThresholdsModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -436,6 +439,7 @@ function StockMovementModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -646,6 +650,7 @@ function StockMovementModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -734,6 +739,7 @@ function FormatConversionModal({
   );
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -850,6 +856,7 @@ function FormatConversionModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 

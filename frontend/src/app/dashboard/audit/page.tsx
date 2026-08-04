@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -592,6 +593,7 @@ function AuditDetailModal({
   };
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -746,6 +748,7 @@ function AuditDetailModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

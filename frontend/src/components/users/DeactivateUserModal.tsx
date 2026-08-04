@@ -20,6 +20,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import apiClient from '@/lib/apiClient';
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,7 @@ export function DeactivateUserModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -201,5 +203,6 @@ export function DeactivateUserModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

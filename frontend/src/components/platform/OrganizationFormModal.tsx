@@ -16,6 +16,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Portal } from '@/components/ui/Portal';
 import { extractApiErrorMessage } from '@/lib/errors';
 import { createOrganization } from '@/services/platform.service';
 import {
@@ -88,6 +89,7 @@ export function OrganizationFormModal({ isOpen, onClose, onCreated }: Organizati
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -166,5 +168,6 @@ export function OrganizationFormModal({ isOpen, onClose, onCreated }: Organizati
         </form>
       </div>
     </div>
+    </Portal>
   );
 }

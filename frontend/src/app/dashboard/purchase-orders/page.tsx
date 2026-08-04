@@ -23,6 +23,7 @@ import React, {
 } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -531,6 +532,7 @@ function CreateOrderModal({
   const itemsArray = Array.from(selectedItems.values());
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -850,6 +852,7 @@ function CreateOrderModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1081,6 +1084,7 @@ function EditOrderModal({
   const itemsArray = Array.from(selectedItems.values());
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1376,6 +1380,7 @@ function EditOrderModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1435,6 +1440,7 @@ function SendOrderModal({
   if (!order) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1486,6 +1492,7 @@ function SendOrderModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1545,6 +1552,7 @@ function CancelOrderModal({
   if (!order) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1594,6 +1602,7 @@ function CancelOrderModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1654,6 +1663,7 @@ function OrderDetailModal({
   if (!order) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1912,6 +1922,7 @@ function OrderDetailModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
