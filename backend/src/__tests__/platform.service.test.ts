@@ -3,12 +3,14 @@
 
 const mockOrgFindUnique = jest.fn() as jest.Mock<any>;
 const mockOrgDelete = jest.fn() as jest.Mock<any>;
+const mockOrgUpdate = jest.fn() as jest.Mock<any>;
 
 jest.mock('../config/database', () => ({
   prisma: {
     organization: {
       findUnique: mockOrgFindUnique,
       delete: mockOrgDelete,
+      update: mockOrgUpdate,
     },
   },
 }));
@@ -85,5 +87,55 @@ describe('deleteOrganization', () => {
     await platformService.deleteOrganization(ORG_ID, ACTOR_ID, ACTOR_NAME, IP, '  MY-ORG  ');
 
     expect(mockOrgDelete).toHaveBeenCalledWith({ where: { id: ORG_ID } });
+  });
+});
+
+describe('suspendOrganization', () => {
+  it('throws when the organization does not exist', async () => {
+    mockOrgFindUnique.mockResolvedValue(null);
+
+    await expect(
+      platformService.suspendOrganization(ORG_ID, ACTOR_ID, ACTOR_NAME, IP),
+    ).rejects.toThrow('Organisation introuvable.');
+
+    expect(mockOrgUpdate).not.toHaveBeenCalled();
+  });
+
+  it('throws when the organization is protected, even if ACTIVE', async () => {
+    mockOrgFindUnique.mockResolvedValue({
+      id: ORG_ID, name: 'Global Corp', slug: 'default', status: 'ACTIVE', is_protected: true,
+    });
+
+    await expect(
+      platformService.suspendOrganization(ORG_ID, ACTOR_ID, ACTOR_NAME, IP),
+    ).rejects.toThrow('Impossible de suspendre une organisation protegee.');
+
+    expect(mockOrgUpdate).not.toHaveBeenCalled();
+  });
+
+  it('throws when the organization is not ACTIVE', async () => {
+    mockOrgFindUnique.mockResolvedValue({
+      id: ORG_ID, name: 'My Org', slug: 'my-org', status: 'SUSPENDED', is_protected: false,
+    });
+
+    await expect(
+      platformService.suspendOrganization(ORG_ID, ACTOR_ID, ACTOR_NAME, IP),
+    ).rejects.toThrow('Impossible de suspendre une organisation avec le statut "SUSPENDED".');
+
+    expect(mockOrgUpdate).not.toHaveBeenCalled();
+  });
+
+  it('suspends a non-protected, active organization', async () => {
+    mockOrgFindUnique.mockResolvedValue({
+      id: ORG_ID, name: 'My Org', slug: 'my-org', status: 'ACTIVE', is_protected: false,
+    });
+    mockOrgUpdate.mockResolvedValue({ id: ORG_ID, status: 'SUSPENDED' });
+
+    await platformService.suspendOrganization(ORG_ID, ACTOR_ID, ACTOR_NAME, IP);
+
+    expect(mockOrgUpdate).toHaveBeenCalledWith({
+      where: { id: ORG_ID },
+      data: { status: 'SUSPENDED' },
+    });
   });
 });

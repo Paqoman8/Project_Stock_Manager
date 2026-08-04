@@ -194,7 +194,7 @@ export async function createOrganization(
   createdByUserId: string,
   actorName: string,
   creatorIp: string,
-): Promise<{ organization: OrganizationDetail; adminPassword: string }> {
+): Promise<{ organization: OrganizationDetail; adminUsername: string; adminPassword: string }> {
   const adminPassword = generateSecurePassword(12);
 
   // Les tirets sont strippes du slug pour que le username respecte le format
@@ -305,6 +305,7 @@ export async function createOrganization(
 
   return {
     organization: org,
+    adminUsername,
     adminPassword,
   };
 }
@@ -388,6 +389,7 @@ export async function updateOrganization(
  * @param actorName   - Nom de l'acteur (denormalise dans l'audit)
  * @param actorIp     - Adresse IP (pour l'audit)
  * @throws Si l'organisation est introuvable
+ * @throws Si l'organisation est protegee
  * @throws Si l'organisation n'est pas en statut ACTIVE
  */
 export async function suspendOrganization(
@@ -398,11 +400,19 @@ export async function suspendOrganization(
 ): Promise<OrganizationDetail> {
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
-    select: { id: true, name: true, slug: true, status: true },
+    select: { id: true, name: true, slug: true, status: true, is_protected: true },
   });
 
   if (!org) {
     throw new Error('Organisation introuvable.');
+  }
+
+  // Une organisation protegee (ex: Global Corp, qui heberge le Platform
+  // Manager lui-meme) ne doit jamais pouvoir etre suspendue : le login
+  // rejette toute connexion dont l'organisation n'est pas ACTIVE, y compris
+  // celle du Platform Manager qui vient d'effectuer l'action — auto-verrouillage.
+  if (org.is_protected) {
+    throw new Error('Impossible de suspendre une organisation protegee.');
   }
 
   if (org.status !== 'ACTIVE') {

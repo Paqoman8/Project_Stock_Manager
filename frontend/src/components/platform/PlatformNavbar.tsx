@@ -2,36 +2,27 @@
 //
 // Navbar du panneau plateforme — volontairement distincte de la Navbar
 // dashboard : pas de chip organisation/magasin (le Platform Manager n'agit
-// pas dans le contexte d'une organisation précise), bouton retour vers
-// l'espace dashboard, et déconnexion directe (pas de dropdown métier).
+// pas dans le contexte d'une organisation précise), et déconnexion directe
+// (pas de dropdown métier).
 
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import Link from 'next/link';
 import { useSession } from '@/contexts/SessionContext';
-
-function IconArrowLeft() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <line x1="19" y1="12" x2="5" y2="12" />
-      <polyline points="12 19 5 12 12 5" />
-    </svg>
-  );
-}
+import { Modal } from '@/components/ui/Modal';
 
 export function PlatformNavbar() {
   const { user, logout } = useSession();
-  const router = useRouter();
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  async function handleConfirmLogout() {
+    setIsLoggingOut(true);
+    await logout();
+    // Pas de reset d'état ici : logout() redirige vers /login,
+    // ce composant est démonté avant qu'un nouveau render ait lieu.
+  }
 
   return (
     <header
@@ -39,27 +30,34 @@ export function PlatformNavbar() {
       role="banner"
     >
       <div className="flex items-center gap-3">
-        <button
-          onClick={() => router.back()}
-          aria-label="Retour"
-          className="p-1.5 rounded text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-        >
-          <IconArrowLeft />
-        </button>
-        <span className="font-semibold tracking-tight">Panneau Plateforme</span>
+        <Link href="/platform" className="font-semibold tracking-tight hover:opacity-80 transition-opacity">
+          Panneau Plateforme
+        </Link>
       </div>
 
       {user && (
         <div className="flex items-center gap-3">
           <span className="text-sm text-white/70">{user.username}</span>
           <button
-            onClick={() => logout()}
+            onClick={() => setConfirmingLogout(true)}
             className="text-xs font-medium px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 transition-colors"
           >
             Déconnexion
           </button>
         </div>
       )}
+
+      <Modal
+        isOpen={confirmingLogout}
+        title="Se déconnecter"
+        message="Voulez-vous vraiment vous déconnecter du panneau plateforme ?"
+        confirmLabel="Déconnexion"
+        confirmVariant="danger"
+        cancelLabel="Annuler"
+        onConfirm={handleConfirmLogout}
+        onCancel={() => setConfirmingLogout(false)}
+        isConfirming={isLoggingOut}
+      />
     </header>
   );
 }
