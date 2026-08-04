@@ -269,6 +269,7 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
   const pathname = usePathname();
   const { user, isLoading } = useSession();
 
+  const estPlatformManager = !isLoading && user !== null && user.isPlatformManager;
   const estAdmin      = !isLoading && user !== null && ROLES_ADMIN.includes(user.roleName);
   const estSA         = !isLoading && user !== null && user.roleName === ROLE_SA;
   const estAgent      = !isLoading && user !== null && ROLES_AGENT.includes(user.roleName);
@@ -332,7 +333,18 @@ export function Sidebar({ isOpen = true }: { isOpen?: boolean }) {
             </>
           )}
 
-          {!estAdmin && user !== null && (
+          {/* PLATFORM MANAGER — gère les organisations, pas une organisation précise */}
+          {estPlatformManager && (
+            <NavItem
+              href="/platform"
+              label="Dashboard"
+              icon={<IconDashboard className="flex-shrink-0" />}
+              currentPath={pathname}
+              exact={true}
+            />
+          )}
+
+          {!estAdmin && !estPlatformManager && user !== null && (
             <NavItem
               href="/dashboard"
               label="Dashboard"

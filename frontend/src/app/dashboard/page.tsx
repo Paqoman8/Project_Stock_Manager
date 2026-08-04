@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import apiClient from '@/lib/apiClient';
 import { useSession } from '@/contexts/SessionContext';
 import { inputCls } from '@/lib/ui';
@@ -53,6 +54,7 @@ function formatLocalDate(date: Date): string {
 
 export default function DashboardPage() {
   const { user, isLoading } = useSession();
+  const router = useRouter();
   const [data, setData] = useState<DashboardResponse['dashboard'] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(true);
@@ -75,10 +77,17 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (isLoading || !user) return;
+    // Le Platform Manager gère les organisations, pas les données d'une
+    // organisation précise — ce dashboard (scope organisation) ne le
+    // concerne pas, on le renvoie vers son propre tableau de bord.
+    if (user.isPlatformManager) {
+      router.replace('/platform');
+      return;
+    }
     fetchDashboard();
-  }, [isLoading, user, fetchDashboard]);
+  }, [isLoading, user, fetchDashboard, router]);
 
-  if (isLoading || (isFetching && !data)) {
+  if (isLoading || !user || user.isPlatformManager || (isFetching && !data)) {
     return (
       <div className="space-y-4">
         <div className="h-10 w-80 animate-pulse rounded bg-borderLight" />
