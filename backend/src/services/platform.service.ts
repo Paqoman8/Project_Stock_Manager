@@ -4,7 +4,7 @@ import { AuditAction, OrgStatus, Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { logAction } from './audit.service';
 import { generateSecurePassword } from '../utils/password';
-import { ROLE_SUPER_ADMIN } from '../config/roles';
+import { ROLE_SUPER_ADMIN, ROLE_ADMIN } from '../config/roles';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -39,12 +39,24 @@ type OrgListPayload = Prisma.OrganizationGetPayload<{ select: typeof ORG_LIST_SE
 export interface OrganizationRow extends OrgListPayload {}
 
 /**
+ * Compte administrateur (Super Administrateur ou Administrateur) d'une organisation.
+ */
+export interface OrganizationAdmin {
+  id: string;
+  username: string;
+  email: string;
+  roleName: string;
+  isActive: boolean;
+}
+
+/**
  * Detail complet d'une organisation (GET /:id).
- * Inclut les settings, le createur, en plus des champs de OrganizationRow.
+ * Inclut les settings, le createur et les comptes admin, en plus des champs de OrganizationRow.
  */
 export interface OrganizationDetail extends OrgListPayload {
   settings: Prisma.JsonValue | null;
   created_by: { id: string; username: string } | null;
+  admins: OrganizationAdmin[];
 }
 
 /**
@@ -146,16 +158,43 @@ export async function listOrganizations(
  * @returns L'organisation ou null si introuvable
  */
 export async function getOrganization(id: string): Promise<OrganizationDetail | null> {
-  const org = await prisma.organization.findUnique({
-    where: { id },
-    select: {
-      ...ORG_LIST_SELECT,
-      settings: true,
-      created_by: { select: { id: true, username: true } },
-    },
-  });
+  const [org, admins] = await Promise.all([
+    prisma.organization.findUnique({
+      where: { id },
+      select: {
+        ...ORG_LIST_SELECT,
+        settings: true,
+        created_by: { select: { id: true, username: true } },
+      },
+    }),
+    prisma.user.findMany({
+      where: {
+        store_access: { some: { organization_id: id } },
+        role: { name: { in: [ROLE_SUPER_ADMIN, ROLE_ADMIN] } },
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        is_active: true,
+        role: { select: { name: true } },
+      },
+      orderBy: { username: 'asc' },
+    }),
+  ]);
 
-  return org as OrganizationDetail | null;
+  if (!org) return null;
+
+  return {
+    ...org,
+    admins: admins.map((admin) => ({
+      id: admin.id,
+      username: admin.username,
+      email: admin.email,
+      roleName: admin.role.name,
+      isActive: admin.is_active,
+    })),
+  } as OrganizationDetail;
 }
 
 /**

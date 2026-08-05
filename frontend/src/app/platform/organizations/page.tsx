@@ -21,33 +21,10 @@ import {
 } from '@/services/platform.service';
 import { OrganizationFormModal } from '@/components/platform/OrganizationFormModal';
 import { OrganizationCreatedModal } from '@/components/platform/OrganizationCreatedModal';
+import { OrganizationDetailModal } from '@/components/platform/OrganizationDetailModal';
+import { OrgStatusBadge } from '@/components/platform/OrgStatusBadge';
 
 const PAGE_SIZE = 20;
-
-const STATUS_LABELS: Record<OrganizationStatus, string> = {
-  ACTIVE: 'Active',
-  SUSPENDED: 'Suspendue',
-  DISABLED: 'Désactivée',
-};
-
-const STATUS_BADGE_CLASSES: Record<OrganizationStatus, string> = {
-  ACTIVE: 'bg-success/10 text-success',
-  SUSPENDED: 'bg-warning/20 text-yellow-700',
-  DISABLED: 'bg-danger/10 text-danger',
-};
-
-function StatusBadge({ status }: { status: OrganizationStatus }) {
-  return (
-    <span
-      className={[
-        'inline-block px-2 py-0.5 rounded text-xs font-medium',
-        STATUS_BADGE_CLASSES[status],
-      ].join(' ')}
-    >
-      {STATUS_LABELS[status]}
-    </span>
-  );
-}
 
 export default function OrganizationsPage() {
   const [organizations, setOrganizations] = useState<OrganizationRow[]>([]);
@@ -63,6 +40,8 @@ export default function OrganizationsPage() {
   >(null);
   const [isActing, setIsActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const [detailTargetId, setDetailTargetId] = useState<string | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createdResult, setCreatedResult] = useState<
@@ -198,11 +177,20 @@ export default function OrganizationsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-textMuted align-top font-mono text-xs">{org.slug}</td>
-                    <td className="px-4 py-3 align-top"><StatusBadge status={org.status} /></td>
+                    <td className="px-4 py-3 align-top"><OrgStatusBadge status={org.status} /></td>
                     <td className="px-4 py-3 text-textMain align-top">{org._count.stores}</td>
                     <td className="px-4 py-3 text-textMain align-top">{org._count.user_store_accesses}</td>
                     <td className="px-4 py-3 text-textMuted align-top">{formatDate(org.created_at)}</td>
-                    <td className="px-4 py-3 align-top text-right">
+                    <td className="px-4 py-3 align-top text-right space-x-2 whitespace-nowrap">
+                      {!org.is_protected && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setDetailTargetId(org.id)}
+                        >
+                          Détails
+                        </Button>
+                      )}
                       {org.status === 'ACTIVE' && !org.is_protected && (
                         <Button
                           variant="secondary"
@@ -278,6 +266,11 @@ export default function OrganizationsPage() {
         onConfirm={handleConfirmAction}
         onCancel={() => { setActionTarget(null); setActionError(null); }}
         isConfirming={isActing}
+      />
+
+      <OrganizationDetailModal
+        organizationId={detailTargetId}
+        onClose={() => setDetailTargetId(null)}
       />
 
       <OrganizationFormModal

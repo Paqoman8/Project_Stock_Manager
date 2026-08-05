@@ -53,6 +53,24 @@ export interface OrganizationActionResponse {
   organization: OrganizationRow;
 }
 
+export interface OrganizationAdmin {
+  id: string;
+  username: string;
+  email: string;
+  roleName: string;
+  isActive: boolean;
+}
+
+export interface OrganizationDetail extends OrganizationRow {
+  created_by: { id: string; username: string } | null;
+  admins: OrganizationAdmin[];
+}
+
+export interface GetOrganizationResponse {
+  success: boolean;
+  organization: OrganizationDetail;
+}
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
@@ -78,6 +96,13 @@ export async function createOrganization(
   const response = await apiClient.post<CreateOrganizationResponse>(
     '/api/platform/organizations',
     input,
+  );
+  return response.data;
+}
+
+export async function getOrganization(id: string): Promise<GetOrganizationResponse> {
+  const response = await apiClient.get<GetOrganizationResponse>(
+    `/api/platform/organizations/${id}`,
   );
   return response.data;
 }
