@@ -118,7 +118,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           });
         }
       } catch (err) {
-        if (axios.isAxiosError(err) && err.response?.status === 401) {
+        // 401 : pas de session valide. 403 : organisation suspendue/désactivée
+        // (requireOrg) — dans les deux cas, retour à l'écran de connexion.
+        if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 403)) {
           router.replace('/login');
         }
       } finally {
@@ -140,7 +142,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           await logout();
         }
       } catch (err) {
-        if (axios.isAxiosError(err) && err.response?.status === 401) {
+        // 401 : cookie expiré/absent. 403 : organisation suspendue/désactivée
+        // (requireOrg sur /api/auth/me) — dans les deux cas, déconnexion forcée.
+        if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 403)) {
           await logout();
         }
       }
@@ -161,7 +165,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           await logout();
         }
       } catch (err) {
-        if (axios.isAxiosError(err) && err.response?.status === 401) {
+        if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 403)) {
           await logout();
         }
       }

@@ -71,9 +71,11 @@ authRouter.post(
 
 // Route protégée — retourne le profil complet de l'utilisateur connecté.
 // Sans rate limit : appel léger, prévu pour être appelé fréquemment par le frontend
-// (ex : hydratation du contexte utilisateur au chargement de l'app).
+// (ex : hydratation du contexte utilisateur au chargement de l'app, polling de session).
+// requireOrg est indispensable ici : c'est via cette route que le polling du
+// SessionContext détecte la suspension de l'organisation (403) pour forcer la déconnexion.
 // GET /api/auth/me
-authRouter.get('/me', requireAuth, getMe);
+authRouter.get('/me', requireAuth, requireOrg, getMe);
 
 // Route protégée — retourne les magasins accessibles à l'utilisateur connecté.
 // SA → tous les magasins | Admin → ses magasins assignés uniquement.
