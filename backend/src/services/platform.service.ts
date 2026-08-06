@@ -202,7 +202,7 @@ export async function getOrganization(id: string): Promise<OrganizationDetail | 
  *
  * La transaction Serializable cree sequentiellement :
  *   1. L'organisation
- *   2. Un magasin "Hub Central" protege (is_protected = true, type = ENTREPOT)
+ *   2. Un magasin "Hub Central" protege (is_protected = true, type = HUB)
  *   3. Un compte administrateur (role Super Administrateur, must_change_password = true)
  *   4. Une ligne user_store_access liant l'admin au Hub Central
  *
@@ -289,7 +289,7 @@ export async function createOrganization(
       data: {
         organization_id: org.id,
         name: 'Hub Central',
-        type: 'ENTREPOT',
+        type: 'HUB',
         is_protected: true,
       },
     });

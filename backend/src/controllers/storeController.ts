@@ -24,7 +24,7 @@ import { formatZodErrors } from '../utils/zod';
  */
 const createStoreSchema = z.object({
   name:        z.string().min(1, 'Le nom est obligatoire').max(100, 'Le nom ne peut pas dépasser 100 caractères'),
-  type:        z.enum(['MAGASIN', 'BOUTIQUE', 'ENTREPOT'], 'Le type doit être MAGASIN, BOUTIQUE ou ENTREPOT'),
+  type:        z.string().trim().min(1, 'Le type est obligatoire').max(50, 'Le type ne peut pas dépasser 50 caractères'),
   color:       z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'La couleur doit être un code hexadécimal valide (ex: #1D4ED8)'),
   location:    z.string().max(200, 'La localisation ne peut pas dépasser 200 caractères').optional(),
   phone:       z.string().max(20,  'Le téléphone ne peut pas dépasser 20 caractères').optional(),
@@ -37,7 +37,7 @@ const createStoreSchema = z.object({
  */
 const updateStoreSchema = z.object({
   name:        z.string().min(1, 'Le nom est obligatoire').max(100, 'Le nom ne peut pas dépasser 100 caractères').optional(),
-  type:        z.enum(['MAGASIN', 'BOUTIQUE', 'ENTREPOT'], 'Le type doit être MAGASIN, BOUTIQUE ou ENTREPOT').optional(),
+  type:        z.string().trim().min(1, 'Le type est obligatoire').max(50, 'Le type ne peut pas dépasser 50 caractères').optional(),
   color:       z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'La couleur doit être un code hexadécimal valide (ex: #1D4ED8)').optional(),
   location:    z.string().max(200, 'La localisation ne peut pas dépasser 200 caractères').optional(),
   phone:       z.string().max(20,  'Le téléphone ne peut pas dépasser 20 caractères').optional(),
@@ -117,6 +117,14 @@ export async function createStore(req: AuthenticatedRequest, res: Response): Pro
       store,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'STORE_TYPE_RESERVED') {
+      res.status(422).json({
+        success: false,
+        message: 'Le type "HUB" est réservé au Hub Central et ne peut pas être attribué manuellement.',
+      });
+      return;
+    }
+
     console.error('Erreur lors de la création de l\'établissement :', error);
     res.status(500).json({
       success: false,
@@ -180,6 +188,14 @@ export async function updateStore(req: AuthenticatedRequest, res: Response): Pro
       store,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'STORE_TYPE_RESERVED') {
+      res.status(422).json({
+        success: false,
+        message: 'Le type "HUB" est réservé au Hub Central et ne peut pas être attribué manuellement.',
+      });
+      return;
+    }
+
     // Gestion du cas "établissement introuvable" (erreur Prisma P2025)
     if (error instanceof Error && error.message.includes('Record to update not found')) {
       res.status(404).json({

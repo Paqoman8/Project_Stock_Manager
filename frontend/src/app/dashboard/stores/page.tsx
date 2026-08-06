@@ -46,7 +46,14 @@ const HEX_REGEX = /^#[0-9A-Fa-f]{6}$/;
 // Types
 // ---------------------------------------------------------------------------
 
-type StoreType   = 'MAGASIN' | 'BOUTIQUE' | 'ENTREPOT';
+// Type d'établissement : champ texte libre côté backend (voir store.service.ts).
+// MAGASIN / BOUTIQUE / ENTREPOT sont des conventions proposées dans le select ;
+// "Personnalisé" permet à l'organisation de saisir son propre libellé. HUB est
+// réservé au Hub Central (provisionné automatiquement, jamais sélectionnable ici).
+const KNOWN_STORE_TYPES = ['MAGASIN', 'BOUTIQUE', 'ENTREPOT'] as const;
+const CUSTOM_TYPE_VALUE = '__CUSTOM__';
+const RESERVED_HUB_TYPE = 'HUB';
+
 type StoreStatus = 'ACTIVE' | 'CLOSED';
 
 interface StoreRow {
@@ -56,7 +63,7 @@ interface StoreRow {
   color: string;
   phone: string | null;
   description: string | null;
-  type: StoreType;
+  type: string;
   status: StoreStatus;
   closed_at: string | null;
   is_protected: boolean;
@@ -65,7 +72,8 @@ interface StoreRow {
 
 interface StoreFormData {
   name: string;
-  type: StoreType | '';
+  type: string;
+  customType: string;
   location: string;
   phone: string;
   description: string;
@@ -76,11 +84,17 @@ interface StoreFormData {
 // Labels d'affichage
 // ---------------------------------------------------------------------------
 
-const TYPE_LABELS: Record<StoreType, string> = {
+const TYPE_LABELS: Record<string, string> = {
   MAGASIN:  'Magasin',
   BOUTIQUE: 'Boutique',
   ENTREPOT: 'Entrepôt',
+  HUB:      'Hub Central',
 };
+
+/** Libellé affiché pour un type d'établissement — retombe sur la valeur brute pour un type personnalisé. */
+function storeTypeLabel(type: string): string {
+  return TYPE_LABELS[type] ?? type;
+}
 
 const STATUS_LABELS: Record<StoreStatus, string> = {
   ACTIVE: 'Ouvert',
@@ -175,6 +189,7 @@ function StoreFormModal({
   const emptyForm: StoreFormData = {
     name: '',
     type: '',
+    customType: '',
     location: '',
     phone: '',
     description: '',
@@ -191,9 +206,11 @@ function StoreFormModal({
   useEffect(() => {
     if (!isOpen) return;
     if (isEdit && store) {
+      const isKnownType = (KNOWN_STORE_TYPES as readonly string[]).includes(store.type);
       setForm({
         name: store.name,
-        type: store.type,
+        type: isKnownType ? store.type : (store.is_protected ? store.type : CUSTOM_TYPE_VALUE),
+        customType: isKnownType ? '' : store.type,
         location: store.location ?? '',
         phone: store.phone ?? '',
         description: store.description ?? '',
@@ -232,10 +249,25 @@ function StoreFormModal({
     }
   }
 
+  // L'édition du type est désactivée pour un établissement protégé (Hub Central) :
+  // son type "HUB" est réservé, hors saisie utilisateur (voir store.service.ts).
+  const canEditType = !(isEdit && store?.is_protected);
+
   function validate(): boolean {
     const next: Partial<Record<keyof StoreFormData, string>> = {};
     if (!form.name.trim()) next.name = 'Le nom est requis.';
-    if (!form.type) next.type = 'Le type est requis.';
+    if (canEditType) {
+      if (!form.type) {
+        next.type = 'Le type est requis.';
+      } else if (form.type === CUSTOM_TYPE_VALUE) {
+        const trimmed = form.customType.trim();
+        if (!trimmed) {
+          next.type = 'Le nom du type personnalisé est requis.';
+        } else if (trimmed.toUpperCase() === RESERVED_HUB_TYPE) {
+          next.type = 'Le type "HUB" est réservé au Hub Central.';
+        }
+      }
+    }
     if (!HEX_REGEX.test(form.color)) next.color = 'Format hex invalide (ex : #1D4ED8).';
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -250,9 +282,11 @@ function StoreFormModal({
 
     const payload: Record<string, string> = {
       name:  form.name.trim(),
-      type:  form.type as string,
       color: form.color,
     };
+    if (canEditType) {
+      payload.type = form.type === CUSTOM_TYPE_VALUE ? form.customType.trim() : form.type;
+    }
     if (form.location.trim())    payload.location    = form.location.trim();
     if (form.phone.trim())       payload.phone       = form.phone.trim();
     if (form.description.trim()) payload.description = form.description.trim();
@@ -338,19 +372,39 @@ function StoreFormModal({
               <label htmlFor="store-type" className="text-xs font-medium text-textSecondary">
                 Type <span className="text-danger" aria-hidden="true">*</span>
               </label>
-              <select
-                id="store-type"
-                value={form.type}
-                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as StoreType | '' }))}
-                className={inputCls + (errors.type ? ' border-danger' : '')}
-                aria-required="true"
-                aria-describedby={errors.type ? 'store-type-err' : undefined}
-              >
-                <option value="">Sélectionner un type…</option>
-                <option value="MAGASIN">Magasin</option>
-                <option value="BOUTIQUE">Boutique</option>
-                <option value="ENTREPOT">Entrepôt</option>
-              </select>
+              {canEditType ? (
+                <>
+                  <select
+                    id="store-type"
+                    value={form.type}
+                    onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
+                    className={inputCls + (errors.type ? ' border-danger' : '')}
+                    aria-required="true"
+                    aria-describedby={errors.type ? 'store-type-err' : undefined}
+                  >
+                    <option value="">Sélectionner un type…</option>
+                    <option value="MAGASIN">Magasin</option>
+                    <option value="BOUTIQUE">Boutique</option>
+                    <option value="ENTREPOT">Entrepôt</option>
+                    <option value={CUSTOM_TYPE_VALUE}>Personnalisé…</option>
+                  </select>
+                  {form.type === CUSTOM_TYPE_VALUE && (
+                    <input
+                      type="text"
+                      value={form.customType}
+                      onChange={(e) => setForm((f) => ({ ...f, customType: e.target.value }))}
+                      placeholder="Nom du type personnalisé"
+                      className={inputCls + ' mt-1' + (errors.type ? ' border-danger' : '')}
+                      aria-label="Nom du type personnalisé"
+                      aria-describedby={errors.type ? 'store-type-err' : undefined}
+                    />
+                  )}
+                </>
+              ) : (
+                <p className="px-3 py-2 text-sm bg-background border border-borderLight rounded text-textMuted">
+                  {storeTypeLabel(form.type)} — réservé au Hub Central
+                </p>
+              )}
               {errors.type && (
                 <p id="store-type-err" role="alert" className="text-xs text-danger">{errors.type}</p>
               )}
@@ -1032,7 +1086,7 @@ export default function StoresPage() {
 
                     {/* Type */}
                     <td className="px-4 py-3 text-textMuted whitespace-nowrap">
-                      {TYPE_LABELS[store.type]}
+                      {storeTypeLabel(store.type)}
                     </td>
 
                     {/* Localisation */}

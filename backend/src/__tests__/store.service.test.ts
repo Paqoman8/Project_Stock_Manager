@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const mockStoreFindUnique = jest.fn() as jest.Mock<any>;
+const mockStoreCreate = jest.fn() as jest.Mock<any>;
 const mockStoreUpdate = jest.fn() as jest.Mock<any>;
 const mockStoreDelete = jest.fn() as jest.Mock<any>;
 const mockTransactionCount = jest.fn() as jest.Mock<any>;
@@ -13,6 +14,7 @@ jest.mock('../config/database', () => ({
   prisma: {
     store: {
       findUnique: mockStoreFindUnique,
+      create: mockStoreCreate,
       update: mockStoreUpdate,
       delete: mockStoreDelete,
     },
@@ -36,6 +38,62 @@ const IP = '127.0.0.1';
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+describe('createStore / updateStore — reserved "HUB" type guard', () => {
+  const CREATE_INPUT = {
+    name: 'Nouveau magasin',
+    color: '#1D4ED8',
+    orgId: ORG_ID,
+  };
+
+  it('rejects creation with type "HUB"', async () => {
+    await expect(
+      storeService.createStore({ ...CREATE_INPUT, type: 'HUB' }, ACTOR_ID, ACTOR_NAME, IP),
+    ).rejects.toThrow('STORE_TYPE_RESERVED');
+
+    expect(mockStoreCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects creation with type "hub" regardless of case/whitespace', async () => {
+    await expect(
+      storeService.createStore({ ...CREATE_INPUT, type: '  hub  ' }, ACTOR_ID, ACTOR_NAME, IP),
+    ).rejects.toThrow('STORE_TYPE_RESERVED');
+
+    expect(mockStoreCreate).not.toHaveBeenCalled();
+  });
+
+  it('allows creation with a normal type', async () => {
+    mockStoreCreate.mockResolvedValue({ id: STORE_ID, name: 'Nouveau magasin', type: 'BOUTIQUE' });
+
+    await storeService.createStore({ ...CREATE_INPUT, type: 'BOUTIQUE' }, ACTOR_ID, ACTOR_NAME, IP);
+
+    expect(mockStoreCreate).toHaveBeenCalled();
+  });
+
+  it('allows creation with a custom free-text type', async () => {
+    mockStoreCreate.mockResolvedValue({ id: STORE_ID, name: 'Nouveau magasin', type: 'Kiosque' });
+
+    await storeService.createStore({ ...CREATE_INPUT, type: 'Kiosque' }, ACTOR_ID, ACTOR_NAME, IP);
+
+    expect(mockStoreCreate).toHaveBeenCalled();
+  });
+
+  it('rejects update with type "HUB"', async () => {
+    await expect(
+      storeService.updateStore(ORG_ID, STORE_ID, { type: 'HUB' }, ACTOR_ID, ACTOR_NAME, IP),
+    ).rejects.toThrow('STORE_TYPE_RESERVED');
+
+    expect(mockStoreUpdate).not.toHaveBeenCalled();
+  });
+
+  it('allows update without touching type', async () => {
+    mockStoreUpdate.mockResolvedValue({ id: STORE_ID, name: 'Renommé' });
+
+    await storeService.updateStore(ORG_ID, STORE_ID, { name: 'Renommé' }, ACTOR_ID, ACTOR_NAME, IP);
+
+    expect(mockStoreUpdate).toHaveBeenCalled();
+  });
 });
 
 describe('closeStore', () => {
