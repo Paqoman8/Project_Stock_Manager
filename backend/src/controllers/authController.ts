@@ -237,24 +237,28 @@ export async function getMe(req: AuthenticatedRequest, res: Response): Promise<v
 /**
  * GET /api/roles
  *
- * Retourne la liste de tous les rôles disponibles, à l'exclusion du rôle
- * "Super Administrateur" qui est réservé au compte initial créé par le seed.
+ * Retourne la liste de tous les rôles disponibles, à l'exclusion des rôles
+ * "Super Administrateur" (réservé au compte initial créé par le seed) et
+ * "Platform Manager" (réservé au compte plateforme, hors de toute organisation).
  *
- * Endpoint public (pas de requireAuth) — utilisé pour alimenter les listes
- * déroulantes de création/modification d'utilisateur côté frontend.
+ * Protégé par requireAuth — utilisé pour alimenter les listes déroulantes de
+ * création/modification d'utilisateur côté frontend. Ce rôle ne doit être ni
+ * attribuable ni même visible par un utilisateur d'une organisation.
  *
- * Sécurité : le rôle "Super Administrateur" est exclu côté base de données
- * pour éviter toute erreur d'attribution, même si le frontend ne l'affiche pas.
+ * Sécurité : les rôles "Super Administrateur" et "Platform Manager" sont
+ * exclus côté base de données pour éviter toute erreur d'attribution, même
+ * si le frontend ne les affiche pas.
  *
  * Réponse : { success: true, roles: [{ id: string, name: string }] }
  */
 export async function getRoles(req: Request, res: Response): Promise<void> {
   try {
-    // On exclut systématiquement "Super Administrateur" — ce rôle ne peut pas
-    // être attribué via l'API. Filtrage côté DB pour ne pas exposer l'ID non plus.
+    // On exclut systématiquement "Super Administrateur" et "Platform Manager" —
+    // ces rôles ne peuvent pas être attribués via l'API. Filtrage côté DB pour
+    // ne pas exposer leurs ID non plus.
     const roles = await prisma.role.findMany({
       where: {
-        name: { not: ROLE_SUPER_ADMIN },
+        name: { notIn: [ROLE_SUPER_ADMIN, ROLE_PLATFORM_MANAGER] },
       },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },

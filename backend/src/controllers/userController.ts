@@ -117,11 +117,11 @@ export async function listUsers(req: AuthenticatedRequest, res: Response): Promi
  *
  * Crée un nouvel utilisateur.
  *
- * Body attendu : { username, email?, password, roleId, storeIds: string[] }
+ * Body attendu : { username, email, password, roleId, storeIds: string[] } — storeIds non vide.
  *
  * Protégé par requireAuth + requireRole('Super Administrateur', 'Administrateur').
  * Retourne 409 si username ou email déjà utilisé.
- * Retourne 400 si rôle ou magasin introuvable, ou si champs obligatoires manquants.
+ * Retourne 400 si rôle ou magasin introuvable, storeIds vide, ou champs obligatoires manquants.
  * Retourne 403 si l'Administrateur tente de créer un compte Administrateur ou SA.
  *
  * Sécurité : req.user!.roleId est passé au service pour les vérifications de hiérarchie.
@@ -158,11 +158,19 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     return;
   }
 
-  // storeIds doit être un tableau de chaînes (peut être vide pour un utilisateur sans magasin)
+  // storeIds doit être un tableau de chaînes non vide — un utilisateur doit
+  // toujours être rattaché à au moins un établissement à la création.
   if (!Array.isArray(storeIds) || !storeIds.every((id) => typeof id === 'string')) {
     res.status(400).json({
       success: false,
       message: "Le champ storeIds doit être un tableau d'identifiants.",
+    });
+    return;
+  }
+  if (storeIds.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: 'Veuillez attribuer au moins un établissement à cet utilisateur.',
     });
     return;
   }

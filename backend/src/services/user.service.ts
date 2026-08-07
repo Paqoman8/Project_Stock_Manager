@@ -17,6 +17,7 @@ const BCRYPT_ROUNDS = 12;
 // les fautes de frappe dispersées dans le code.
 const ROLE_SUPER_ADMIN = 'Super Administrateur';
 const ROLE_ADMIN = 'Administrateur';
+const ROLE_PLATFORM_MANAGER = 'Platform Manager';
 
 // ---------------------------------------------------------------------------
 // Règles de validation des données entrantes
@@ -198,6 +199,14 @@ export async function createUser(
     throw new Error("Impossible d'attribuer le rôle Super Administrateur à un nouvel utilisateur.");
   }
 
+  // Règle de sécurité absolue : le rôle Platform Manager est exclusif au compte
+  // plateforme créé par le seed — personne ne doit pouvoir l'attribuer via l'API,
+  // ni même savoir qu'il existe. On répond "Rôle introuvable" (même message que
+  // pour un roleId inexistant) pour ne rien révéler sur l'existence de ce rôle.
+  if (roleCible.name === ROLE_PLATFORM_MANAGER) {
+    throw new Error('Rôle introuvable');
+  }
+
   // Étape 0b : Défense en profondeur — vérifier qu'aucun SA n'existe déjà.
   // Ce check est redondant avec le précédent mais protège si la logique évolue.
   const superAdminExistant = await prisma.user.findFirst({
@@ -360,6 +369,12 @@ export async function updateUser(
       throw new Error("Impossible d'attribuer le rôle Super Administrateur.");
     }
 
+    // Même règle que createUser : le rôle Platform Manager ne doit jamais être
+    // attribuable, ni révélé par le message d'erreur.
+    if (roleVise.name === ROLE_PLATFORM_MANAGER) {
+      throw new Error('Rôle introuvable');
+    }
+
     // Règle de hiérarchie 5b : un Admin ne peut pas attribuer le rôle Administrateur.
     // On récupère le nom du rôle requêteur une seule fois, puis on l'utilise
     // pour toutes les vérifications de hiérarchie qui suivent.
@@ -449,10 +464,14 @@ export async function updateUser(
   }
 
   // Étape 5b : Si l'utilisateur cible est Super Administrateur, les stores protégés
-  // ne peuvent pas lui être retirés — le SA doit toujours avoir accès au Hub Central.
+  // de SON organisation ne peuvent pas lui être retirés — le SA doit toujours
+  // avoir accès à son Hub Central. Scope obligatoire par organization_id : sans
+  // lui, la requête récupère les Hub Centraux de TOUTES les organisations et la
+  // condition ne peut plus jamais être satisfaite (le SA n'a jamais accès aux
+  // stores protégés d'une autre organisation).
   if (input.storeIds !== undefined && utilisateurExistant.role.name === ROLE_SUPER_ADMIN) {
     const storesProtegés = await prisma.store.findMany({
-      where: { is_protected: true },
+      where: { is_protected: true, organization_id: orgId },
       select: { id: true },
     });
     const storeIdsSet = new Set(input.storeIds);
