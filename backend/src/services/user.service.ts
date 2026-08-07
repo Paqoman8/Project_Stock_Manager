@@ -207,16 +207,6 @@ export async function createUser(
     throw new Error('Rôle introuvable');
   }
 
-  // Étape 0b : Défense en profondeur — vérifier qu'aucun SA n'existe déjà.
-  // Ce check est redondant avec le précédent mais protège si la logique évolue.
-  const superAdminExistant = await prisma.user.findFirst({
-    where: { role: { name: ROLE_SUPER_ADMIN } },
-    select: { id: true },
-  });
-  if (superAdminExistant && roleCible.name === ROLE_SUPER_ADMIN) {
-    throw new Error('Un Super Administrateur existe déjà dans le système.');
-  }
-
   // Règle de hiérarchie : un Administrateur ne peut pas créer un autre Administrateur.
   // On récupère le nom du rôle requêteur pour appliquer cette règle.
   // Si le roleId requêteur est invalide (cas impossible en prod, JWT vérifié),

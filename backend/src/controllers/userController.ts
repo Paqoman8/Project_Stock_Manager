@@ -46,7 +46,6 @@ const ERREURS_METIER_409 = new Set([
 const ERREURS_METIER_403 = new Set([
   // Règles absolues concernant le Super Administrateur
   "Impossible d'attribuer le rôle Super Administrateur à un nouvel utilisateur.",
-  'Un Super Administrateur existe déjà dans le système.',
   'Impossible de modifier le rôle du Super Administrateur.',
   "Impossible d'attribuer le rôle Super Administrateur.",
   'Le compte Super Administrateur ne peut pas être désactivé.',
@@ -223,7 +222,8 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
  * Met à jour un utilisateur existant.
  * Tous les champs du body sont optionnels — seuls ceux présents sont modifiés.
  *
- * Body accepté : { username?, email?, password?, roleId?, storeIds? }
+ * Body accepté : { username?, email?, password?, roleId?, storeIds? } —
+ * storeIds, s'il est fourni, ne peut pas être vide (absent = inchangé).
  *
  * Protégé par requireAuth + requireRole('Super Administrateur', 'Administrateur').
  * Retourne 403 si l'Administrateur tente de modifier un autre Administrateur ou SA.
@@ -271,6 +271,16 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
     (!Array.isArray(storeIds) || !storeIds.every((s) => typeof s === 'string'))
   ) {
     res.status(400).json({ success: false, message: 'Format de données invalide.' });
+    return;
+  }
+  // storeIds absent du body = on ne touche pas aux accès actuels (comportement inchangé).
+  // storeIds fourni mais vide = tentative de retirer tous les magasins — refusé, un
+  // utilisateur doit toujours rester rattaché à au moins un établissement.
+  if (storeIds !== undefined && storeIds.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: 'Veuillez attribuer au moins un établissement à cet utilisateur.',
+    });
     return;
   }
 
