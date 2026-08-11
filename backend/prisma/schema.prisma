@@ -114,7 +114,7 @@ model Store {
   name             String
   location         String?
   color            String            @default("#1D4ED8") @db.VarChar(7)
-  type             StoreType         @default(MAGASIN)
+  type             String            @default("MAGASIN") @db.VarChar(50)
   status           StoreStatus       @default(ACTIVE)
   closed_at        DateTime?
   phone            String?           @db.VarChar(20)
@@ -424,15 +424,13 @@ model TransactionItem {
 
 
 // ---------------------------------------------------------------------------
-// STORE TYPES & STATUS                                                     
+// STORE TYPES & STATUS
 // ---------------------------------------------------------------------------
-
-enum StoreType {
-  MAGASIN
-  BOUTIQUE
-  ENTREPOT
-}
-
+// Store.type n'est plus un enum : c'est un champ texte libre (voir migration
+// 20260805_store_type_free_text). Les valeurs "connues" (MAGASIN, BOUTIQUE,
+// ENTREPOT, HUB) restent des conventions applicatives — HUB est réservé au
+// Hub Central provisionné automatiquement (voir store.service.ts, garde
+// anti-HUB sur createStore/updateStore).
 
 enum StoreStatus {
   ACTIVE

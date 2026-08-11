@@ -30,6 +30,7 @@ import React, {
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 import ConversionPanel from '@/components/stock/ConversionPanel';
@@ -449,6 +450,7 @@ function FormatFormModal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -513,6 +515,7 @@ function FormatFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -577,6 +580,7 @@ function DeleteFormatModal({
   if (!format) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -628,6 +632,7 @@ function DeleteFormatModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -727,6 +732,7 @@ function CategoryFormModal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -810,6 +816,7 @@ function CategoryFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -874,6 +881,7 @@ function DeleteCategoryModal({
   if (!category) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -924,6 +932,7 @@ function DeleteCategoryModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1085,6 +1094,7 @@ function PackagingFormatsModal({
   if (!product) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1350,6 +1360,7 @@ function PackagingFormatsModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1504,6 +1515,7 @@ function ProductFormModal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1738,6 +1750,7 @@ function ProductFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1795,6 +1808,7 @@ function DeactivateProductModal({
   if (!product) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1845,6 +1859,7 @@ function DeactivateProductModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1902,6 +1917,7 @@ function ReactivateProductModal({
   if (!product) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1949,6 +1965,7 @@ function ReactivateProductModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

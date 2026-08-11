@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { inputCls, formatDate, extractApiError } from '@/lib/ui';
 import apiClient from '@/lib/apiClient';
 import InvoiceStatusBadge from './InvoiceStatusBadge';
@@ -109,6 +110,7 @@ export default function InvoiceDetailModal({
   }
 
   return (
+    <Portal>
     <div role="dialog" aria-modal="true" aria-labelledby="invoice-detail-title"
       className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
@@ -321,5 +323,6 @@ export default function InvoiceDetailModal({
 
       </div>
     </div>
+    </Portal>
   );
 }

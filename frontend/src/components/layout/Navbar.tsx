@@ -75,11 +75,21 @@ export function Navbar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
         ) : null}
       </div>
 
-      <div className="flex items-center">
+      <div className="flex items-center gap-2">
         {isLoading ? (
           <div className="h-8 w-32 rounded bg-[#DEE2E6] animate-pulse" aria-hidden="true" />
         ) : user ? (
-          <UserDropdown />
+          <>
+            {user.isPlatformManager && (
+              <Link
+                href="/platform"
+                className="text-xs font-medium px-3 py-1.5 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              >
+                Plateforme
+              </Link>
+            )}
+            <UserDropdown />
+          </>
         ) : null}
       </div>
 

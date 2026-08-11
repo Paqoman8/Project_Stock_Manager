@@ -4,7 +4,7 @@ import { AuditAction, OrgStatus, Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { logAction } from './audit.service';
 import { generateSecurePassword } from '../utils/password';
-import { ROLE_SUPER_ADMIN } from '../config/roles';
+import { ROLE_SUPER_ADMIN, ROLE_ADMIN } from '../config/roles';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -39,12 +39,24 @@ type OrgListPayload = Prisma.OrganizationGetPayload<{ select: typeof ORG_LIST_SE
 export interface OrganizationRow extends OrgListPayload {}
 
 /**
+ * Compte administrateur (Super Administrateur ou Administrateur) d'une organisation.
+ */
+export interface OrganizationAdmin {
+  id: string;
+  username: string;
+  email: string;
+  roleName: string;
+  isActive: boolean;
+}
+
+/**
  * Detail complet d'une organisation (GET /:id).
- * Inclut les settings, le createur, en plus des champs de OrganizationRow.
+ * Inclut les settings, le createur et les comptes admin, en plus des champs de OrganizationRow.
  */
 export interface OrganizationDetail extends OrgListPayload {
   settings: Prisma.JsonValue | null;
   created_by: { id: string; username: string } | null;
+  admins: OrganizationAdmin[];
 }
 
 /**
@@ -146,16 +158,43 @@ export async function listOrganizations(
  * @returns L'organisation ou null si introuvable
  */
 export async function getOrganization(id: string): Promise<OrganizationDetail | null> {
-  const org = await prisma.organization.findUnique({
-    where: { id },
-    select: {
-      ...ORG_LIST_SELECT,
-      settings: true,
-      created_by: { select: { id: true, username: true } },
-    },
-  });
+  const [org, admins] = await Promise.all([
+    prisma.organization.findUnique({
+      where: { id },
+      select: {
+        ...ORG_LIST_SELECT,
+        settings: true,
+        created_by: { select: { id: true, username: true } },
+      },
+    }),
+    prisma.user.findMany({
+      where: {
+        store_access: { some: { organization_id: id } },
+        role: { name: { in: [ROLE_SUPER_ADMIN, ROLE_ADMIN] } },
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        is_active: true,
+        role: { select: { name: true } },
+      },
+      orderBy: { username: 'asc' },
+    }),
+  ]);
 
-  return org as OrganizationDetail | null;
+  if (!org) return null;
+
+  return {
+    ...org,
+    admins: admins.map((admin) => ({
+      id: admin.id,
+      username: admin.username,
+      email: admin.email,
+      roleName: admin.role.name,
+      isActive: admin.is_active,
+    })),
+  } as OrganizationDetail;
 }
 
 /**
@@ -163,7 +202,7 @@ export async function getOrganization(id: string): Promise<OrganizationDetail | 
  *
  * La transaction Serializable cree sequentiellement :
  *   1. L'organisation
- *   2. Un magasin "Hub Central" protege (is_protected = true, type = ENTREPOT)
+ *   2. Un magasin "Hub Central" protege (is_protected = true, type = HUB)
  *   3. Un compte administrateur (role Super Administrateur, must_change_password = true)
  *   4. Une ligne user_store_access liant l'admin au Hub Central
  *
@@ -194,7 +233,7 @@ export async function createOrganization(
   createdByUserId: string,
   actorName: string,
   creatorIp: string,
-): Promise<{ organization: OrganizationDetail; adminPassword: string }> {
+): Promise<{ organization: OrganizationDetail; adminUsername: string; adminPassword: string }> {
   const adminPassword = generateSecurePassword(12);
 
   // Les tirets sont strippes du slug pour que le username respecte le format
@@ -250,7 +289,7 @@ export async function createOrganization(
       data: {
         organization_id: org.id,
         name: 'Hub Central',
-        type: 'ENTREPOT',
+        type: 'HUB',
         is_protected: true,
       },
     });
@@ -305,6 +344,7 @@ export async function createOrganization(
 
   return {
     organization: org,
+    adminUsername,
     adminPassword,
   };
 }
@@ -388,6 +428,7 @@ export async function updateOrganization(
  * @param actorName   - Nom de l'acteur (denormalise dans l'audit)
  * @param actorIp     - Adresse IP (pour l'audit)
  * @throws Si l'organisation est introuvable
+ * @throws Si l'organisation est protegee
  * @throws Si l'organisation n'est pas en statut ACTIVE
  */
 export async function suspendOrganization(
@@ -398,11 +439,19 @@ export async function suspendOrganization(
 ): Promise<OrganizationDetail> {
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
-    select: { id: true, name: true, slug: true, status: true },
+    select: { id: true, name: true, slug: true, status: true, is_protected: true },
   });
 
   if (!org) {
     throw new Error('Organisation introuvable.');
+  }
+
+  // Une organisation protegee (ex: Global Corp, qui heberge le Platform
+  // Manager lui-meme) ne doit jamais pouvoir etre suspendue : le login
+  // rejette toute connexion dont l'organisation n'est pas ACTIVE, y compris
+  // celle du Platform Manager qui vient d'effectuer l'action — auto-verrouillage.
+  if (org.is_protected) {
+    throw new Error('Impossible de suspendre une organisation protegee.');
   }
 
   if (org.status !== 'ACTIVE') {

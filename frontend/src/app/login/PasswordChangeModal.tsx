@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Input } from '@/components/ui/Input';
+import { Portal } from '@/components/ui/Portal';
 import { extractApiErrorMessage } from '@/lib/errors';
 import { getPasswordStrength } from '@/lib/password';
 import { changePassword } from '@/services/auth.service';
@@ -51,6 +52,7 @@ export function PasswordChangeModal({
   );
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -155,5 +157,6 @@ export function PasswordChangeModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }

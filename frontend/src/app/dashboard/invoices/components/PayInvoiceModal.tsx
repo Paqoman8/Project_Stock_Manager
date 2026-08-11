@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { extractApiError } from '@/lib/ui';
 import apiClient from '@/lib/apiClient';
 import { formatAmount } from '../helpers';
@@ -41,6 +42,7 @@ export default function PayInvoiceModal({ invoice, onClose, onSuccess }: PayInvo
   if (!invoice) return null;
 
   return (
+    <Portal>
     <div role="dialog" aria-modal="true" aria-labelledby="pay-invoice-title"
       className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
@@ -70,5 +72,6 @@ export default function PayInvoiceModal({ invoice, onClose, onSuccess }: PayInvo
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

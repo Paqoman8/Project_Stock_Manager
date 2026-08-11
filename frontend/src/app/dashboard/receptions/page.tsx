@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -347,6 +348,7 @@ function CreateReceptionModal({
   if (!order) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -571,6 +573,7 @@ function CreateReceptionModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -683,6 +686,7 @@ function OrderReceptionsModal({
   if (!order) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -920,6 +924,7 @@ function OrderReceptionsModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -973,6 +978,7 @@ function ConfirmReceptionModal({
   if (!reception) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1045,6 +1051,7 @@ function ConfirmReceptionModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1098,6 +1105,7 @@ function CancelReceptionModal({
   if (!reception) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1153,6 +1161,7 @@ function CancelReceptionModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1206,6 +1215,7 @@ function CloseOrderModal({
   if (!order) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -1262,6 +1272,7 @@ function CloseOrderModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

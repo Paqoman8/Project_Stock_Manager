@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { inputCls, extractApiError } from '@/lib/ui';
 import apiClient from '@/lib/apiClient';
 import type { PurchaseOrderRow } from '../types';
@@ -85,6 +86,7 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
   }
 
   return (
+    <Portal>
     <div role="dialog" aria-modal="true" aria-labelledby="create-invoice-title"
       className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
@@ -175,5 +177,6 @@ export default function CreateInvoiceModal({ orders, onClose, onSuccess }: Creat
         </form>
       </div>
     </div>
+    </Portal>
   );
 }

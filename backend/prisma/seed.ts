@@ -106,7 +106,7 @@ async function main() {
         data: {
           organization_id: defaultOrgId,
           name: 'Hub Plateforme',
-          type: 'ENTREPOT',
+          type: 'HUB',
           is_protected: true,
         },
         select: { id: true },

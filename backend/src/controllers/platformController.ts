@@ -61,6 +61,7 @@ export async function createOrganization(req: AuthenticatedRequest, res: Respons
     res.status(201).json({
       success: true,
       organization: result.organization,
+      adminUsername: result.adminUsername,
       adminPassword: result.adminPassword,
     });
   } catch (err) {

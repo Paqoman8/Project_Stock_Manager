@@ -13,12 +13,31 @@ import { prisma } from '../config/database';
 import { logAction } from './audit.service';
 
 // ---------------------------------------------------------------------------
+// Type réservé — "HUB" identifie exclusivement le Hub Central provisionné
+// automatiquement à la création d'une organisation (platform.service.ts).
+// Un utilisateur normal ne peut jamais créer/renommer un établissement avec
+// ce type via l'API publique (createStore / updateStore).
+// ---------------------------------------------------------------------------
+
+const RESERVED_STORE_TYPE = 'HUB';
+
+function assertNotReservedType(type: string | undefined): void {
+  if (type !== undefined && type.trim().toUpperCase() === RESERVED_STORE_TYPE) {
+    throw new Error('STORE_TYPE_RESERVED');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types exposés — contrat entre service et controller
 // ---------------------------------------------------------------------------
 
 /**
  * Un établissement tel que retourné par toutes les fonctions du service.
  * Inclut le compteur d'accès utilisateurs pour l'affichage dans les listes.
+ *
+ * `type` est un champ texte libre : MAGASIN / BOUTIQUE / ENTREPOT sont des
+ * conventions applicatives (proposées dans le formulaire), pas des valeurs
+ * imposées en base. HUB est réservé (voir RESERVED_STORE_TYPE ci-dessus).
  */
 export interface StoreRow {
   id: string;
@@ -28,7 +47,7 @@ export interface StoreRow {
   phone: string | null;
   description: string | null;
   is_protected: boolean;
-  type: 'MAGASIN' | 'BOUTIQUE' | 'ENTREPOT';
+  type: string;
   status: 'ACTIVE' | 'CLOSED';
   closed_at: Date | null;
   _count: { user_access: number };
@@ -39,7 +58,7 @@ export interface StoreRow {
  */
 export interface CreateStoreInput {
   name: string;
-  type: 'MAGASIN' | 'BOUTIQUE' | 'ENTREPOT';
+  type: string;
   location?: string;
   phone?: string;
   description?: string;
@@ -109,6 +128,8 @@ export async function createStore(
   actorName: string,
   ip: string,
 ): Promise<StoreRow> {
+  assertNotReservedType(data.type);
+
   const store = await prisma.store.create({
     data: {
       name:            data.name,
@@ -163,6 +184,8 @@ export async function updateStore(
   actorName: string,
   ip: string,
 ): Promise<StoreRow> {
+  assertNotReservedType(data.type);
+
   // On construit l'objet de mise à jour en n'incluant que les champs fournis
   const updateData: Record<string, unknown> = {};
   if (data.name        !== undefined) updateData.name        = data.name;

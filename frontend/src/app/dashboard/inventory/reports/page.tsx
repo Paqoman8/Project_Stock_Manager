@@ -18,6 +18,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -189,6 +190,7 @@ function CreateReportModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -248,6 +250,7 @@ function CreateReportModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -390,6 +393,7 @@ function ReportDetailModal({
   );
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -662,6 +666,7 @@ function ReportDetailModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
