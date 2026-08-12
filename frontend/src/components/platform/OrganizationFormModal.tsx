@@ -18,10 +18,10 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Portal } from '@/components/ui/Portal';
 import { extractApiErrorMessage } from '@/lib/errors';
+import { slugify } from '@/lib/slug';
 import { createOrganization } from '@/services/platform.service';
 import {
   createOrganizationSchema,
-  slugify,
   type CreateOrganizationFormValues,
 } from '@/validators/platform.validators';
 
