@@ -201,6 +201,14 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log(`Le serveur Stock Manager a démarré sur le port ${PORT}`);
-});
+// Export app & server so the API can be wrapped for serverless platforms
+// (Vercel, AWS Lambda, etc.) or imported in tests without starting a port.
+export { app, server };
+
+// Only start the long-running HTTP server when this file is run directly.
+// Prevents the server from starting during serverless imports.
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Le serveur Stock Manager a démarré sur le port ${PORT}`);
+  });
+}

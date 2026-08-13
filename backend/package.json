@@ -9,15 +9,19 @@
     "start": "node dist/server.js",
     "test": "jest --passWithNoTests",
     "prisma:migrate": "prisma migrate deploy",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma generate && prisma migrate deploy && npm run build"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@prisma/adapter-pg": "^7.8.0",
-    "@prisma/client": "^7.8.0",
+    "@neondatabase/serverless": "^1.0.0",
+    "@prisma/adapter-neon": "7.8.0",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -28,6 +32,7 @@
     "nodemailer": "^9.0.3",
     "pg": "^8.20.0",
     "resend": "^6.18.0",
+    "serverless-http": "^3.2.0",
     "socket.io": "^4.8.3",
     "zod": "^4.4.1"
   },
@@ -44,7 +49,7 @@
     "jest": "^30.4.2",
     "jest-mock-extended": "^4.0.1",
     "nodemon": "^3.1.14",
-    "prisma": "^7.8.0",
+    "prisma": "7.8.0",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
