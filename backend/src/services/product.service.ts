@@ -32,8 +32,8 @@ export type { ProductRow };
  * @param filters - { search?, categoryId?, isActive? }
  * @returns Tableau de ProductRow
  */
-export async function getProducts(filters: ProductFilters = {}): Promise<ProductRow[]> {
-  return productRepo.findAll(filters);
+export async function getProducts(orgId: string, filters: ProductFilters = {}): Promise<ProductRow[]> {
+  return productRepo.findAll(orgId, filters);
 }
 
 /**
@@ -43,8 +43,8 @@ export async function getProducts(filters: ProductFilters = {}): Promise<Product
  * @returns Le produit trouvé
  * @throws Error('PRODUCT_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
-export async function getProductById(id: string): Promise<ProductRow> {
-  const product = await productRepo.findById(id);
+export async function getProductById(orgId: string, id: string): Promise<ProductRow> {
+  const product = await productRepo.findById(orgId, id);
   if (!product) {
     throw new Error('PRODUCT_NOT_FOUND');
   }
@@ -71,26 +71,30 @@ export async function getProductById(id: string): Promise<ProductRow> {
  * @throws Error('CATEGORY_NOT_FOUND')  si la catégorie référencée n'existe pas
  */
 export async function createProduct(
+  orgId: string,
   data: CreateProductData,
   actorId: string,
   actorName: string,
   storeId?: string,
   storeName?: string,
   ipAddress?: string,
+  initialFormatLabel?: string,
 ): Promise<ProductRow> {
   // Vérification unicité SKU
-  const existingSku = await productRepo.findBySku(data.sku);
+  const existingSku = await productRepo.findBySku(orgId, data.sku);
   if (existingSku) {
     throw new Error('SKU_ALREADY_EXISTS');
   }
 
   // Vérification existence de la catégorie
-  const category = await categoryRepo.findById(data.category_id);
+  const category = await categoryRepo.findById(orgId, data.category_id);
   if (!category) {
     throw new Error('CATEGORY_NOT_FOUND');
   }
 
-  const product = await productRepo.create(data);
+  const product = initialFormatLabel
+    ? await productRepo.createWithBaseFormat(orgId, data, initialFormatLabel)
+    : await productRepo.create(orgId, data);
 
   // Audit — non-bloquant
   try {
@@ -101,6 +105,7 @@ export async function createProduct(
       targetType: 'PRODUCT',
       targetId:   product.id,
       targetName: product.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -130,6 +135,7 @@ export async function createProduct(
  * @throws Error('CATEGORY_NOT_FOUND') si la nouvelle catégorie n'existe pas
  */
 export async function updateProduct(
+  orgId: string,
   id: string,
   data: UpdateProductData,
   actorId: string,
@@ -139,20 +145,21 @@ export async function updateProduct(
   ipAddress?: string,
 ): Promise<ProductRow> {
   // Vérification d'existence
-  const existing = await productRepo.findById(id);
+  const existing = await productRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
   // Vérification existence de la nouvelle catégorie si elle change
   if (data.category_id) {
-    const category = await categoryRepo.findById(data.category_id);
+    const category = await categoryRepo.findById(orgId, data.category_id);
+
     if (!category) {
       throw new Error('CATEGORY_NOT_FOUND');
     }
   }
 
-  const product = await productRepo.update(id, data);
+  const product = await productRepo.update(orgId, id, data);
 
   // Audit — non-bloquant, champs modifiés dans les métadonnées
   try {
@@ -163,6 +170,7 @@ export async function updateProduct(
       targetType: 'PRODUCT',
       targetId:   product.id,
       targetName: product.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -189,6 +197,7 @@ export async function updateProduct(
  * @throws Error('PRODUCT_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
 export async function deactivateProduct(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -197,12 +206,12 @@ export async function deactivateProduct(
   ipAddress?: string,
 ): Promise<ProductRow> {
   // Vérification d'existence
-  const existing = await productRepo.findById(id);
+  const existing = await productRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
-  const product = await productRepo.setActive(id, false);
+  const product = await productRepo.setActive(orgId, id, false);
 
   // Audit — non-bloquant
   try {
@@ -213,6 +222,7 @@ export async function deactivateProduct(
       targetType: 'PRODUCT',
       targetId:   product.id,
       targetName: product.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -238,6 +248,7 @@ export async function deactivateProduct(
  * @throws Error('PRODUCT_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
 export async function reactivateProduct(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -246,12 +257,12 @@ export async function reactivateProduct(
   ipAddress?: string,
 ): Promise<ProductRow> {
   // Vérification d'existence
-  const existing = await productRepo.findById(id);
+  const existing = await productRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
-  const product = await productRepo.setActive(id, true);
+  const product = await productRepo.setActive(orgId, id, true);
 
   // Audit — non-bloquant
   try {
@@ -262,6 +273,7 @@ export async function reactivateProduct(
       targetType: 'PRODUCT',
       targetId:   product.id,
       targetName: product.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,

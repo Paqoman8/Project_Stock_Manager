@@ -13,6 +13,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getReports,
   getReportById,
@@ -29,19 +30,20 @@ const inventoryReportRouter = Router();
 const CREATORS = ['Super Administrateur', 'Administrateur', 'Manager Magasin'] as const;
 const VALIDATORS = ['Super Administrateur', 'Administrateur'] as const;
 
-inventoryReportRouter.get('/',     requireAuth, getReports);
-inventoryReportRouter.get('/:id',  requireAuth, getReportById);
+inventoryReportRouter.get('/',     requireAuth, requireOrg, getReports);
+inventoryReportRouter.get('/:id',  requireAuth, requireOrg, getReportById);
 
-inventoryReportRouter.post('/',    requireAuth, requireRole(...CREATORS), createReport);
+inventoryReportRouter.post('/',    requireAuth, requireOrg, requireRole(...CREATORS), createReport);
 
-inventoryReportRouter.put('/:id/lines',  requireAuth, requireRole(...CREATORS), updateLines);
-inventoryReportRouter.patch('/:id/submit', requireAuth, requireRole(...CREATORS), submitReport);
+inventoryReportRouter.put('/:id/lines',  requireAuth, requireOrg, requireRole(...CREATORS), updateLines);
+inventoryReportRouter.patch('/:id/submit', requireAuth, requireOrg, requireRole(...CREATORS), submitReport);
 
-inventoryReportRouter.patch('/:id/validate', requireAuth, requireRole(...VALIDATORS), validateReport);
-inventoryReportRouter.patch('/:id/reject',   requireAuth, requireRole(...VALIDATORS), rejectReport);
+inventoryReportRouter.patch('/:id/validate', requireAuth, requireOrg, requireRole(...VALIDATORS), validateReport);
+inventoryReportRouter.patch('/:id/reject',   requireAuth, requireOrg, requireRole(...VALIDATORS), rejectReport);
 
 inventoryReportRouter.patch('/:id/apply-adjustments',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur'),
   applyAdjustments,
 );

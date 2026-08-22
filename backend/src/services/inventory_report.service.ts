@@ -24,13 +24,11 @@ export type { InventoryReportRow };
 // ---------------------------------------------------------------------------
 // Fonctions
 // ---------------------------------------------------------------------------
-
-export async function getReports(filters: ReportFilters = {}): Promise<InventoryReportRow[]> {
-  return reportRepo.findAll(filters);
+export async function getReports(orgId: string, filters: ReportFilters = {}): Promise<InventoryReportRow[]> {
+  return reportRepo.findAll(orgId, filters);
 }
-
-export async function getReportById(id: string): Promise<InventoryReportRow> {
-  const report = await reportRepo.findById(id);
+export async function getReportById(orgId: string, id: string): Promise<InventoryReportRow> {
+  const report = await reportRepo.findById(id, orgId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   return report;
 }
@@ -46,6 +44,7 @@ export async function getReportById(id: string): Promise<InventoryReportRow> {
  * @throws Error('NO_INVENTORY_ENTRIES')    si l'établissement n'a aucune entrée d'inventaire
  */
 export async function createReport(
+  orgId: string,
   data: {
     store_id:      string;
     period_start:  Date;
@@ -60,17 +59,17 @@ export async function createReport(
 ): Promise<InventoryReportRow> {
   // Vérification existence de l'établissement
   const store = await prisma.store.findUnique({
-    where:  { id: data.store_id },
+    where:  { id: data.store_id, organization_id: orgId },
     select: { id: true, name: true },
   });
   if (!store) throw new Error('STORE_NOT_FOUND');
 
   // Référence unique via séquence atomique (pas de risque de doublon)
-  const reference = await reportRepo.generateReference();
+  const reference = await reportRepo.generateReference(orgId, new Date().getFullYear());
 
   // Snapshot du stock actuel
   const inventoryEntries = await prisma.inventory.findMany({
-    where:  { store_id: data.store_id },
+    where:  { organization_id: orgId, store_id: data.store_id },
     select: { product_id: true, stock_physical: true },
   });
   if (inventoryEntries.length === 0) throw new Error('NO_INVENTORY_ENTRIES');
@@ -123,6 +122,7 @@ export async function createReport(
       targetType: 'INVENTORY_REPORT',
       targetId:   report.id,
       targetName: report.reference,
+      orgId,
       storeId:    data.store_id,
       storeName,
       ipAddress,
@@ -146,10 +146,11 @@ export async function createReport(
  * @throws Error('REPORT_NOT_EDITABLE') si statut != DRAFT
  */
 export async function updateLines(
+  orgId: string,
   reportId: string,
   data: UpdateLinesData,
 ): Promise<InventoryReportRow> {
-  const report = await reportRepo.findById(reportId);
+  const report = await reportRepo.findById(reportId, orgId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   if (report.status !== 'DRAFT') throw new Error('REPORT_NOT_EDITABLE');
 
@@ -174,7 +175,7 @@ export async function updateLines(
     }),
   );
 
-  return reportRepo.updateLines(reportId, { lines: processedLines });
+  return reportRepo.updateLines(orgId, reportId, { lines: processedLines });
 }
 
 /**
@@ -184,6 +185,7 @@ export async function updateLines(
  * @throws Error('REPORT_NOT_SUBMITTABLE') si statut != DRAFT et != REJECTED
  */
 export async function submitReport(
+  orgId: string,
   reportId: string,
   actorId: string,
   actorName: string,
@@ -191,12 +193,12 @@ export async function submitReport(
   storeName?: string,
   ipAddress?: string,
 ): Promise<InventoryReportRow> {
-  const report = await reportRepo.findById(reportId);
+  const report = await reportRepo.findById(reportId, orgId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   // REJECTED est un état terminal — il faut créer un nouveau rapport
   if (report.status !== 'DRAFT') throw new Error('REPORT_NOT_SUBMITTABLE');
 
-  const updated = await reportRepo.updateStatus(reportId, 'SUBMITTED', {
+  const updated = await reportRepo.updateStatus(orgId, reportId, 'SUBMITTED', {
     submitted_at: new Date(),
   });
 
@@ -208,6 +210,7 @@ export async function submitReport(
       targetType: 'INVENTORY_REPORT',
       targetId:   report.id,
       targetName: report.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -226,6 +229,7 @@ export async function submitReport(
  * @throws Error('REPORT_NOT_VALIDATABLE') si statut != SUBMITTED
  */
 export async function validateReport(
+  orgId: string,
   reportId: string,
   validatedById: string,
   actorId: string,
@@ -234,12 +238,12 @@ export async function validateReport(
   storeName?: string,
   ipAddress?: string,
 ): Promise<InventoryReportRow> {
-  const report = await reportRepo.findById(reportId);
+  const report = await reportRepo.findById(reportId, orgId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   if (report.status !== 'SUBMITTED') throw new Error('REPORT_NOT_VALIDATABLE');
 
-  const updated = await reportRepo.updateStatus(reportId, 'VALIDATED', {
-    validated_at:    new Date(),
+  const updated = await reportRepo.updateStatus(orgId, reportId, 'VALIDATED', {
+    validated_at: new Date(),
     validated_by_id: validatedById,
   });
 
@@ -251,6 +255,7 @@ export async function validateReport(
       targetType: 'INVENTORY_REPORT',
       targetId:   report.id,
       targetName: report.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -270,6 +275,7 @@ export async function validateReport(
  * @throws Error('REASON_REQUIRED')       si motif vide
  */
 export async function rejectReport(
+  orgId: string,
   reportId: string,
   reason: string,
   actorId: string,
@@ -280,11 +286,11 @@ export async function rejectReport(
 ): Promise<InventoryReportRow> {
   if (!reason || reason.trim() === '') throw new Error('REASON_REQUIRED');
 
-  const report = await reportRepo.findById(reportId);
+  const report = await reportRepo.findById(reportId, orgId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   if (report.status !== 'SUBMITTED') throw new Error('REPORT_NOT_REJECTABLE');
 
-  const updated = await reportRepo.updateStatus(reportId, 'REJECTED', {
+  const updated = await reportRepo.updateStatus(orgId, reportId, 'REJECTED', {
     rejection_reason: reason,
   });
 
@@ -296,6 +302,7 @@ export async function rejectReport(
       targetType: 'INVENTORY_REPORT',
       targetId:   report.id,
       targetName: report.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -321,6 +328,7 @@ export async function rejectReport(
  * @throws Error('REPORT_NOT_VALIDATED') si statut != VALIDATED
  */
 export async function applyAdjustments(
+  orgId: string,
   reportId: string,
   actorId: string,
   actorName: string,
@@ -328,7 +336,7 @@ export async function applyAdjustments(
   storeName?: string,
   ipAddress?: string,
 ): Promise<{ adjustments_count: number }> {
-  const report = await reportRepo.findById(reportId);
+  const report = await reportRepo.findById(reportId, orgId);
   if (!report) throw new Error('REPORT_NOT_FOUND');
   if (report.status !== 'VALIDATED') throw new Error('REPORT_NOT_VALIDATED');
   // Opération irréversible — ne peut être faite qu'une seule fois
@@ -349,6 +357,7 @@ export async function applyAdjustments(
         const qty            = absPackages * bd.packaging_format.units_per_package;
 
         await movementRepo.create({
+          orgId,
           store_id:            report.store_id,
           product_id:          line.product_id,
           type,
@@ -367,6 +376,7 @@ export async function applyAdjustments(
       const qty  = Math.abs(line.variance);
 
       await movementRepo.create({
+        orgId,
         store_id:        report.store_id,
         product_id:      line.product_id,
         type,
@@ -380,7 +390,7 @@ export async function applyAdjustments(
   }
 
   // Verrouille l'opération — plus possible de rejouer
-  await reportRepo.setAdjustmentsApplied(reportId);
+  await reportRepo.setAdjustmentsApplied(orgId, reportId);
 
   try {
     await logAction({
@@ -390,6 +400,7 @@ export async function applyAdjustments(
       targetType: 'INVENTORY_REPORT',
       targetId:   report.id,
       targetName: report.reference,
+      orgId,
       storeId,
       storeName,
       ipAddress,

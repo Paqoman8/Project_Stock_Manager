@@ -12,27 +12,8 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as categoryService from '../services/category.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  }
-  return req.ip ?? '';
-}
-
-/**
- * Formate les erreurs Zod en tableau de messages lisibles pour le client.
- * Exemple : ["name: Le nom est obligatoire", "parent_id: UUID invalide"]
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schéma Zod — utilisé pour create (complet) et update (partiel)
@@ -74,8 +55,9 @@ const updateCategorySchema = categorySchema
  * Sécurité : requireAuth (lecture ouverte aux utilisateurs authentifiés).
  */
 export async function getCategories(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   try {
-    const categories = await categoryService.getCategories();
+    const categories = await categoryService.getCategories(orgId);
 
     res.status(200).json({
       success: true,
@@ -102,10 +84,11 @@ export async function getCategories(req: AuthenticatedRequest, res: Response): P
  * Sécurité : requireAuth.
  */
 export async function getCategoryById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const category = await categoryService.getCategoryById(id);
+    const category = await categoryService.getCategoryById(orgId, id);
 
     res.status(200).json({
       success: true,
@@ -155,6 +138,7 @@ export async function createCategory(req: AuthenticatedRequest, res: Response): 
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -164,6 +148,7 @@ export async function createCategory(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const category = await categoryService.createCategory(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -233,6 +218,7 @@ export async function updateCategory(req: AuthenticatedRequest, res: Response): 
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -242,6 +228,7 @@ export async function updateCategory(req: AuthenticatedRequest, res: Response): 
     ]);
 
     const category = await categoryService.updateCategory(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -295,6 +282,7 @@ export async function updateCategory(req: AuthenticatedRequest, res: Response): 
  * Sécurité : requireAuth + requireRole('Super Administrateur').
  */
 export async function deleteCategory(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -306,7 +294,7 @@ export async function deleteCategory(req: AuthenticatedRequest, res: Response): 
       resolveStoreName(storeId),
     ]);
 
-    await categoryService.deleteCategory(id, actorId, actorName, storeId, storeName, ip);
+    await categoryService.deleteCategory(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,

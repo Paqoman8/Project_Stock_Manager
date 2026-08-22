@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getInventory,
   getInventoryEntry,
@@ -23,24 +24,28 @@ const inventoryRouter = Router();
 inventoryRouter.get(
   '/',
   requireAuth,
+  requireOrg,
   getInventory,
 );
 
 inventoryRouter.get(
   '/:storeId/:productId',
   requireAuth,
+  requireOrg,
   getInventoryEntry,
 );
 
 inventoryRouter.get(
   '/:storeId/:productId/breakdown',
   requireAuth,
+  requireOrg,
   getBreakdown,
 );
 
 inventoryRouter.patch(
   '/:storeId/:productId/thresholds',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   updateThresholds,
 );

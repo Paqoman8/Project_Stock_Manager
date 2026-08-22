@@ -16,7 +16,7 @@ import { prisma } from '../config/database';
 const ROLE_SUPER_ADMIN = 'Super Administrateur';
 
 export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { userId, roleId } = req.user!;
+  const { userId, roleId, orgId } = req.user!;
 
   // --- Pagination ---
   const page  = Math.max(1, parseInt(req.query.page  as string) || 1);
@@ -75,7 +75,7 @@ export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Pr
       allowedStoreIds === null || allowedStoreIds.includes(storeIdParam)
     ) ? storeIdParam : undefined;
 
-    const résultat = await auditService.getAuditLogs({
+    const résultat = await auditService.getAuditLogs(orgId, {
       actions,
       actorId,
       storeId:   filtreStoreId,

@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -269,7 +270,7 @@ const ROLES_AUTORISES = ['Super Administrateur', 'Administrateur'];
  * Retourne la date du début de la journée en cours au format datetime-local
  * (YYYY-MM-DDTHH:MM), utilisé comme valeur par défaut du filtre "Du".
  *
- * Choix : "journée en cours" plutôt que "24 dernières heures" car GStock est
+ * Choix : "journée en cours" plutôt que "24 dernières heures" car Stock Manager est
  * un ERP retail dont les shifts et les bilans sont calés sur des jours calendaires.
  * Les managers raisonnent en "qu'est-ce qui s'est passé aujourd'hui", pas
  * en fenêtre glissante.
@@ -592,6 +593,7 @@ function AuditDetailModal({
   };
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -746,6 +748,7 @@ function AuditDetailModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

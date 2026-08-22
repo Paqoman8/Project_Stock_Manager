@@ -18,8 +18,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import apiClient from '@/lib/apiClient';
-import type { UserRow } from '@/app/dashboard/users/page';
+import type { UserRow } from '@/app/dashboard/users/types';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -95,6 +96,7 @@ export function ReactivateUserModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -153,5 +155,6 @@ export function ReactivateUserModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

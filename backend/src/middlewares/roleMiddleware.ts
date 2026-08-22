@@ -72,6 +72,10 @@ export function requireRole(...rolesAutorises: string[]) {
         return;
       }
 
+      // Rafraîchir le nom du rôle en JWT afin que les controllers n'utilisent
+      // jamais une valeur obsolète pour les décisions d'autorisation.
+      req.user.roleName = role.name;
+
       // Tout est bon — on passe au prochain middleware ou controller
       next();
     } catch (erreur) {

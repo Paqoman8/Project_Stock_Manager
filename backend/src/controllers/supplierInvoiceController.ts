@@ -63,11 +63,12 @@ const updateInvoiceSchema = z.object({
  * Réponse 200 : { success: true, invoices: SupplierInvoiceRow[] }
  */
 export async function getInvoices(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId       = req.user!.orgId;
   const status      = req.query.status as InvoiceStatus | undefined;
   const supplier_id = req.query.supplier_id as string | undefined;
 
   try {
-    const invoices = await invoiceService.getInvoices({ status, supplier_id });
+    const invoices = await invoiceService.getInvoices(orgId, { status, supplier_id });
     res.status(200).json({ success: true, invoices });
   } catch (error) {
     console.error('Erreur lors de la récupération des factures :', error);
@@ -82,10 +83,11 @@ export async function getInvoices(req: AuthenticatedRequest, res: Response): Pro
  * Réponse 404 : { success: false, message }
  */
 export async function getInvoiceById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const invoice = await invoiceService.getInvoiceById(id);
+    const invoice = await invoiceService.getInvoiceById(orgId, id);
     res.status(200).json({ success: true, invoice });
   } catch (error) {
     if (error instanceof Error && error.message === 'INVOICE_NOT_FOUND') {
@@ -120,6 +122,7 @@ export async function createInvoice(req: AuthenticatedRequest, res: Response): P
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -129,6 +132,7 @@ export async function createInvoice(req: AuthenticatedRequest, res: Response): P
     ]);
 
     const invoice = await invoiceService.createInvoice(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -187,6 +191,7 @@ export async function updateInvoice(req: AuthenticatedRequest, res: Response): P
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -196,6 +201,7 @@ export async function updateInvoice(req: AuthenticatedRequest, res: Response): P
     ]);
 
     const invoice = await invoiceService.updateInvoice(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -234,6 +240,7 @@ export async function updateInvoice(req: AuthenticatedRequest, res: Response): P
  * Statuts autorisés : PENDING, DISPUTED, OVERDUE.
  */
 export async function payInvoice(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -245,7 +252,7 @@ export async function payInvoice(req: AuthenticatedRequest, res: Response): Prom
       resolveStoreName(storeId),
     ]);
 
-    const invoice = await invoiceService.payInvoice(id, actorId, actorName, storeId, storeName, ip);
+    const invoice = await invoiceService.payInvoice(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,
@@ -276,6 +283,7 @@ export async function payInvoice(req: AuthenticatedRequest, res: Response): Prom
  * Statuts autorisés : PENDING, OVERDUE.
  */
 export async function disputeInvoice(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -287,7 +295,7 @@ export async function disputeInvoice(req: AuthenticatedRequest, res: Response): 
       resolveStoreName(storeId),
     ]);
 
-    const invoice = await invoiceService.disputeInvoice(id, actorId, actorName, storeId, storeName, ip);
+    const invoice = await invoiceService.disputeInvoice(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,
@@ -317,6 +325,7 @@ export async function disputeInvoice(req: AuthenticatedRequest, res: Response): 
  * Rouvre une facture DISPUTED ou OVERDUE en la repassant à PENDING.
  */
 export async function reopenInvoice(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -328,7 +337,7 @@ export async function reopenInvoice(req: AuthenticatedRequest, res: Response): P
       resolveStoreName(storeId),
     ]);
 
-    const invoice = await invoiceService.reopenInvoice(id, actorId, actorName, storeId, storeName, ip);
+    const invoice = await invoiceService.reopenInvoice(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,

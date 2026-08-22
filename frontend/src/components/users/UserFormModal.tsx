@@ -26,6 +26,7 @@ import { z } from 'zod';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Portal } from '@/components/ui/Portal';
 import apiClient from '@/lib/apiClient';
 
 // ---------------------------------------------------------------------------
@@ -92,11 +93,12 @@ const baseSchema = z.object({
     .string()
     .min(3, { error: 'Minimum 3 caractères.' })
     .regex(USERNAME_REGEX, { error: 'Format invalide. Attendu : prenom.nom (ex : jean.dupont).' }),
+  // Obligatoire : unique en base (contrainte DB) et utilisée comme clé de
+  // recherche pour le flux "mot de passe oublié".
   email: z
     .string()
-    .email({ error: 'Adresse email invalide.' })
-    .or(z.literal(''))
-    .optional(),
+    .min(1, { error: "L'email est obligatoire." })
+    .email({ error: 'Adresse email invalide.' }),
   roleId: z.string().min(1, { error: 'Veuillez sélectionner un rôle.' }),
   storeIds: z
     .array(z.string())
@@ -259,6 +261,7 @@ export function UserFormModal({
 
     const body: Record<string, unknown> = {
       username: values.username,
+      email: values.email.trim(),
       storeIds: resolvedStoreIds,
     };
 
@@ -267,11 +270,6 @@ export function UserFormModal({
     // non pertinentes côté client.
     if (!isEditingSuperAdmin && !isEditingOwnAdminAccount) {
       body.roleId = values.roleId;
-    }
-
-    // Email : on envoie uniquement si rempli pour ne pas écraser une valeur existante
-    if (values.email && values.email.trim() !== '') {
-      body.email = values.email.trim();
     }
 
     // Mot de passe : en édition, on n'envoie que s'il est rempli (changement volontaire)
@@ -306,6 +304,7 @@ export function UserFormModal({
       : 'Créer un utilisateur';
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -346,12 +345,13 @@ export function UserFormModal({
             {...register('username')}
           />
 
-          {/* Email */}
+          {/* Email — obligatoire : utilisé pour la récupération de mot de passe */}
           <Input
             id="email"
             label="Email"
             type="email"
-            placeholder="ex : jean@gstock.local"
+            required
+            placeholder="ex : jean.dupont@example.com (récupération de mot de passe)"
             error={errors.email?.message}
             {...register('email')}
           />
@@ -587,5 +587,6 @@ export function UserFormModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }

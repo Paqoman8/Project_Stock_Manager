@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getFormats,
   createFormat,
@@ -16,9 +17,9 @@ import {
 
 const router = Router({ mergeParams: true }); // mergeParams pour accéder à :productId
 
-router.get('/',    requireAuth, getFormats);
-router.post('/',   requireAuth, requireRole('Super Administrateur', 'Administrateur'), createFormat);
-router.put('/:id', requireAuth, requireRole('Super Administrateur', 'Administrateur'), updateFormat);
-router.delete('/:id', requireAuth, requireRole('Super Administrateur', 'Administrateur'), deleteFormat);
+router.get('/',    requireAuth, requireOrg, getFormats);
+router.post('/',   requireAuth, requireOrg, requireRole('Super Administrateur', 'Administrateur'), createFormat);
+router.put('/:id', requireAuth, requireOrg, requireRole('Super Administrateur', 'Administrateur'), updateFormat);
+router.delete('/:id', requireAuth, requireOrg, requireRole('Super Administrateur', 'Administrateur'), deleteFormat);
 
 export default router;

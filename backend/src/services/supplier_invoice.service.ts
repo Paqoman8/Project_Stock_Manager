@@ -28,8 +28,8 @@ export type { SupplierInvoiceRow };
 /**
  * Retourne la liste des factures avec filtres optionnels.
  */
-export async function getInvoices(filters: InvoiceFilters = {}): Promise<SupplierInvoiceRow[]> {
-  return invoiceRepo.findAll(filters);
+export async function getInvoices(orgId: string, filters: InvoiceFilters = {}): Promise<SupplierInvoiceRow[]> {
+  return invoiceRepo.findAll(orgId, filters);
 }
 
 /**
@@ -37,8 +37,8 @@ export async function getInvoices(filters: InvoiceFilters = {}): Promise<Supplie
  *
  * @throws Error('INVOICE_NOT_FOUND') si introuvable
  */
-export async function getInvoiceById(id: string): Promise<SupplierInvoiceRow> {
-  const invoice = await invoiceRepo.findById(id);
+export async function getInvoiceById(orgId: string, id: string): Promise<SupplierInvoiceRow> {
+  const invoice = await invoiceRepo.findById(id, orgId);
   if (!invoice) throw new Error('INVOICE_NOT_FOUND');
   return invoice;
 }
@@ -55,6 +55,7 @@ export async function getInvoiceById(id: string): Promise<SupplierInvoiceRow> {
  * @throws Error('INVOICE_ALREADY_EXISTS')  si une facture existe déjà pour cette commande
  */
 export async function createInvoice(
+  orgId: string,
   data: CreateInvoiceData,
   actorId: string,
   actorName: string,
@@ -92,6 +93,7 @@ export async function createInvoice(
         targetType: 'SUPPLIER_INVOICE',
         targetId:   invoice.id,
         targetName: invoice.invoice_ref ?? invoice.id,
+        orgId,
         storeId,
         storeName,
         ipAddress,
@@ -124,6 +126,7 @@ export async function createInvoice(
  * @throws Error('INVOICE_PAID')        si la facture est déjà payée (immuable)
  */
 export async function updateInvoice(
+  orgId: string,
   id: string,
   data: UpdateInvoiceData,
   actorId: string,
@@ -132,7 +135,7 @@ export async function updateInvoice(
   storeName?: string,
   ipAddress?: string,
 ): Promise<SupplierInvoiceRow> {
-  const existing = await invoiceRepo.findById(id);
+  const existing = await invoiceRepo.findById(id, orgId);
   if (!existing) throw new Error('INVOICE_NOT_FOUND');
   if (existing.status === InvoiceStatus.PAID) throw new Error('INVOICE_PAID');
 
@@ -147,6 +150,7 @@ export async function updateInvoice(
       targetType: 'SUPPLIER_INVOICE',
       targetId:   invoice.id,
       targetName: invoice.invoice_ref ?? invoice.id,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -167,6 +171,7 @@ export async function updateInvoice(
  * @throws Error('INVALID_STATUS_TRANSITION')   si le statut ne permet pas le paiement
  */
 export async function payInvoice(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -174,7 +179,7 @@ export async function payInvoice(
   storeName?: string,
   ipAddress?: string,
 ): Promise<SupplierInvoiceRow> {
-  const existing = await invoiceRepo.findById(id);
+  const existing = await invoiceRepo.findById(id, orgId);
   if (!existing) throw new Error('INVOICE_NOT_FOUND');
 
   const payableStatuses: InvoiceStatus[] = [
@@ -197,6 +202,7 @@ export async function payInvoice(
       targetType: 'SUPPLIER_INVOICE',
       targetId:   invoice.id,
       targetName: invoice.invoice_ref ?? invoice.id,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -217,6 +223,7 @@ export async function payInvoice(
  * @throws Error('INVALID_STATUS_TRANSITION')   si le statut ne permet pas la contestation
  */
 export async function disputeInvoice(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -224,7 +231,7 @@ export async function disputeInvoice(
   storeName?: string,
   ipAddress?: string,
 ): Promise<SupplierInvoiceRow> {
-  const existing = await invoiceRepo.findById(id);
+  const existing = await invoiceRepo.findById(id, orgId);
   if (!existing) throw new Error('INVOICE_NOT_FOUND');
 
   const disputableStatuses: InvoiceStatus[] = [
@@ -246,6 +253,7 @@ export async function disputeInvoice(
       targetType: 'SUPPLIER_INVOICE',
       targetId:   invoice.id,
       targetName: invoice.invoice_ref ?? invoice.id,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -266,6 +274,7 @@ export async function disputeInvoice(
  * @throws Error('INVALID_STATUS_TRANSITION')   si le statut ne permet pas la réouverture
  */
 export async function reopenInvoice(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -273,7 +282,7 @@ export async function reopenInvoice(
   storeName?: string,
   ipAddress?: string,
 ): Promise<SupplierInvoiceRow> {
-  const existing = await invoiceRepo.findById(id);
+  const existing = await invoiceRepo.findById(id, orgId);
   if (!existing) throw new Error('INVOICE_NOT_FOUND');
 
   const reopenableStatuses: InvoiceStatus[] = [
@@ -295,6 +304,7 @@ export async function reopenInvoice(
       targetType: 'SUPPLIER_INVOICE',
       targetId:   invoice.id,
       targetName: invoice.invoice_ref ?? invoice.id,
+      orgId,
       storeId,
       storeName,
       ipAddress,

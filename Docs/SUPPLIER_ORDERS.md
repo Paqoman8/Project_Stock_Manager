@@ -1,4 +1,4 @@
-# Gestion des commandes fournisseurs — GStock
+# Gestion des commandes fournisseurs — Stock Manager
 
 **Statut :** Spécification — à implémenter
 **Dernière mise à jour :** 2026-04-30
@@ -622,7 +622,7 @@ SUPPLIER_INVOICE_PAID
 
 ## 11. Règles d'accès RBAC
 
-GStock dispose de deux rôles : `SA` (Super Admin) et `Admin`.
+Stock Manager dispose de deux rôles : `SA` (Super Admin) et `Admin`.
 
 | Action | SA | Admin |
 |---|---|---|

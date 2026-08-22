@@ -10,6 +10,7 @@
 // Fermeture : clic extérieur (mousedown) + touche Escape
 
 import React, { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useSession } from '@/contexts/SessionContext';
 import { RoleBadge } from '@/components/ui/RoleBadge';
 import { APP_NAME } from '@/lib/config/app';
@@ -102,8 +103,20 @@ export function UserDropdown() {
             <span className="text-xs text-textMuted truncate">{user.storeName}</span>
           </div>
 
+          {/* Paramètres */}
+          <div className="px-2 pt-1">
+            <Link
+              href="/dashboard/parametres"
+              role="menuitem"
+              onClick={() => setIsOpen(false)}
+              className="block px-3 py-2 text-sm text-textMuted hover:text-textMain hover:bg-background rounded transition-colors"
+            >
+              Paramètres
+            </Link>
+          </div>
+
           {/* Déconnexion */}
-          <div className="px-2 py-2">
+          <div className="px-2 pb-2">
             <button
               role="menuitem"
               onClick={() => { setIsOpen(false); logout(); }}
