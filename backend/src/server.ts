@@ -35,7 +35,6 @@ import platformRouter          from './routes/platformRoutes';
 dotenv.config();
 
 const app = express();
-const server = http.createServer(app);
 
 
 // ---------------------------------------------------------------------------
@@ -107,20 +106,7 @@ app.use(cookieParser());
 
 
 // ---------------------------------------------------------------------------
-// WEBSOCKET CONFIGURATION                                                  
-// ---------------------------------------------------------------------------
-
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
-  },
-});
-
-
-// ---------------------------------------------------------------------------
-// ROUTE DECLARATIONS                                                       
+// ROUTE DECLARATIONS
 // ---------------------------------------------------------------------------
 
 // Health check
@@ -183,31 +169,41 @@ app.use('/api/dashboard', dashboardRouter);
 
 
 // ---------------------------------------------------------------------------
-// WEBSOCKET HANDLERS                                                       
-// ---------------------------------------------------------------------------
-
-io.on('connection', (socket) => {
-  console.log('Nouveau client WebSocket connecté:', socket.id);
-
-  socket.on('disconnect', () => {
-    console.log('Client WebSocket déconnecté:', socket.id);
-  });
-});
-
-
-// ---------------------------------------------------------------------------
-// SERVER STARTUP                                                           
+// SERVER STARTUP
 // ---------------------------------------------------------------------------
 
 const PORT = process.env.PORT || 5000;
 
-// Export app & server so the API can be wrapped for serverless platforms
-// (Vercel, AWS Lambda, etc.) or imported in tests without starting a port.
-export { app, server };
+// Export uniquement `app` : c'est un handler (req, res) directement compatible
+// avec le runtime Node.js de Vercel — pas besoin de l'envelopper (serverless-http
+// ou un http.Server brut), voir api/index.ts.
+export { app };
 
-// Only start the long-running HTTP server when this file is run directly.
-// Prevents the server from starting during serverless imports.
+// Le http.Server brut + Socket.io ne sont construits QUE quand ce fichier est
+// exécuté directement (local/Docker). En import serverless (Vercel), ils ne
+// doivent JAMAIS être créés : Socket.io n'y est pas supporté (pas de WebSocket
+// persistant), et un http.Server construit mais jamais fermé peut laisser des
+// handles actifs qui empêchent le runtime de considérer la requête terminée —
+// la fonction reste bloquée jusqu'au timeout (504) au lieu de répondre.
 if (require.main === module) {
+  const server = http.createServer(app);
+
+  const io = new Server(server, {
+    cors: {
+      origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+      methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      credentials: true,
+    },
+  });
+
+  io.on('connection', (socket) => {
+    console.log('Nouveau client WebSocket connecté:', socket.id);
+
+    socket.on('disconnect', () => {
+      console.log('Client WebSocket déconnecté:', socket.id);
+    });
+  });
+
   server.listen(PORT, () => {
     console.log(`Le serveur Stock Manager a démarré sur le port ${PORT}`);
   });
