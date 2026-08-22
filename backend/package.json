@@ -11,7 +11,7 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && prisma migrate deploy && npm run build && mkdir -p public"
+    "vercel-build": "prisma generate && prisma migrate deploy && npm run build && mkdir -p public && echo '<html><body>Stock Manager API — see /api/health</body></html>' > public/index.html"
   },
   "keywords": [],
   "author": "",
