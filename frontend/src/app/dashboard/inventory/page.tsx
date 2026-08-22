@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { Button } from '@/components/ui/Button';
+import { Portal } from '@/components/ui/Portal';
 import { useSession } from '@/contexts/SessionContext';
 import apiClient from '@/lib/apiClient';
 
@@ -161,6 +162,7 @@ function EditThresholdsModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -264,6 +266,7 @@ function EditThresholdsModal({
         </form>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -436,6 +439,7 @@ function StockMovementModal({
   }
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -598,7 +602,7 @@ function StockMovementModal({
                   Nombre de colis{selectedFormat ? ` (${selectedFormat.label})` : ''}
                 </label>
                 <input
-                  type="number" min={1} value={packagesCount}
+                  type="number" value={packagesCount}
                   onChange={(e) => setPackagesCount(e.target.value)}
                   className={inputCls} placeholder="ex. 2"
                 />
@@ -613,7 +617,7 @@ function StockMovementModal({
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-textSecondary">Quantité (unités de base)</label>
                 <input
-                  type="number" min={1} value={qty}
+                  type="number" value={qty}
                   onChange={(e) => setQty(e.target.value)}
                   className={inputCls} placeholder="ex. 50"
                 />
@@ -646,6 +650,213 @@ function StockMovementModal({
         </form>
       </div>
     </div>
+    </Portal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modale : conversion inter-formats
+// ---------------------------------------------------------------------------
+
+function FormatConversionModal({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row:     InventoryRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [formats,          setFormats]          = useState<PackagingFormat[]>([]);
+  const [breakdowns,       setBreakdowns]       = useState<BreakdownRow[]>([]);
+  const [fromFormatId,     setFromFormatId]     = useState('');
+  const [fromPackages,     setFromPackages]     = useState('');
+  const [toFormatId,       setToFormatId]       = useState('');
+  const [toPackages,       setToPackages]       = useState('');
+  const [reason,           setReason]           = useState('');
+  const [saving,           setSaving]           = useState(false);
+  const [error,            setError]            = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      apiClient.get(`/api/products/${row.product_id}/packaging-formats`),
+      apiClient.get(`/api/inventory/${row.store_id}/${row.product_id}/breakdown`),
+    ]).then(([fmtRes, bdRes]) => {
+      setFormats(fmtRes.data.formats as PackagingFormat[]);
+      setBreakdowns(bdRes.data.breakdown as BreakdownRow[]);
+    }).catch(() => {});
+  }, [row.product_id, row.store_id]);
+
+  const fromFmt  = formats.find((f) => f.id === fromFormatId) ?? null;
+  const toFmt    = formats.find((f) => f.id === toFormatId)   ?? null;
+  const fromBd   = breakdowns.find((b) => b.packaging_format_id === fromFormatId);
+
+  // Auto-compute toPackages when from side changes
+  useEffect(() => {
+    if (!fromFmt || !toFmt || !fromPackages) { setToPackages(''); return; }
+    const n = parseInt(fromPackages, 10);
+    if (isNaN(n) || n <= 0) { setToPackages(''); return; }
+    const totalUnits  = n * fromFmt.units_per_package;
+    const toPkgs      = totalUnits / toFmt.units_per_package;
+    if (Number.isInteger(toPkgs) && toPkgs > 0) setToPackages(String(toPkgs));
+    else setToPackages('');
+  }, [fromFormatId, fromPackages, toFormatId, fromFmt, toFmt]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (!fromFormatId || !toFormatId) { setError('Veuillez sélectionner les deux formats.'); return; }
+    if (fromFormatId === toFormatId)   { setError('Le format source et la destination doivent être différents.'); return; }
+
+    const fromCount = parseInt(fromPackages, 10);
+    const toCount   = parseInt(toPackages, 10);
+    if (isNaN(fromCount) || fromCount <= 0) { setError('Nombre de colis source invalide.'); return; }
+    if (isNaN(toCount)   || toCount   <= 0) { setError('Nombre de colis destination invalide.'); return; }
+    if (!reason.trim()) { setError('Le motif est obligatoire.'); return; }
+
+    setSaving(true);
+    try {
+      await apiClient.post('/api/stock-movements/convert', {
+        store_id:                 row.store_id,
+        product_id:               row.product_id,
+        from_packaging_format_id: fromFormatId,
+        from_packages_count:      fromCount,
+        to_packaging_format_id:   toFormatId,
+        to_packages_count:        toCount,
+        reason:                   reason.trim(),
+      });
+      onSaved();
+    } catch (err) {
+      setError(extractApiError(err, 'Impossible d\'enregistrer la conversion.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const availableFromFormats = formats.filter((f) =>
+    breakdowns.some((b) => b.packaging_format_id === f.id && b.quantity > 0)
+  );
+
+  return (
+    <Portal>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-conversion-title"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-surface border border-borderLight rounded shadow-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderLight flex-shrink-0">
+          <h2 id="modal-conversion-title" className="text-base font-medium text-textMain">
+            Conversion inter-formats
+          </h2>
+          <button onClick={onClose} className="text-textMuted hover:text-textMain transition-colors text-lg leading-none" aria-label="Fermer">×</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
+            {/* Contexte */}
+            <div className="text-sm text-textMuted bg-background rounded px-3 py-2 space-y-0.5 border border-borderLight">
+              <p><span className="font-medium text-textMain">{row.product.name}</span> · <span className="font-mono text-xs">{row.product.sku}</span></p>
+              <p>Établissement : <span className="font-medium" style={{ color: row.store.color }}>{row.store.name}</span></p>
+            </div>
+
+            {/* Format source */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Format source <span className="text-red-500">*</span></label>
+              <select value={fromFormatId} onChange={(e) => { setFromFormatId(e.target.value); setFromPackages(''); }} className={inputCls}>
+                <option value="">— Sélectionner un format —</option>
+                {availableFromFormats.map((f) => {
+                  const bd = breakdowns.find((b) => b.packaging_format_id === f.id);
+                  return (
+                    <option key={f.id} value={f.id}>
+                      {f.label} — {bd?.quantity ?? 0} colis disponibles
+                    </option>
+                  );
+                })}
+              </select>
+              {fromBd && fromFormatId && (
+                <p className="text-xs text-textMuted">
+                  Stock actuel : <span className="font-medium text-textMain">{fromBd.quantity}</span> colis
+                  = <span className="font-medium text-textMain">{fromBd.quantity * fromBd.packaging_format.units_per_package}</span> unités
+                </p>
+              )}
+            </div>
+
+            {/* Qté source */}
+            {fromFormatId && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">
+                  Nombre de colis à convertir ({fromFmt?.label}) <span className="text-red-500">*</span>
+                </label>
+                <input type="number" value={fromPackages}
+                  onChange={(e) => setFromPackages(e.target.value)} className={inputCls} placeholder="ex. 1" />
+                {fromFmt && fromPackages && !isNaN(parseInt(fromPackages)) && (
+                  <p className="text-xs text-textMuted">
+                    = <span className="font-medium text-textMain">{parseInt(fromPackages) * fromFmt.units_per_package}</span> unités de base
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Format destination */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Format destination <span className="text-red-500">*</span></label>
+              <select value={toFormatId} onChange={(e) => setToFormatId(e.target.value)} className={inputCls}>
+                <option value="">— Sélectionner un format —</option>
+                {formats.filter((f) => f.id !== fromFormatId).map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label} (×{f.units_per_package} unités)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Qté destination — calculée, non modifiable */}
+            {toFormatId && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-textSecondary">
+                  Nombre de colis obtenus ({toFmt?.label})
+                </label>
+                {toPackages ? (
+                  <>
+                    <div className={inputCls + ' bg-background opacity-70 cursor-not-allowed select-none'}>
+                      {toPackages}
+                    </div>
+                    <p className="text-xs text-textMuted">
+                      = <span className="font-medium text-textMain">{parseInt(toPackages) * (toFmt?.units_per_package ?? 1)}</span> unités de base
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+                    Conversion impossible — les unités de base ne se divisent pas entièrement en {toFmt?.label}.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Motif obligatoire */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-textSecondary">Motif <span className="text-red-500">*</span></label>
+              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
+                className={inputCls} placeholder="ex. Reconditionnement en cartons…" />
+            </div>
+
+            {error && (
+              <p className="text-sm text-danger bg-danger/10 border border-danger/20 rounded px-3 py-2">{error}</p>
+            )}
+          </div>
+
+          <div className="px-6 py-4 border-t border-borderLight flex justify-end gap-2 flex-shrink-0">
+            <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
+            <Button type="submit" disabled={saving}>{saving ? 'Conversion…' : 'Convertir'}</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+    </Portal>
   );
 }
 
@@ -675,6 +886,9 @@ export default function InventoryPage() {
   // Modale mouvement de stock
   const [movementRow, setMovementRow] = useState<InventoryRow | null | undefined>(undefined);
   // undefined = fermé, null = ouvert sans pré-sélection, InventoryRow = ouvert avec ligne
+
+  // Modale conversion inter-formats
+  const [conversionRow, setConversionRow] = useState<InventoryRow | null>(null);
 
   // Ventilation par format — clé : "storeId-productId"
   const [expandedKeys, setExpandedKeys]   = useState<Set<string>>(new Set());
@@ -988,9 +1202,14 @@ export default function InventoryPage() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             {canMove && (
-                              <Button variant="secondary" size="sm" onClick={() => setMovementRow(row)}>
-                                Mouvement
-                              </Button>
+                              <>
+                                <Button variant="secondary" size="sm" onClick={() => setMovementRow(row)}>
+                                  Mouvement
+                                </Button>
+                                <Button variant="secondary" size="sm" onClick={() => setConversionRow(row)}>
+                                  Conversion
+                                </Button>
+                              </>
                             )}
                             {canEdit && (
                               <Button variant="secondary" size="sm" onClick={() => setEditRow(row)}>
@@ -1061,6 +1280,20 @@ export default function InventoryPage() {
           row={editRow}
           onClose={() => setEditRow(null)}
           onSaved={handleSaved}
+        />
+      )}
+
+      {/* Modale conversion inter-formats */}
+      {conversionRow && (
+        <FormatConversionModal
+          row={conversionRow}
+          onClose={() => setConversionRow(null)}
+          onSaved={() => {
+            setConversionRow(null);
+            // Invalider le cache des breakdowns pour recharger après conversion
+            const key = `${conversionRow.store_id}-${conversionRow.product_id}`;
+            setBreakdownData((prev) => { const next = { ...prev }; delete next[key]; return next; });
+          }}
         />
       )}
     </div>

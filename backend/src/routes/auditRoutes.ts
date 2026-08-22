@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import { getAuditLogs } from '../controllers/auditController';
 
 const router = Router();
@@ -13,6 +14,7 @@ const router = Router();
 router.get(
   '/',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   getAuditLogs,
 );

@@ -35,7 +35,6 @@ export function Navbar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
       role="banner"
     >
       <div className="flex items-center gap-3">
-        {/* Bouton hamburger */}
         {onToggleSidebar && (
           <button
             onClick={onToggleSidebar}
@@ -46,7 +45,6 @@ export function Navbar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
           </button>
         )}
 
-        {/* Nom de l'application */}
         <Link
           href="/dashboard"
           className="font-semibold text-textMain tracking-tight hover:opacity-75 transition-opacity"
@@ -54,27 +52,60 @@ export function Navbar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
           {APP_NAME}
         </Link>
 
-        {/* Badge magasin actif */}
         {isLoading ? (
-          <div className="h-5 w-28 rounded bg-[#DEE2E6] animate-pulse" aria-hidden="true" />
+          <div className="flex items-center gap-2">
+            <div className="h-5 w-28 rounded bg-[#DEE2E6] animate-pulse" aria-hidden="true" />
+            <div className="h-5 w-20 rounded bg-[#DEE2E6] animate-pulse" aria-hidden="true" />
+          </div>
         ) : user ? (
-          <span
-            className="text-white text-xs font-medium px-2 py-0.5 rounded"
-            style={{ backgroundColor: user.storeColor }}
-            title={`Magasin actif : ${user.storeName}`}
-          >
-            {user.storeName}
-          </span>
+          <>
+            {user.orgName && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-background border border-borderLight text-textMuted">
+                {user.orgName}
+              </span>
+            )}
+            <span
+              className="text-white text-xs font-medium px-2 py-0.5 rounded"
+              style={{ backgroundColor: user.storeColor }}
+              title={`Magasin actif : ${user.storeName}`}
+            >
+              {user.storeName}
+            </span>
+          </>
         ) : null}
       </div>
 
-      <div className="flex items-center">
+      <div className="flex items-center gap-2">
         {isLoading ? (
           <div className="h-8 w-32 rounded bg-[#DEE2E6] animate-pulse" aria-hidden="true" />
         ) : user ? (
-          <UserDropdown />
+          <>
+            {user.isPlatformManager && (
+              <Link
+                href="/platform"
+                className="text-xs font-medium px-3 py-1.5 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              >
+                Plateforme
+              </Link>
+            )}
+            <UserDropdown />
+          </>
         ) : null}
       </div>
+
+      {user?.mustChangePassword && (
+        <div className="absolute left-0 right-0 top-14 bg-yellow-50 border-b border-yellow-200 px-4 py-1.5 text-center">
+          <p className="text-xs text-yellow-800 font-medium">
+            Vous devez changer votre mot de passe.{' '}
+            <Link
+              href="/dashboard/parametres"
+              className="underline hover:no-underline"
+            >
+              Cliquez ici
+            </Link>
+          </p>
+        </div>
+      )}
     </header>
   );
 }

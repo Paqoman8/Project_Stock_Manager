@@ -31,8 +31,8 @@ export type { SupplierRow };
  * @param filters - { isActive?, search? }
  * @returns Tableau de SupplierRow
  */
-export async function getSuppliers(filters: SupplierFilters = {}): Promise<SupplierRow[]> {
-  return supplierRepo.findAll(filters);
+export async function getSuppliers(orgId: string, filters: SupplierFilters = {}): Promise<SupplierRow[]> {
+  return supplierRepo.findAll(orgId, filters);
 }
 
 /**
@@ -42,8 +42,8 @@ export async function getSuppliers(filters: SupplierFilters = {}): Promise<Suppl
  * @returns Le fournisseur trouvé
  * @throws Error('SUPPLIER_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
-export async function getSupplierById(id: string): Promise<SupplierRow> {
-  const supplier = await supplierRepo.findById(id);
+export async function getSupplierById(orgId: string, id: string): Promise<SupplierRow> {
+  const supplier = await supplierRepo.findById(orgId, id);
   if (!supplier) {
     throw new Error('SUPPLIER_NOT_FOUND');
   }
@@ -64,6 +64,7 @@ export async function getSupplierById(id: string): Promise<SupplierRow> {
  * @throws Error('EMAIL_ALREADY_EXISTS') si l'email est déjà utilisé
  */
 export async function createSupplier(
+  orgId: string,
   data: CreateSupplierData,
   actorId: string,
   actorName: string,
@@ -73,13 +74,13 @@ export async function createSupplier(
 ): Promise<SupplierRow> {
   // Vérification unicité email
   if (data.email) {
-    const existing = await supplierRepo.findByEmail(data.email);
+    const existing = await supplierRepo.findByEmail(orgId, data.email);
     if (existing) {
       throw new Error('EMAIL_ALREADY_EXISTS');
     }
   }
 
-  const supplier = await supplierRepo.create(data);
+  const supplier = await supplierRepo.create(orgId, data);
 
   // Audit — non-bloquant
   try {
@@ -90,6 +91,7 @@ export async function createSupplier(
       targetType: 'SUPPLIER',
       targetId:   supplier.id,
       targetName: supplier.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -117,6 +119,7 @@ export async function createSupplier(
  * @throws Error('EMAIL_ALREADY_EXISTS')  si le nouvel email est déjà utilisé par un autre fournisseur
  */
 export async function updateSupplier(
+  orgId: string,
   id: string,
   data: UpdateSupplierData,
   actorId: string,
@@ -126,20 +129,20 @@ export async function updateSupplier(
   ipAddress?: string,
 ): Promise<SupplierRow> {
   // Vérification d'existence
-  const existing = await supplierRepo.findById(id);
+  const existing = await supplierRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('SUPPLIER_NOT_FOUND');
   }
 
   // Vérification unicité email (uniquement si l'email change)
   if (data.email && data.email !== existing.email) {
-    const emailOwner = await supplierRepo.findByEmail(data.email);
+    const emailOwner = await supplierRepo.findByEmail(orgId, data.email);
     if (emailOwner) {
       throw new Error('EMAIL_ALREADY_EXISTS');
     }
   }
 
-  const supplier = await supplierRepo.update(id, data);
+  const supplier = await supplierRepo.update(orgId, id, data);
 
   // Audit — non-bloquant, champs modifiés dans les métadonnées
   try {
@@ -150,6 +153,7 @@ export async function updateSupplier(
       targetType: 'SUPPLIER',
       targetId:   supplier.id,
       targetName: supplier.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -174,6 +178,7 @@ export async function updateSupplier(
  * @throws Error('SUPPLIER_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
 export async function deactivateSupplier(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -182,12 +187,12 @@ export async function deactivateSupplier(
   ipAddress?: string,
 ): Promise<SupplierRow> {
   // Vérification d'existence
-  const existing = await supplierRepo.findById(id);
+  const existing = await supplierRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('SUPPLIER_NOT_FOUND');
   }
 
-  const supplier = await supplierRepo.setActive(id, false);
+  const supplier = await supplierRepo.setActive(orgId, id, false);
 
   // Audit — non-bloquant
   try {
@@ -198,6 +203,7 @@ export async function deactivateSupplier(
       targetType: 'SUPPLIER',
       targetId:   supplier.id,
       targetName: supplier.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,
@@ -221,6 +227,7 @@ export async function deactivateSupplier(
  * @throws Error('SUPPLIER_NOT_FOUND') si l'UUID ne correspond à aucun enregistrement
  */
 export async function reactivateSupplier(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -229,12 +236,12 @@ export async function reactivateSupplier(
   ipAddress?: string,
 ): Promise<SupplierRow> {
   // Vérification d'existence
-  const existing = await supplierRepo.findById(id);
+  const existing = await supplierRepo.findById(orgId, id);
   if (!existing) {
     throw new Error('SUPPLIER_NOT_FOUND');
   }
 
-  const supplier = await supplierRepo.setActive(id, true);
+  const supplier = await supplierRepo.setActive(orgId, id, true);
 
   // Audit — non-bloquant
   try {
@@ -245,6 +252,7 @@ export async function reactivateSupplier(
       targetType: 'SUPPLIER',
       targetId:   supplier.id,
       targetName: supplier.name,
+      orgId,
       storeId,
       storeName,
       ipAddress,

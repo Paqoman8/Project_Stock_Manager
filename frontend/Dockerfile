@@ -3,7 +3,10 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm ci
 
 COPY . .
 
@@ -12,6 +15,10 @@ COPY . .
 # La valeur runtime (docker-compose environment) arrive trop tard.
 ARG BACKEND_URL=http://localhost:5001
 ENV BACKEND_URL=$BACKEND_URL
+
+# APP_NAME est baked dans le bundle Next.js via NEXT_PUBLIC_* au moment du build.
+ARG APP_NAME=Stock Manager
+ENV NEXT_PUBLIC_APP_NAME=$APP_NAME
 
 RUN npm run build
 

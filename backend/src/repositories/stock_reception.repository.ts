@@ -20,6 +20,7 @@ import { prisma } from '../config/database';
 export interface ReceptionItemRow {
   id: string;
   reception_id: string;
+  order_item_id: string | null;
   product_id: string;
   received_qty: number;
   stock_units_added: number;
@@ -49,6 +50,7 @@ export interface CreateReceptionData {
   received_by_id: string;
   notes?: string;
   items: Array<{
+    order_item_id?: string;
     product_id: string;
     received_qty: number;
     stock_units_added: number;
@@ -84,9 +86,21 @@ const RECEPTION_INCLUDE = {
  * @param orderId - UUID de la commande parente
  * @returns Tableau de StockReceptionRow, potentiellement vide
  */
-export async function findByOrderId(orderId: string): Promise<StockReceptionRow[]> {
+function orderScopedWhere(orgId: string) {
+  return {
+    OR: [
+      { supplier: { organization_id: orgId } },
+      { destination_store: { organization_id: orgId } },
+    ],
+  };
+}
+
+export async function findByOrderId(orderId: string, orgId: string): Promise<StockReceptionRow[]> {
   return prisma.stockReception.findMany({
-    where:   { order_id: orderId },
+    where: {
+      order_id: orderId,
+      purchase_order: orderScopedWhere(orgId),
+    },
     include: RECEPTION_INCLUDE,
     orderBy: { received_at: 'desc' },
   }) as unknown as StockReceptionRow[];
@@ -96,10 +110,14 @@ export async function findByOrderId(orderId: string): Promise<StockReceptionRow[
  * Retourne une réception par son UUID, ou null si elle n'existe pas.
  *
  * @param id - UUID de la réception
+ * @param orgId - UUID de l'organisation courante (isolation multi-tenant)
  */
-export async function findById(id: string): Promise<StockReceptionRow | null> {
+export async function findById(id: string, orgId: string): Promise<StockReceptionRow | null> {
   return prisma.stockReception.findUnique({
-    where:   { id },
+    where: {
+      id,
+      purchase_order: orderScopedWhere(orgId),
+    },
     include: RECEPTION_INCLUDE,
   }) as unknown as StockReceptionRow | null;
 }
@@ -119,6 +137,7 @@ export async function create(data: CreateReceptionData): Promise<StockReceptionR
       items: {
         create: data.items.map((item) => ({
           product_id:          item.product_id,
+          order_item_id:       item.order_item_id ?? null,
           received_qty:        item.received_qty,
           stock_units_added:   item.stock_units_added,
           packaging_format_id: item.packaging_format_id ?? null,
@@ -140,19 +159,22 @@ export async function create(data: CreateReceptionData): Promise<StockReceptionR
  *      incrémente stock_physical de stock_units_added.
  *   3. Calcule si la commande est entièrement couverte ou non :
  *      - Compare le total stock_units_added confirmé par produit
- *        avec le total (ordered_qty × units_per_order) par produit dans la commande.
+ *        avec le total (ordered_qty × packaging_format.units_per_package) par produit dans la commande.
  *      - Si tous les produits sont couverts → RECEIVED, sinon → PARTIALLY_RECEIVED.
  *
  * @param id - UUID de la réception à confirmer
  * @returns La réception confirmée avec ses relations
  * @throws Error si la réception n'existe pas
  */
-export async function confirm(id: string): Promise<StockReceptionRow> {
+export async function confirm(orgId: string, id: string): Promise<StockReceptionRow> {
   return prisma.$transaction(async (tx) => {
     // 1. Confirmer la réception
     const reception = await tx.stockReception.update({
-      where: { id },
-      data:  { status: ReceptionStatus.CONFIRMED, confirmed_at: new Date() },
+      where: {
+        id,
+        purchase_order: orderScopedWhere(orgId),
+      },
+      data: { status: ReceptionStatus.CONFIRMED, confirmed_at: new Date() },
       include: RECEPTION_INCLUDE,
     });
 
@@ -163,12 +185,14 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
     for (const item of reception.items) {
       await tx.inventory.upsert({
         where: {
-          store_id_product_id: {
+          organization_id_store_id_product_id: {
+            organization_id: orgId,
             store_id:   destStoreId,
             product_id: item.product_id,
           },
         },
         create: {
+          organization_id: orgId,
           store_id:       destStoreId,
           product_id:     item.product_id,
           stock_physical: item.stock_units_added,
@@ -213,46 +237,37 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
       include: { items: true },
     });
 
-    // b) Agréger les stock_units_added par produit sur toutes les réceptions CONFIRMED
-    const receivedByProduct = new Map<string, number>();
+    // b) Agréger les réceptions confirmées par ligne de commande si possible.
+    const receivedByOrderItem = new Map<string, number>();
     for (const r of confirmedReceptions) {
       for (const item of r.items) {
-        const current = receivedByProduct.get(item.product_id) ?? 0;
-        receivedByProduct.set(item.product_id, current + item.stock_units_added);
+        const itemExt = item as unknown as { order_item_id?: string | null };
+        if (!itemExt.order_item_id) continue;
+        const current = receivedByOrderItem.get(itemExt.order_item_id) ?? 0;
+        receivedByOrderItem.set(itemExt.order_item_id, current + item.received_qty);
       }
     }
 
-    // c) Charger les lignes de la commande avec les détails du supplier_product
+    // c) Charger les lignes de la commande avec les détails nécessaires dès la première requête.
     const orderItems = await tx.purchaseOrderItem.findMany({
       where:   { order_id: orderId },
-      include: { supplier_product: { select: { units_per_order: true } } },
+      include: {
+        supplier_product: {
+          select: {
+            product_id: true,
+            packaging_format: { select: { units_per_package: true } },
+          },
+        },
+      },
     });
 
-    // d) Calculer ce qui était attendu (ordered_qty × units_per_order) par produit
-    //    Note : supplier_product est lié au produit via product_id du SupplierProduct ;
-    //    pour la comparaison on utilise supplier_product_id comme clé de liaison —
-    //    mais les ReceptionItem stockent product_id directement, donc il faut
-    //    charger le product_id depuis le SupplierProduct de chaque ligne commande.
-    const orderedByProduct = new Map<string, number>();
-    for (const oi of orderItems) {
-      const sp = await tx.supplierProduct.findUnique({
-        where:  { id: oi.supplier_product_id },
-        select: { product_id: true, units_per_order: true },
-      });
-      if (sp) {
-        const expected = oi.ordered_qty * sp.units_per_order;
-        const current  = orderedByProduct.get(sp.product_id) ?? 0;
-        orderedByProduct.set(sp.product_id, current + expected);
-      }
-    }
-
-    // e) Vérifier si toutes les lignes commandées sont couvertes
+    // d) Déduire le statut global de la commande.
+    //    Un surplus (confirmedQty > ordered_qty) est autorisé et compte comme "reçu".
     let fullyReceived = true;
-    for (const [productId, expectedUnits] of orderedByProduct.entries()) {
-      const receivedUnits = receivedByProduct.get(productId) ?? 0;
-      if (receivedUnits < expectedUnits) {
+    for (const oi of orderItems) {
+      const confirmedQty = receivedByOrderItem.get(oi.id) ?? 0;
+      if (confirmedQty < oi.ordered_qty) {
         fullyReceived = false;
-        break;
       }
     }
 
@@ -277,10 +292,13 @@ export async function confirm(id: string): Promise<StockReceptionRow> {
  * @param id - UUID de la réception à annuler
  * @returns La réception mise à jour
  */
-export async function cancel(id: string): Promise<StockReceptionRow> {
+export async function cancel(orgId: string, id: string): Promise<StockReceptionRow> {
   return prisma.stockReception.update({
-    where:   { id },
-    data:    { status: ReceptionStatus.CANCELLED },
+    where: {
+      id,
+      purchase_order: orderScopedWhere(orgId),
+    },
+    data: { status: ReceptionStatus.CANCELLED },
     include: RECEPTION_INCLUDE,
   }) as unknown as StockReceptionRow;
 }

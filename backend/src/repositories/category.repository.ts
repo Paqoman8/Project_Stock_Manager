@@ -18,11 +18,12 @@ import { prisma } from '../config/database';
  * Inclut le parent direct (pour l'affichage hiérarchique) et les compteurs.
  */
 export interface CategoryRow {
-  id:        string;
-  name:      string;
-  parent_id: string | null;
-  parent:    { id: string; name: string } | null;
-  _count:    { products: number; children: number };
+  id:              string;
+  organization_id: string;
+  name:            string;
+  parent_id:       string | null;
+  parent:          { id: string; name: string } | null;
+  _count:          { products: number; children: number };
 }
 
 /**
@@ -48,9 +49,10 @@ export interface UpdateCategoryData {
 // ---------------------------------------------------------------------------
 
 const CATEGORY_SELECT = {
-  id:        true,
-  name:      true,
-  parent_id: true,
+  id:              true,
+  organization_id: true,
+  name:            true,
+  parent_id:       true,
   parent: {
     select: { id: true, name: true },
   },
@@ -69,8 +71,9 @@ const CATEGORY_SELECT = {
  *
  * @returns Tableau de CategoryRow, potentiellement vide
  */
-export async function findAll(): Promise<CategoryRow[]> {
+export async function findAll(orgId: string): Promise<CategoryRow[]> {
   return prisma.category.findMany({
+    where:   { organization_id: orgId },
     select:  CATEGORY_SELECT,
     orderBy: { name: 'asc' },
   });
@@ -81,9 +84,9 @@ export async function findAll(): Promise<CategoryRow[]> {
  *
  * @param id - UUID de la catégorie
  */
-export async function findById(id: string): Promise<CategoryRow | null> {
+export async function findById(orgId: string, id: string): Promise<CategoryRow | null> {
   return prisma.category.findUnique({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     select: CATEGORY_SELECT,
   });
 }
@@ -95,9 +98,10 @@ export async function findById(id: string): Promise<CategoryRow | null> {
  * @param name      - Nom à rechercher
  * @param excludeId - UUID à exclure de la recherche (pour la mise à jour)
  */
-export async function findByName(name: string, excludeId?: string): Promise<CategoryRow | null> {
+export async function findByName(orgId: string, name: string, excludeId?: string): Promise<CategoryRow | null> {
   return prisma.category.findFirst({
     where: {
+      organization_id: orgId,
       name:  { equals: name, mode: 'insensitive' },
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
@@ -111,9 +115,10 @@ export async function findByName(name: string, excludeId?: string): Promise<Cate
  * @param data - { name, parent_id? }
  * @returns La catégorie créée
  */
-export async function create(data: CreateCategoryData): Promise<CategoryRow> {
+export async function create(orgId: string, data: CreateCategoryData): Promise<CategoryRow> {
   return prisma.category.create({
     data: {
+      organization_id: orgId,
       name:      data.name,
       parent_id: data.parent_id ?? null,
     },
@@ -130,13 +135,13 @@ export async function create(data: CreateCategoryData): Promise<CategoryRow> {
  * @param data - Champs à modifier
  * @returns La catégorie mise à jour
  */
-export async function update(id: string, data: UpdateCategoryData): Promise<CategoryRow> {
+export async function update(orgId: string, id: string, data: UpdateCategoryData): Promise<CategoryRow> {
   const updateData: Record<string, unknown> = {};
   if (data.name      !== undefined) updateData.name      = data.name;
   if (data.parent_id !== undefined) updateData.parent_id = data.parent_id;
 
   return prisma.category.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   updateData,
     select: CATEGORY_SELECT,
   });
@@ -148,6 +153,6 @@ export async function update(id: string, data: UpdateCategoryData): Promise<Cate
  *
  * @param id - UUID de la catégorie à supprimer
  */
-export async function deleteById(id: string): Promise<void> {
-  await prisma.category.delete({ where: { id } });
+export async function deleteById(orgId: string, id: string): Promise<void> {
+  await prisma.category.delete({ where: { id, organization_id: orgId } });
 }

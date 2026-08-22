@@ -1,6 +1,6 @@
 // src/components/ui/Modal.tsx
 // Modale de confirmation — obligatoire pour toute mutation d'inventaire
-// selon la règle de "Friction Positive" du design system GStock (UI_UX_KIT.md §5).
+// selon la règle de "Friction Positive" du design system (UI_UX_KIT.md §5).
 // Focus initial sur "Annuler" pour éviter les confirmations accidentelles.
 // Fermeture via Escape ou clic sur le backdrop.
 
@@ -8,6 +8,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Button } from './Button';
+import { Portal } from './Portal';
 
 interface ModalProps {
   isOpen: boolean;
@@ -58,6 +59,7 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -102,5 +104,6 @@ export function Modal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

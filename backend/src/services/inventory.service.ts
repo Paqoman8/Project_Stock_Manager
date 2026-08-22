@@ -28,8 +28,8 @@ export type { InventoryRow };
  * @param filters - { store_id?, product_id?, low_stock? }
  * @returns Tableau de InventoryRow
  */
-export async function getInventory(filters: InventoryFilters = {}): Promise<InventoryRow[]> {
-  return inventoryRepo.findAll(filters);
+export async function getInventory(orgId: string, filters: InventoryFilters = {}): Promise<InventoryRow[]> {
+  return inventoryRepo.findAll(orgId, filters);
 }
 
 /**
@@ -40,10 +40,11 @@ export async function getInventory(filters: InventoryFilters = {}): Promise<Inve
  * @returns InventoryRow ou null
  */
 export async function getInventoryEntry(
+  orgId: string,
   storeId: string,
   productId: string,
 ): Promise<InventoryRow | null> {
-  return inventoryRepo.findOne(storeId, productId);
+  return inventoryRepo.findOne(orgId, storeId, productId);
 }
 
 /**
@@ -58,13 +59,14 @@ export async function getInventoryEntry(
  * @throws Error('PRODUCT_NOT_FOUND') si le produit est introuvable
  */
 export async function updateThresholds(
+  orgId: string,
   storeId: string,
   productId: string,
   data: UpdateThresholdsData,
 ): Promise<InventoryRow> {
   // Vérification de l'existence de l'établissement
   const store = await prisma.store.findUnique({
-    where:  { id: storeId },
+    where:  { id: storeId, organization_id: orgId },
     select: { id: true },
   });
   if (!store) {
@@ -73,12 +75,12 @@ export async function updateThresholds(
 
   // Vérification de l'existence du produit
   const product = await prisma.product.findUnique({
-    where:  { id: productId },
+    where:  { id: productId, organization_id: orgId },
     select: { id: true },
   });
   if (!product) {
     throw new Error('PRODUCT_NOT_FOUND');
   }
 
-  return inventoryRepo.updateThresholds(storeId, productId, data);
+  return inventoryRepo.updateThresholds(orgId, storeId, productId, data);
 }

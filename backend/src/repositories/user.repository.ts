@@ -12,10 +12,11 @@ import { prisma } from '../config/database';
 export type UserRecord = {
   id: string;
   username: string;
-  email: string | null;
+  email: string;
   pwd_hash: string;
   role_id: string;
   is_active: boolean;
+  must_change_password: boolean;
 };
 
 /**
@@ -38,7 +39,7 @@ export type StoreAccess = {
 export type UserWithDetails = {
   id: string;
   username: string;
-  email: string | null;
+  email: string;
   role_id: string;
   is_active: boolean;
   role: {
@@ -60,7 +61,7 @@ export type UserWithDetails = {
  */
 export type CreateUserData = {
   username: string;
-  email?: string;
+  email: string;
   pwd_hash: string;
   role_id: string;
   store_ids: string[];
@@ -77,6 +78,8 @@ export type UpdateUserData = {
   pwd_hash?: string;
   role_id?: string;
   store_ids?: string[];
+  password_updated_at?: Date;
+  must_change_password?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -116,6 +119,7 @@ export async function findByUsername(username: string): Promise<UserRecord | nul
       pwd_hash: true,
       role_id: true,
       is_active: true,
+      must_change_password: true,
     },
   });
 }
@@ -136,6 +140,7 @@ export async function findById(id: string): Promise<UserRecord | null> {
       pwd_hash: true,
       role_id: true,
       is_active: true,
+      must_change_password: true,
     },
   });
 }
@@ -144,17 +149,43 @@ export async function findById(id: string): Promise<UserRecord | null> {
  * Retourne la liste de tous les utilisateurs avec leur rôle et leurs accès magasins.
  * Les utilisateurs désactivés sont exclus par défaut.
  *
+ * Le résultat est filtré par organisation : seuls les utilisateurs ayant au moins
+ * un accès magasin dans l'organisation demandée sont retournés. Cela garantit
+ * l'isolation multi-tenant entre organisations.
+ *
+ * @param orgId - UUID de l'organisation courante
  * @param includeInactive - Si true, inclut les utilisateurs avec is_active = false
  *
  * Sécurité : pwd_hash n'est jamais sélectionné ici — cette fonction est destinée
  * aux listings administratifs, pas à l'authentification.
  */
-export async function findAll(includeInactive = false): Promise<UserWithDetails[]> {
+export async function findAll(orgId: string, includeInactive = false): Promise<UserWithDetails[]> {
   return prisma.user.findMany({
-    where: includeInactive ? undefined : { is_active: true },
+    where: {
+      ...(includeInactive ? {} : { is_active: true }),
+      store_access: { some: { organization_id: orgId } },
+    },
     select: SELECT_USER_WITH_DETAILS,
     orderBy: { username: 'asc' },
   });
+}
+
+/**
+ * Vérifie qu'un utilisateur possède au moins un accès magasin dans une
+ * organisation donnée. Utilisé pour s'assurer qu'un administrateur ne manipule
+ * pas un compte d'une autre organisation.
+ *
+ * @param userId - UUID de l'utilisateur
+ * @param orgId  - UUID de l'organisation
+ */
+export async function belongsToOrganization(userId: string, orgId: string): Promise<boolean> {
+  const count = await prisma.userStoreAccess.count({
+    where: {
+      user_id: userId,
+      organization_id: orgId,
+    },
+  });
+  return count > 0;
 }
 
 /**
@@ -173,7 +204,7 @@ export async function create(data: CreateUserData): Promise<UserWithDetails> {
     const nouvelUtilisateur = await tx.user.create({
       data: {
         username: data.username,
-        email: data.email ?? null,
+        email: data.email,
         pwd_hash: data.pwd_hash,
         role_id: data.role_id,
         is_active: true,
@@ -183,10 +214,17 @@ export async function create(data: CreateUserData): Promise<UserWithDetails> {
     // Création des accès magasins en une seule passe
     // createMany est plus performant qu'un create par itération
     if (data.store_ids.length > 0) {
+      const stores = await tx.store.findMany({
+        where: { id: { in: data.store_ids } },
+        select: { id: true, organization_id: true },
+      });
+      const orgByStore = new Map(stores.map((s) => [s.id, s.organization_id]));
+
       await tx.userStoreAccess.createMany({
         data: data.store_ids.map((storeId) => ({
           user_id: nouvelUtilisateur.id,
           store_id: storeId,
+          organization_id: orgByStore.get(storeId)!,
         })),
       });
     }
@@ -220,6 +258,8 @@ export async function update(id: string, data: UpdateUserData): Promise<UserWith
     if (data.email !== undefined) champsAMettreAJour.email = data.email;
     if (data.pwd_hash !== undefined) champsAMettreAJour.pwd_hash = data.pwd_hash;
     if (data.role_id !== undefined) champsAMettreAJour.role_id = data.role_id;
+    if (data.password_updated_at !== undefined) champsAMettreAJour.password_updated_at = data.password_updated_at;
+    if (data.must_change_password !== undefined) champsAMettreAJour.must_change_password = data.must_change_password;
 
     // On ne met à jour que si au moins un champ scalaire est fourni
     if (Object.keys(champsAMettreAJour).length > 0) {
@@ -238,10 +278,17 @@ export async function update(id: string, data: UpdateUserData): Promise<UserWith
 
       // Recréation des nouveaux accès
       if (data.store_ids.length > 0) {
+        const stores = await tx.store.findMany({
+          where: { id: { in: data.store_ids } },
+          select: { id: true, organization_id: true },
+        });
+        const orgByStore = new Map(stores.map((s) => [s.id, s.organization_id]));
+
         await tx.userStoreAccess.createMany({
           data: data.store_ids.map((storeId) => ({
             user_id: id,
             store_id: storeId,
+            organization_id: orgByStore.get(storeId)!,
           })),
         });
       }
@@ -325,4 +372,74 @@ export async function hasStoreAccess(userId: string, storeId: string): Promise<b
     },
   });
   return count > 0;
+}
+
+/**
+ * Met à jour le hash du mot de passe d'un utilisateur.
+ *
+ * @param id   - UUID de l'utilisateur
+ * @param hash - Le nouveau hash bcrypt
+ */
+export async function updatePassword(id: string, hash: string): Promise<void> {
+  await prisma.user.update({
+    where: { id },
+    data: { pwd_hash: hash },
+  });
+}
+
+/**
+ * Passe must_change_password a false pour un utilisateur.
+ *
+ * @param id - UUID de l'utilisateur
+ */
+export async function clearMustChangePassword(id: string): Promise<void> {
+  await prisma.user.update({
+    where: { id },
+    data: { must_change_password: false },
+  });
+}
+
+/**
+ * Positionne password_updated_at a l'instant present pour un utilisateur.
+ *
+ * @param id - UUID de l'utilisateur
+ */
+export async function setPasswordUpdatedAt(id: string): Promise<void> {
+  await prisma.user.update({
+    where: { id },
+    data: { password_updated_at: new Date() },
+  });
+}
+
+/**
+ * Force must_change_password = true (utilise lors du reset de mot de passe).
+ *
+ * @param id - UUID de l'utilisateur cible
+ */
+export async function forceMustChangePassword(id: string): Promise<void> {
+  await prisma.user.update({
+    where: { id },
+    data: { must_change_password: true },
+  });
+}
+
+/**
+ * Recherche un utilisateur par son adresse email.
+ * Retourne null si aucun utilisateur ne correspond.
+ *
+ * @param email - L'adresse email
+ */
+export async function findByEmail(email: string): Promise<UserRecord | null> {
+  return prisma.user.findUnique({
+    where: { email: email.toLowerCase().trim() },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      pwd_hash: true,
+      role_id: true,
+      is_active: true,
+      must_change_password: true,
+    },
+  });
 }

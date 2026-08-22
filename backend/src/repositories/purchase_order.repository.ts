@@ -8,7 +8,7 @@
 //   - Génération de référence séquentielle BC-YYYY-XXXX
 //   - Transaction atomique pour la création (commande + lignes)
 
-import { PurchaseOrderStatus } from '@prisma/client';
+import { Prisma, PurchaseOrderStatus } from '@prisma/client';
 import { prisma } from '../config/database';
 
 // ---------------------------------------------------------------------------
@@ -23,11 +23,12 @@ export interface PurchaseOrderItemRow {
   ordered_qty: number;
   unit_price: string;    // Decimal Prisma — sérialisé en string par JSON.stringify
   packaging_format_id: string | null;
+  snapshotted_units_per_package: number;
   supplier_product: {
     id: string;
-    order_unit: string;
-    units_per_order: number;
+    packaging_format_id: string;
     product: { id: string; name: string; sku: string; unit: string };
+    packaging_format: { id: string; label: string; units_per_package: number };
   };
   packaging_format: { id: string; label: string; units_per_package: number } | null;
 }
@@ -72,6 +73,7 @@ export interface CreatePurchaseOrderData {
     ordered_qty: number;
     unit_price: number;
     packaging_format_id?: string;
+    snapshotted_units_per_package: number;
   }>;
 }
 
@@ -85,6 +87,7 @@ export interface UpdatePurchaseOrderData {
     ordered_qty: number;
     unit_price: number;
     packaging_format_id?: string;
+    snapshotted_units_per_package?: number;
   }>;
 }
 
@@ -94,6 +97,7 @@ export interface OrderItemInput {
   ordered_qty: number;
   unit_price: number;
   packaging_format_id?: string;
+  snapshotted_units_per_package?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,10 +112,10 @@ const PURCHASE_ORDER_INCLUDE = {
     include: {
       supplier_product: {
         select: {
-          id:              true,
-          order_unit:      true,
-          units_per_order: true,
+          id:                  true,
+          packaging_format_id: true,
           product: { select: { id: true, name: true, sku: true, unit: true } },
+          packaging_format: { select: { id: true, label: true, units_per_package: true } },
         },
       },
       packaging_format: { select: { id: true, label: true, units_per_package: true } },
@@ -131,15 +135,26 @@ const PURCHASE_ORDER_INCLUDE = {
  * @param filters - { supplier_id?, destination_store_id?, status? }
  * @returns Tableau de PurchaseOrderRow, potentiellement vide
  */
-export async function findAll(filters: PurchaseOrderFilters = {}): Promise<PurchaseOrderRow[]> {
+export async function findAll(
+  orgId: string,
+  filters: PurchaseOrderFilters = {},
+): Promise<PurchaseOrderRow[]> {
   return prisma.purchaseOrder.findMany({
     where: {
-      ...(filters.supplier_id          ? { supplier_id:          filters.supplier_id }          : {}),
-      ...(filters.destination_store_id ? { destination_store_id: filters.destination_store_id } : {}),
-      ...(filters.status               ? { status:               filters.status }               : {}),
+      AND: [
+        {
+          OR: [
+            { supplier: { organization_id: orgId } },
+            { destination_store: { organization_id: orgId } },
+          ],
+        },
+        ...(filters.supplier_id ? [{ supplier_id: filters.supplier_id }] : []),
+        ...(filters.destination_store_id ? [{ destination_store_id: filters.destination_store_id }] : []),
+        ...(filters.status ? [{ status: filters.status }] : []),
+      ],
     },
-    include:  PURCHASE_ORDER_INCLUDE,
-    orderBy:  { created_at: 'desc' },
+    include: PURCHASE_ORDER_INCLUDE,
+    orderBy: { created_at: 'desc' },
   }) as unknown as PurchaseOrderRow[];
 }
 
@@ -147,10 +162,21 @@ export async function findAll(filters: PurchaseOrderFilters = {}): Promise<Purch
  * Retourne une commande par son UUID, ou null si elle n'existe pas.
  *
  * @param id - UUID de la commande
+ * @param orgId - UUID de l'organisation courante (isolation multi-tenant)
  */
-export async function findById(id: string): Promise<PurchaseOrderRow | null> {
+export async function findById(id: string, orgId: string): Promise<PurchaseOrderRow | null> {
   return prisma.purchaseOrder.findUnique({
-    where:   { id },
+    where: {
+      id,
+      AND: [
+        {
+          OR: [
+            { supplier: { organization_id: orgId } },
+            { destination_store: { organization_id: orgId } },
+          ],
+        },
+      ],
+    },
     include: PURCHASE_ORDER_INCLUDE,
   }) as unknown as PurchaseOrderRow | null;
 }
@@ -166,11 +192,11 @@ export async function findById(id: string): Promise<PurchaseOrderRow | null> {
  * @param year - Année sur 4 chiffres (ex : 2026)
  * @returns Référence formatée, ex : "BC-2026-000001"
  */
-export async function getNextReference(year: number): Promise<string> {
+export async function getNextReference(orgId: string, year: number): Promise<string> {
   const rows = await prisma.$queryRaw<{ last_seq: bigint }[]>`
-    INSERT INTO "purchase_order_sequences" ("year", "last_seq")
-    VALUES (${year}, 1)
-    ON CONFLICT ("year") DO UPDATE
+    INSERT INTO "purchase_order_sequences" ("organization_id", "year", "last_seq")
+    VALUES (${orgId}, ${year}, 1)
+    ON CONFLICT ("organization_id", "year") DO UPDATE
       SET "last_seq" = "purchase_order_sequences"."last_seq" + 1
     RETURNING "last_seq"
   `;
@@ -186,7 +212,7 @@ export async function getNextReference(year: number): Promise<string> {
  * @param data - Données de la commande et de ses lignes
  * @returns La commande créée avec ses relations
  */
-export async function create(data: CreatePurchaseOrderData): Promise<PurchaseOrderRow> {
+export async function create(data: CreatePurchaseOrderData, orgId: string): Promise<PurchaseOrderRow> {
   // La création imbriquée (commande + lignes) est atomique nativement par Prisma —
   // pas besoin de $transaction explicite, ce qui évite le conflit pg sur le pool.
   return prisma.purchaseOrder.create({
@@ -199,10 +225,11 @@ export async function create(data: CreatePurchaseOrderData): Promise<PurchaseOrd
       expected_at:          data.expected_at ? new Date(data.expected_at) : null,
       items: {
         create: data.items.map((item) => ({
-          supplier_product_id: item.supplier_product_id,
-          ordered_qty:         item.ordered_qty,
-          unit_price:          item.unit_price,
-          packaging_format_id: item.packaging_format_id ?? null,
+          supplier_product_id:          item.supplier_product_id,
+          ordered_qty:                  item.ordered_qty,
+          unit_price:                   item.unit_price,
+          packaging_format_id:          item.packaging_format_id ?? null,
+          snapshotted_units_per_package: item.snapshotted_units_per_package,
         })),
       },
     },
@@ -220,24 +247,43 @@ export async function create(data: CreatePurchaseOrderData): Promise<PurchaseOrd
  * @param data - Champs à modifier (tous optionnels)
  * @returns La commande mise à jour avec ses relations
  */
-export async function update(id: string, data: UpdatePurchaseOrderData): Promise<PurchaseOrderRow> {
+function buildOrderWhere(id: string, orgId: string): Prisma.PurchaseOrderWhereUniqueInput {
+  return {
+    id,
+    AND: [
+      {
+        OR: [
+          { supplier: { organization_id: orgId } },
+          { destination_store: { organization_id: orgId } },
+        ],
+      },
+    ],
+  };
+}
+
+export async function update(
+  orgId: string,
+  id: string,
+  data: UpdatePurchaseOrderData,
+): Promise<PurchaseOrderRow> {
   const updateData: Record<string, unknown> = {};
-  if (data.notes                !== undefined) updateData.notes                = data.notes;
-  if (data.expected_at          !== undefined) updateData.expected_at          = data.expected_at ? new Date(data.expected_at) : null;
+  if (data.notes !== undefined) updateData.notes = data.notes;
+  if (data.expected_at !== undefined) updateData.expected_at = data.expected_at ? new Date(data.expected_at) : null;
   if (data.destination_store_id !== undefined) updateData.destination_store_id = data.destination_store_id;
 
   if (data.items !== undefined) {
     return prisma.purchaseOrder.update({
-      where: { id },
-      data:  {
+      where: buildOrderWhere(id, orgId),
+      data: {
         ...updateData,
         items: {
           deleteMany: {},
           create: data.items.map((item) => ({
             supplier_product_id: item.supplier_product_id,
-            ordered_qty:         item.ordered_qty,
-            unit_price:          item.unit_price,
+            ordered_qty: item.ordered_qty,
+            unit_price: item.unit_price,
             packaging_format_id: item.packaging_format_id ?? null,
+            snapshotted_units_per_package: item.snapshotted_units_per_package ?? 1,
           })),
         },
       },
@@ -246,8 +292,8 @@ export async function update(id: string, data: UpdatePurchaseOrderData): Promise
   }
 
   return prisma.purchaseOrder.update({
-    where:   { id },
-    data:    updateData,
+    where: buildOrderWhere(id, orgId),
+    data: updateData,
     include: PURCHASE_ORDER_INCLUDE,
   }) as unknown as PurchaseOrderRow;
 }
@@ -261,13 +307,14 @@ export async function update(id: string, data: UpdatePurchaseOrderData): Promise
  * @param opts   - Options supplémentaires (sent_at pour SENT)
  */
 export async function updateStatus(
+  orgId: string,
   id: string,
   status: PurchaseOrderStatus,
   opts: { sent_at?: boolean } = {},
 ): Promise<PurchaseOrderRow> {
   return prisma.purchaseOrder.update({
-    where:   { id },
-    data:    {
+    where: buildOrderWhere(id, orgId),
+    data: {
       status,
       ...(opts.sent_at ? { sent_at: new Date() } : {}),
     },
@@ -282,18 +329,23 @@ export async function updateStatus(
  * @param orderId - UUID de la commande
  * @param item    - Données de la nouvelle ligne
  */
-export async function addItem(orderId: string, item: OrderItemInput): Promise<PurchaseOrderRow> {
+export async function addItem(
+  orgId: string,
+  orderId: string,
+  item: OrderItemInput,
+): Promise<PurchaseOrderRow> {
   await prisma.purchaseOrderItem.create({
     data: {
-      order_id:            orderId,
+      order_id: orderId,
       supplier_product_id: item.supplier_product_id,
-      ordered_qty:         item.ordered_qty,
-      unit_price:          item.unit_price,
+      ordered_qty: item.ordered_qty,
+      unit_price: item.unit_price,
       packaging_format_id: item.packaging_format_id ?? null,
+      snapshotted_units_per_package: item.snapshotted_units_per_package ?? 1,
     },
   });
 
-  return findById(orderId) as Promise<PurchaseOrderRow>;
+  return findById(orderId, orgId) as Promise<PurchaseOrderRow>;
 }
 
 /**

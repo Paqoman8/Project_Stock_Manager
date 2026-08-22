@@ -46,7 +46,6 @@ const ERREURS_METIER_409 = new Set([
 const ERREURS_METIER_403 = new Set([
   // Règles absolues concernant le Super Administrateur
   "Impossible d'attribuer le rôle Super Administrateur à un nouvel utilisateur.",
-  'Un Super Administrateur existe déjà dans le système.',
   'Impossible de modifier le rôle du Super Administrateur.',
   "Impossible d'attribuer le rôle Super Administrateur.",
   'Le compte Super Administrateur ne peut pas être désactivé.',
@@ -91,12 +90,13 @@ function codeHttpPourErreurMetier(message: string): number | null {
  * Sécurité : pwd_hash n'est jamais retourné dans cette réponse.
  */
 export async function listUsers(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   // Par défaut on inclut les inactifs — SA et Admin doivent les voir.
   // Le query param permet de filtrer si le frontend a besoin d'un listing réduit.
   const inclureInactifs = req.query.includeInactive !== 'false';
 
   try {
-    const utilisateurs = await userService.getAllUsers(inclureInactifs);
+    const utilisateurs = await userService.getAllUsers(orgId, inclureInactifs);
 
     res.status(200).json({
       success: true,
@@ -116,11 +116,11 @@ export async function listUsers(req: AuthenticatedRequest, res: Response): Promi
  *
  * Crée un nouvel utilisateur.
  *
- * Body attendu : { username, email?, password, roleId, storeIds: string[] }
+ * Body attendu : { username, email, password, roleId, storeIds: string[] } — storeIds non vide.
  *
  * Protégé par requireAuth + requireRole('Super Administrateur', 'Administrateur').
  * Retourne 409 si username ou email déjà utilisé.
- * Retourne 400 si rôle ou magasin introuvable, ou si champs obligatoires manquants.
+ * Retourne 400 si rôle ou magasin introuvable, storeIds vide, ou champs obligatoires manquants.
  * Retourne 403 si l'Administrateur tente de créer un compte Administrateur ou SA.
  *
  * Sécurité : req.user!.roleId est passé au service pour les vérifications de hiérarchie.
@@ -135,10 +135,10 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
   };
 
   // Validation de présence des champs obligatoires
-  if (!username || !password || !roleId) {
+  if (!username || !email || !password || !roleId) {
     res.status(400).json({
       success: false,
-      message: 'Les champs username, password et roleId sont obligatoires.',
+      message: 'Les champs username, email, password et roleId sont obligatoires.',
     });
     return;
   }
@@ -146,6 +146,7 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
   // Validation des types
   if (
     typeof username !== 'string' ||
+    typeof email !== 'string' ||
     typeof password !== 'string' ||
     typeof roleId !== 'string'
   ) {
@@ -156,15 +157,8 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     return;
   }
 
-  if (email !== undefined && email !== null && typeof email !== 'string') {
-    res.status(400).json({
-      success: false,
-      message: 'Format de données invalide.',
-    });
-    return;
-  }
-
-  // storeIds doit être un tableau de chaînes (peut être vide pour un utilisateur sans magasin)
+  // storeIds doit être un tableau de chaînes non vide — un utilisateur doit
+  // toujours être rattaché à au moins un établissement à la création.
   if (!Array.isArray(storeIds) || !storeIds.every((id) => typeof id === 'string')) {
     res.status(400).json({
       success: false,
@@ -172,14 +166,24 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
     });
     return;
   }
+  if (storeIds.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: 'Veuillez attribuer au moins un établissement à cet utilisateur.',
+    });
+    return;
+  }
+
+    const orgId = req.user!.orgId;
 
   try {
     // On passe req.user!.roleId pour que le service puisse appliquer les règles
     // de hiérarchie (Admin ne peut pas créer un autre Admin).
     const nouvelUtilisateur = await userService.createUser(
+      orgId,
       {
         username,
-        email: typeof email === 'string' ? email : undefined,
+        email,
         password,
         roleId,
         storeIds,
@@ -218,7 +222,8 @@ export async function createUser(req: AuthenticatedRequest, res: Response): Prom
  * Met à jour un utilisateur existant.
  * Tous les champs du body sont optionnels — seuls ceux présents sont modifiés.
  *
- * Body accepté : { username?, email?, password?, roleId?, storeIds? }
+ * Body accepté : { username?, email?, password?, roleId?, storeIds? } —
+ * storeIds, s'il est fourni, ne peut pas être vide (absent = inchangé).
  *
  * Protégé par requireAuth + requireRole('Super Administrateur', 'Administrateur').
  * Retourne 403 si l'Administrateur tente de modifier un autre Administrateur ou SA.
@@ -268,10 +273,22 @@ export async function updateUser(req: AuthenticatedRequest, res: Response): Prom
     res.status(400).json({ success: false, message: 'Format de données invalide.' });
     return;
   }
+  // storeIds absent du body = on ne touche pas aux accès actuels (comportement inchangé).
+  // storeIds fourni mais vide = tentative de retirer tous les magasins — refusé, un
+  // utilisateur doit toujours rester rattaché à au moins un établissement.
+  if (storeIds !== undefined && storeIds.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: 'Veuillez attribuer au moins un établissement à cet utilisateur.',
+    });
+    return;
+  }
 
   try {
+    const orgId = req.user!.orgId;
     // On passe req.user!.roleId pour que le service applique les règles de hiérarchie.
     const utilisateurMisAJour = await userService.updateUser(
+      orgId,
       id,
       {
         username: username as string | undefined,
@@ -345,7 +362,9 @@ export async function deactivateUser(req: AuthenticatedRequest, res: Response): 
     : undefined;
 
   try {
+    const orgId = req.user!.orgId;
     await userService.deactivateUser(
+      orgId,
       id,
       { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
       reason,
@@ -399,7 +418,9 @@ export async function reactivateUser(req: AuthenticatedRequest, res: Response): 
   }
 
   try {
+    const orgId = req.user!.orgId;
     const utilisateurReactive = await userService.reactivateUser(
+      orgId,
       id,
       { id: req.user!.userId, roleId: req.user!.roleId, storeId: req.user!.storeId, ipAddress: extractIp(req) },
     );

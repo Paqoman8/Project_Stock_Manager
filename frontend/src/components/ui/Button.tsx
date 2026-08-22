@@ -1,5 +1,5 @@
 // src/components/ui/Button.tsx
-// Bouton réutilisable respectant le design system GStock (UI_UX_KIT.md).
+// Bouton réutilisable respectant le design system (UI_UX_KIT.md).
 // Variantes : primary (bleu fond plein), secondary (gris clair), danger (rouge).
 // Border-radius 4px (aspect logiciel professionnel, selon le design system).
 // forwardRef inclus pour permettre le focus programmatique (ex: Modal).

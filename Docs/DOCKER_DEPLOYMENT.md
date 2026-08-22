@@ -62,10 +62,10 @@ Docker interne. L'extérieur (navigateur) n'accède qu'au container frontend.
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Machine hôte                              │
 │                                                                  │
-│   Navigateur → http://localhost:3000                             │
+│   Navigateur → http://localhost:3005                             │
 │                        │                                         │
 │   ┌────────────────────▼────────────────────────────────────┐   │
-│   │           stockmanager-frontend  (port 3000)             │   │
+│   │           stockmanager-frontend  (port 3005)             │   │
 │   │                Next.js 16                                │   │
 │   │   /api/* ──────────────────────────────────────────┐    │   │
 │   └────────────────────────────────────────────────────│────┘   │
@@ -77,7 +77,7 @@ Docker interne. L'extérieur (navigateur) n'accède qu'au container frontend.
 │   └──────────────────────────────────────────────────────│───┘  │
 │                                                           │       │
 │   ┌───────────────────────────────────────────────────────▼───┐  │
-│   │           stockmanager-postgres  (port 5432)               │  │
+│   │           stockmanager-postgres  (port 5433)               │  │
 │   │                PostgreSQL 16                               │  │
 │   │   Volume persistant : postgres-data                        │  │
 │   └────────────────────────────────────────────────────────┘  │
@@ -87,14 +87,17 @@ Docker interne. L'extérieur (navigateur) n'accède qu'au container frontend.
 
 ### Résumé des rôles
 
-| Container | Image / Code | Port exposé | Rôle |
-|-----------|-------------|-------------|------|
-| `stockmanager-postgres` | `postgres:16-alpine` | 5432 | Base de données PostgreSQL |
-| `stockmanager-backend` | `./backend/` | 5001 | API REST + WebSocket |
-| `stockmanager-frontend` | `./frontend/` | **3000** | Interface web (seul port accessible depuis le navigateur) |
+| Container | Image / Code | Port exposé (hôte) | Rôle |
+|-----------|-------------|---------------------|------|
+| `stockmanager-postgres` | `postgres:16-alpine` | **5433** | Base de données PostgreSQL |
+| `stockmanager-backend` | `./backend/` | **5001** | API REST + WebSocket |
+| `stockmanager-frontend` | `./frontend/` | **3005** | Interface web (seul port accessible depuis le navigateur) |
 
 > Le port 5001 (backend) est exposé sur l'hôte uniquement pour le développement
 > (accès direct à l'API via un client REST). En production, on peut le supprimer.
+>
+> **Note :** en mode dev local (`npm run dev`), les ports sont différents : frontend sur 3000,
+> backend sur 5000, PostgreSQL sur 5433. Voir [INSTALLATION.md](INSTALLATION.md).
 
 ---
 
@@ -156,16 +159,16 @@ Résultat attendu :
 
 ```
 NAME                       STATUS          PORTS
-stockmanager-postgres      Up (healthy)    0.0.0.0:5432->5432/tcp
+stockmanager-postgres      Up (healthy)    0.0.0.0:5433->5432/tcp
 stockmanager-backend       Up              0.0.0.0:5001->5001/tcp
-stockmanager-frontend      Up              0.0.0.0:3000->3000/tcp
+stockmanager-frontend      Up              0.0.0.0:3005->3000/tcp
 ```
 
 Les trois containers doivent être en état `Up`.
 
 ### Étape 5 — Ouvrir l'application
 
-Naviguer vers **http://localhost:3000**
+Naviguer vers **http://localhost:3005**
 
 Se connecter avec le compte administrateur créé par le seed :
 
@@ -268,6 +271,8 @@ docker compose restart backend
 # Reset complet (supprime la base de données)
 docker compose down -v
 ```
+
+> Si `docker compose build` échoue, `docker compose up -d` relance simplement la dernière image qui avait été construite avec succès. C'est la raison classique d'un vieux frontend ou backend qui réapparaît après un redémarrage.
 
 ---
 
@@ -733,6 +738,7 @@ docker compose up --build -d frontend
 # Tester directement l'API backend depuis l'hôte
 curl http://localhost:5001/api/health
 # Réponse attendue : {"status":"ok","message":"..."}
+# (port 5001 en mode Docker — port 5000 en mode dev local)
 ```
 
 Si le backend répond mais que le frontend ne le joint pas, vérifier que `BACKEND_URL`
@@ -754,7 +760,7 @@ frontend:
 
 ### Erreur de connexion à la base de données
 
-**Symptôme :** `Can't reach database server at postgres:5432`
+**Symptôme :** `Can't reach database server at postgres:5432` (port interne Docker)
 
 ```bash
 # Vérifier que postgres est healthy
@@ -769,19 +775,20 @@ docker exec -it stockmanager-postgres psql -U admin -d gstock_db -c "SELECT 1;"
 
 ---
 
-### Le port 3000 ou 5432 est déjà utilisé
+### Le port 3005, 5001 ou 5433 est déjà utilisé
 
-**Symptôme :** `Bind for 0.0.0.0:3000 failed: port is already allocated`
+**Symptôme :** `Bind for 0.0.0.0:3005 failed: port is already allocated`
 
 Identifier le processus qui utilise le port :
 
 ```bash
 # macOS / Linux
-lsof -i :3000
-lsof -i :5432
+lsof -i :3005
+lsof -i :5001
+lsof -i :5433
 
 # Windows
-netstat -ano | findstr :3000
+netstat -ano | findstr :3005
 ```
 
 Arrêter le processus concerné, puis relancer `docker compose up -d`.

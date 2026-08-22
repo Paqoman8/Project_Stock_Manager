@@ -1,5 +1,5 @@
 // src/contexts/SessionContext.tsx
-// Contexte de session utilisateur pour GStock.
+// Contexte de session utilisateur pour Stock Manager.
 //
 // Responsabilités :
 //   1. Appeler GET /api/auth/me au montage pour hydrater le user courant.
@@ -38,6 +38,10 @@ export interface SessionUser {
   storeId: string;
   storeName: string;
   storeColor: string;
+  orgId: string;
+  orgName: string | null;
+  isPlatformManager: boolean;
+  mustChangePassword: boolean;
 }
 
 export interface SessionContextValue {
@@ -61,6 +65,10 @@ interface MeApiResponse {
     storeId: string;
     storeName: string;
     storeColor: string;
+    orgId: string;
+    orgName: string | null;
+    isPlatformManager: boolean;
+    mustChangePassword: boolean;
     isActive: boolean;
   };
 }
@@ -78,45 +86,44 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
-  // isLoading démarre à true : on ne rend pas les enfants dans un état indéfini
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Déconnexion : invalide le cookie côté serveur puis redirige.
-  // Défini en premier (useCallback) car les useEffect de polling le référencent.
   const logout = useCallback(async () => {
     try {
       await apiClient.post('/api/auth/logout');
     } catch {
-      // On redirige quoi qu'il arrive — une erreur réseau ne doit pas
-      // bloquer l'utilisateur sur une session potentiellement corrompue.
+      // On redirige quoi qu'il arrive
     } finally {
       setUser(null);
       router.replace('/login');
     }
   }, [router]);
 
-  // Hydratation initiale : récupère le profil depuis le backend.
-  // Le cookie httpOnly auth_token est envoyé automatiquement via withCredentials.
+  // Hydratation initiale
   useEffect(() => {
     async function fetchCurrentUser() {
       try {
         const { data } = await apiClient.get<MeApiResponse>('/api/auth/me');
 
         if (data.success) {
-          // On ne stocke que les champs dont l'UI a besoin — isActive est ignoré ici.
-          const { id, username, email, roleId, roleName, storeId, storeName, storeColor } =
-            data.user;
-          setUser({ id, username, email, roleId, roleName, storeId, storeName, storeColor });
+          const {
+            id, username, email, roleId, roleName,
+            storeId, storeName, storeColor,
+            orgId, orgName, isPlatformManager, mustChangePassword,
+          } = data.user;
+          setUser({
+            id, username, email, roleId, roleName,
+            storeId, storeName, storeColor,
+            orgId, orgName, isPlatformManager, mustChangePassword,
+          });
         }
       } catch (err) {
-        // Si le backend répond 401, le cookie est absent ou expiré :
-        // on redirige vers /login. Pour toute autre erreur réseau on laisse
-        // l'utilisateur sur la page (la Sidebar/Navbar affichera un état vide).
-        if (axios.isAxiosError(err) && err.response?.status === 401) {
+        // 401 : pas de session valide. 403 : organisation suspendue/désactivée
+        // (requireOrg) — dans les deux cas, retour à l'écran de connexion.
+        if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 403)) {
           router.replace('/login');
         }
       } finally {
-        // Dans tous les cas on quitte l'état de chargement
         setIsLoading(false);
       }
     }
@@ -124,16 +131,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     fetchCurrentUser();
   }, [router]);
 
-  // ---------------------------------------------------------------------------
-  // Polling toutes les 2 minutes — vérification de la validité du compte
-  // ---------------------------------------------------------------------------
-  // On ne démarre le polling que lorsqu'un utilisateur est chargé et actif.
-  // Si le compte est désactivé entre deux navigations, le polling force
-  // la déconnexion sans attendre une action utilisateur.
-  //
-  // Les erreurs réseau non-401 (timeout, 5xx, CORS, etc.) sont ignorées
-  // intentionnellement : une panne backend temporaire ne doit pas déconnecter
-  // l'utilisateur. Seule une réponse 401 explicite signifie "token invalide".
+  // Polling toutes les 2 minutes
   useEffect(() => {
     if (!user) return;
 
@@ -141,35 +139,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       try {
         const res = await apiClient.get<MeApiResponse>('/api/auth/me');
         if (!res.data.user.isActive) {
-          // Le compte a été désactivé par un administrateur → déconnexion forcée
           await logout();
         }
       } catch (err) {
-        if (axios.isAxiosError(err) && err.response?.status === 401) {
-          // Token expiré ou invalidé → déconnexion propre
+        // 401 : cookie expiré/absent. 403 : organisation suspendue/désactivée
+        // (requireOrg sur /api/auth/me) — dans les deux cas, déconnexion forcée.
+        if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 403)) {
           await logout();
         }
-        // Autres erreurs (réseau, 5xx, timeout) : on ignore.
-        // Ne pas déconnecter pour une panne backend temporaire.
       }
-    }, 2 * 60 * 1000); // 2 minutes
+    }, 2 * 60 * 1000);
 
     return () => clearInterval(intervalle);
   }, [user, logout]);
 
-  // ---------------------------------------------------------------------------
-  // Vérification au retour de focus de la fenêtre (visibilitychange)
-  // ---------------------------------------------------------------------------
-  // Complète le polling pour les longues absences (onglet mis en veille).
-  // Dès que l'utilisateur revient sur l'onglet, on vérifie immédiatement
-  // si le compte est encore valide — sans attendre le prochain tick du polling.
-  //
-  // Même politique que le polling : les erreurs non-401 sont ignorées.
+  // Vérification au retour de focus
   useEffect(() => {
     if (!user) return;
 
     async function verifierAuFocus() {
-      // On ne vérifie qu'au retour en visibilité (pas lors du masquage de l'onglet)
       if (document.visibilityState !== 'visible') return;
       try {
         const res = await apiClient.get<MeApiResponse>('/api/auth/me');
@@ -177,10 +165,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           await logout();
         }
       } catch (err) {
-        if (axios.isAxiosError(err) && err.response?.status === 401) {
+        if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 403)) {
           await logout();
         }
-        // Erreurs réseau non-401 : ignorées (cf. commentaire polling ci-dessus)
       }
     }
 
@@ -199,11 +186,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 // Hook
 // ---------------------------------------------------------------------------
 
-/**
- * Consomme le SessionContext.
- * Lance une erreur si utilisé hors d'un SessionProvider —
- * cela révèle une erreur d'intégration en développement.
- */
 export function useSession(): SessionContextValue {
   const ctx = useContext(SessionContext);
   if (ctx === null) {

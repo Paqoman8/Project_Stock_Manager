@@ -11,27 +11,8 @@ import { z, ZodError } from 'zod';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName } from '../services/audit.service';
 import * as storeService from '../services/store.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  }
-  return req.ip ?? '';
-}
-
-/**
- * Formate les erreurs Zod en tableau lisible pour le client.
- * Retourne un tableau de messages : ["name: Required", "color: Couleur invalide"]
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schémas Zod
@@ -43,7 +24,7 @@ function formatZodErrors(err: ZodError): string[] {
  */
 const createStoreSchema = z.object({
   name:        z.string().min(1, 'Le nom est obligatoire').max(100, 'Le nom ne peut pas dépasser 100 caractères'),
-  type:        z.enum(['MAGASIN', 'BOUTIQUE', 'ENTREPOT'], 'Le type doit être MAGASIN, BOUTIQUE ou ENTREPOT'),
+  type:        z.string().trim().min(1, 'Le type est obligatoire').max(50, 'Le type ne peut pas dépasser 50 caractères'),
   color:       z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'La couleur doit être un code hexadécimal valide (ex: #1D4ED8)'),
   location:    z.string().max(200, 'La localisation ne peut pas dépasser 200 caractères').optional(),
   phone:       z.string().max(20,  'Le téléphone ne peut pas dépasser 20 caractères').optional(),
@@ -56,7 +37,7 @@ const createStoreSchema = z.object({
  */
 const updateStoreSchema = z.object({
   name:        z.string().min(1, 'Le nom est obligatoire').max(100, 'Le nom ne peut pas dépasser 100 caractères').optional(),
-  type:        z.enum(['MAGASIN', 'BOUTIQUE', 'ENTREPOT'], 'Le type doit être MAGASIN, BOUTIQUE ou ENTREPOT').optional(),
+  type:        z.string().trim().min(1, 'Le type est obligatoire').max(50, 'Le type ne peut pas dépasser 50 caractères').optional(),
   color:       z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'La couleur doit être un code hexadécimal valide (ex: #1D4ED8)').optional(),
   location:    z.string().max(200, 'La localisation ne peut pas dépasser 200 caractères').optional(),
   phone:       z.string().max(20,  'Le téléphone ne peut pas dépasser 20 caractères').optional(),
@@ -76,8 +57,9 @@ const updateStoreSchema = z.object({
  * Réponse 200 : { success: true, stores: StoreRow[] }
  */
 export async function getStores(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   try {
-    const stores = await storeService.getAllStores();
+    const stores = await storeService.getAllStores(orgId);
 
     res.status(200).json({
       success: true,
@@ -115,6 +97,7 @@ export async function createStore(req: AuthenticatedRequest, res: Response): Pro
   }
 
   const actorId = req.user!.userId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -122,7 +105,7 @@ export async function createStore(req: AuthenticatedRequest, res: Response): Pro
     const actorName = await resolveActorName(actorId);
 
     const store = await storeService.createStore(
-      parseResult.data,
+      { ...parseResult.data, orgId },
       actorId,
       actorName,
       ip,
@@ -134,6 +117,14 @@ export async function createStore(req: AuthenticatedRequest, res: Response): Pro
       store,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'STORE_TYPE_RESERVED') {
+      res.status(422).json({
+        success: false,
+        message: 'Le type "HUB" est réservé au Hub Central et ne peut pas être attribué manuellement.',
+      });
+      return;
+    }
+
     console.error('Erreur lors de la création de l\'établissement :', error);
     res.status(500).json({
       success: false,
@@ -176,12 +167,14 @@ export async function updateStore(req: AuthenticatedRequest, res: Response): Pro
   }
 
   const actorId = req.user!.userId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
     const actorName = await resolveActorName(actorId);
 
     const store = await storeService.updateStore(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -195,6 +188,14 @@ export async function updateStore(req: AuthenticatedRequest, res: Response): Pro
       store,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'STORE_TYPE_RESERVED') {
+      res.status(422).json({
+        success: false,
+        message: 'Le type "HUB" est réservé au Hub Central et ne peut pas être attribué manuellement.',
+      });
+      return;
+    }
+
     // Gestion du cas "établissement introuvable" (erreur Prisma P2025)
     if (error instanceof Error && error.message.includes('Record to update not found')) {
       res.status(404).json({
@@ -222,13 +223,14 @@ export async function updateStore(req: AuthenticatedRequest, res: Response): Pro
  * Réponse 200 : { success: true, message, store: StoreRow }
  */
 export async function closeStore(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const id = req.params.id as string;
+  const id      = req.params.id as string;
   const actorId = req.user!.userId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
     const actorName = await resolveActorName(actorId);
-    const store = await storeService.closeStore(id, actorId, actorName, ip);
+    const store = await storeService.closeStore(orgId, id, actorId, actorName, ip);
 
     res.status(200).json({
       success: true,
@@ -270,13 +272,14 @@ export async function closeStore(req: AuthenticatedRequest, res: Response): Prom
  * Réponse 200 : { success: true, message, store: StoreRow }
  */
 export async function reopenStore(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const id = req.params.id as string;
+  const id      = req.params.id as string;
   const actorId = req.user!.userId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
     const actorName = await resolveActorName(actorId);
-    const store = await storeService.reopenStore(id, actorId, actorName, ip);
+    const store = await storeService.reopenStore(orgId, id, actorId, actorName, ip);
 
     res.status(200).json({
       success: true,
@@ -314,13 +317,14 @@ export async function reopenStore(req: AuthenticatedRequest, res: Response): Pro
  * Réponse 409 : { success: false, message } si données liées détectées
  */
 export async function deleteStore(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const id = req.params.id as string;
+  const id      = req.params.id as string;
   const actorId = req.user!.userId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
     const actorName = await resolveActorName(actorId);
-    await storeService.deleteStore(id, actorId, actorName, ip);
+    await storeService.deleteStore(orgId, id, actorId, actorName, ip);
 
     res.status(200).json({
       success: true,
@@ -332,6 +336,15 @@ export async function deleteStore(req: AuthenticatedRequest, res: Response): Pro
       res.status(409).json({
         success: false,
         message: 'Cet établissement ne peut pas être supprimé car il possède des données liées.',
+      });
+      return;
+    }
+
+    // Cas métier : établissement protégé (ex: Hub Central) — non supprimable
+    if (error instanceof Error && error.message === 'STORE_PROTECTED') {
+      res.status(403).json({
+        success: false,
+        message: 'Cet établissement est protégé et ne peut pas être supprimé.',
       });
       return;
     }

@@ -7,6 +7,7 @@
 //   - Sélecteur partagé PRODUCT_SELECT pour garantir une forme constante
 //   - Recherche textuelle sur name ou sku, filtres par catégorie et statut
 
+import { ProductUnit } from '@prisma/client';
 import { prisma } from '../config/database';
 
 // ---------------------------------------------------------------------------
@@ -18,18 +19,19 @@ import { prisma } from '../config/database';
  * Le prix est sérialisé en string pour éviter la perte de précision Decimal.
  */
 export interface ProductRow {
-  id:          string;
-  sku:         string;
-  name:        string;
-  description: string | null;
-  price:       string;   // Decimal sérialisé en string
-  unit:        string;   // ProductUnit enum
-  is_active:   boolean;
-  created_at:  Date;
-  updated_at:  Date;
-  category_id: string;
-  category:    { id: string; name: string };
-  _count:      { inventories: number };
+  id:              string;
+  organization_id: string;
+  sku:             string;
+  name:            string;
+  description:     string | null;
+  price:           string;   // Decimal sérialisé en string
+  unit:            string;   // ProductUnit enum
+  is_active:       boolean;
+  created_at:      Date;
+  updated_at:      Date;
+  category_id:     string;
+  category:        { id: string; name: string };
+  _count:          { inventories: number };
 }
 
 /**
@@ -51,7 +53,7 @@ export type CreateProductData = {
   sku:         string;
   name:        string;
   price:       number;
-  unit?:       string;
+  unit?:       ProductUnit;
   category_id: string;
   description?: string;
 };
@@ -68,16 +70,17 @@ export type UpdateProductData = Partial<Omit<CreateProductData, 'sku'>>;
 // ---------------------------------------------------------------------------
 
 const PRODUCT_SELECT = {
-  id:          true,
-  sku:         true,
-  name:        true,
-  description: true,
-  price:       true,
-  unit:        true,
-  is_active:   true,
-  created_at:  true,
-  updated_at:  true,
-  category_id: true,
+  id:              true,
+  organization_id: true,
+  sku:             true,
+  name:            true,
+  description:     true,
+  price:           true,
+  unit:            true,
+  is_active:       true,
+  created_at:      true,
+  updated_at:      true,
+  category_id:     true,
   category: { select: { id: true, name: true } },
   _count:   { select: { inventories: true } },
 } as const;
@@ -97,11 +100,12 @@ const PRODUCT_SELECT = {
  * @param filters - { search?, categoryId?, isActive? }
  * @returns Tableau de ProductRow, potentiellement vide
  */
-export async function findAll(filters: ProductFilters = {}): Promise<ProductRow[]> {
+export async function findAll(orgId: string, filters: ProductFilters = {}): Promise<ProductRow[]> {
   const { search, categoryId, isActive } = filters;
 
   const rows = await prisma.product.findMany({
     where: {
+      organization_id: orgId,
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(categoryId ? { category_id: categoryId } : {}),
       ...(search
@@ -126,9 +130,9 @@ export async function findAll(filters: ProductFilters = {}): Promise<ProductRow[
  *
  * @param id - UUID du produit
  */
-export async function findById(id: string): Promise<ProductRow | null> {
+export async function findById(orgId: string, id: string): Promise<ProductRow | null> {
   const row = await prisma.product.findUnique({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     select: PRODUCT_SELECT,
   });
   return row ? serializeProduct(row) : null;
@@ -142,9 +146,10 @@ export async function findById(id: string): Promise<ProductRow | null> {
  * @param excludeId - UUID à exclure (non utilisé pour SKU qui est immuable,
  *                    conservé pour cohérence avec le pattern du repo)
  */
-export async function findBySku(sku: string, excludeId?: string): Promise<ProductRow | null> {
+export async function findBySku(orgId: string, sku: string, excludeId?: string): Promise<ProductRow | null> {
   const row = await prisma.product.findFirst({
     where: {
+      organization_id: orgId,
       sku:  { equals: sku, mode: 'insensitive' },
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
@@ -159,18 +164,59 @@ export async function findBySku(sku: string, excludeId?: string): Promise<Produc
  * @param data - { sku, name, price, category_id, description? }
  * @returns Le produit créé
  */
-export async function create(data: CreateProductData): Promise<ProductRow> {
+export async function create(orgId: string, data: CreateProductData): Promise<ProductRow> {
   const row = await prisma.product.create({
     data: {
+      organization_id: orgId,
       sku:         data.sku,
       name:        data.name,
       price:       data.price,
+      unit:        data.unit,
       category_id: data.category_id,
       description: data.description ?? null,
     },
     select: PRODUCT_SELECT,
   });
   return serializeProduct(row);
+}
+
+/**
+ * Crée un produit et son unité de base en une seule transaction atomique.
+ * Si l'une des deux insertions échoue, les deux sont annulées.
+ *
+ * @param data        - Données du produit
+ * @param formatLabel - Libellé de l'unité de base (ex. "Pièce", "Kg")
+ */
+export async function createWithBaseFormat(
+  orgId: string,
+  data: CreateProductData,
+  formatLabel: string,
+): Promise<ProductRow> {
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.product.create({
+      data: {
+        organization_id: orgId,
+        sku:         data.sku,
+        name:        data.name,
+        price:       data.price,
+        unit:        data.unit,
+        category_id: data.category_id,
+        description: data.description ?? null,
+      },
+      select: PRODUCT_SELECT,
+    });
+
+    await tx.packagingFormat.create({
+      data: {
+        product_id:        row.id,
+        label:             formatLabel,
+        units_per_package: 1,
+        is_base_unit:      true,
+      },
+    });
+
+    return serializeProduct(row);
+  });
 }
 
 /**
@@ -181,7 +227,7 @@ export async function create(data: CreateProductData): Promise<ProductRow> {
  * @param data - Champs à modifier (sku exclu)
  * @returns Le produit mis à jour
  */
-export async function update(id: string, data: UpdateProductData): Promise<ProductRow> {
+export async function update(orgId: string, id: string, data: UpdateProductData): Promise<ProductRow> {
   const updateData: Record<string, unknown> = {};
   if (data.name        !== undefined) updateData.name        = data.name;
   if (data.price       !== undefined) updateData.price       = data.price;
@@ -190,7 +236,7 @@ export async function update(id: string, data: UpdateProductData): Promise<Produ
   if (data.description !== undefined) updateData.description = data.description;
 
   const row = await prisma.product.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   updateData,
     select: PRODUCT_SELECT,
   });
@@ -204,9 +250,9 @@ export async function update(id: string, data: UpdateProductData): Promise<Produ
  * @param isActive - true pour activer, false pour désactiver
  * @returns Le produit mis à jour
  */
-export async function setActive(id: string, isActive: boolean): Promise<ProductRow> {
+export async function setActive(orgId: string, id: string, isActive: boolean): Promise<ProductRow> {
   const row = await prisma.product.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   { is_active: isActive },
     select: PRODUCT_SELECT,
   });
@@ -223,31 +269,33 @@ export async function setActive(id: string, isActive: boolean): Promise<ProductR
  * convertit en string pour éviter toute perte de précision côté client.
  */
 function serializeProduct(row: {
-  id:          string;
-  sku:         string;
-  name:        string;
-  description: string | null;
-  price:       { toString(): string };
-  unit:        string;
-  is_active:   boolean;
-  created_at:  Date;
-  updated_at:  Date;
-  category_id: string;
-  category:    { id: string; name: string };
-  _count:      { inventories: number };
+  id:              string;
+  organization_id: string;
+  sku:             string;
+  name:            string;
+  description:     string | null;
+  price:           { toString(): string };
+  unit:            string;
+  is_active:       boolean;
+  created_at:      Date;
+  updated_at:      Date;
+  category_id:     string;
+  category:        { id: string; name: string };
+  _count:          { inventories: number };
 }): ProductRow {
   return {
-    id:          row.id,
-    sku:         row.sku,
-    name:        row.name,
-    description: row.description,
-    price:       row.price.toString(),
-    unit:        row.unit,
-    is_active:   row.is_active,
-    created_at:  row.created_at,
-    updated_at:  row.updated_at,
-    category_id: row.category_id,
-    category:    row.category,
-    _count:      row._count,
+    id:              row.id,
+    organization_id: row.organization_id,
+    sku:             row.sku,
+    name:            row.name,
+    description:     row.description,
+    price:           row.price.toString(),
+    unit:            row.unit,
+    is_active:       row.is_active,
+    created_at:      row.created_at,
+    updated_at:      row.updated_at,
+    category_id:     row.category_id,
+    category:        row.category,
+    _count:          row._count,
   };
 }

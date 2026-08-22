@@ -1,6 +1,6 @@
 # Gestion des produits — Catalogue et Inventaire
 
-**Projet :** GStock — ERP retail multi-établissements
+**Projet :** Stock Manager — ERP retail multi-établissements
 **Stack :** Express + TypeScript + Prisma + PostgreSQL + Next.js 16
 **Audience :** Développeurs reprenant ou maintenant le projet
 **Date de rédaction :** 2026-04-30

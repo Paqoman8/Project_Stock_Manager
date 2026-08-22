@@ -11,27 +11,8 @@ import { PurchaseOrderStatus } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as orderService from '../services/purchase_order.service';
-
-// ---------------------------------------------------------------------------
-// Helpers internes
-// ---------------------------------------------------------------------------
-
-/** Extrait l'IP réelle du client (gère les proxys via X-Forwarded-For). */
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  }
-  return req.ip ?? '';
-}
-
-/**
- * Formate les erreurs Zod en tableau de messages lisibles pour le client.
- * Exemple : ["items.0.ordered_qty: Expected number, received nan"]
- */
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schémas Zod
@@ -104,6 +85,7 @@ export type UpdatePurchaseOrderInput = z.infer<typeof updatePurchaseOrderSchema>
  * Réponse 200 : { success: true, orders: PurchaseOrderRow[] }
  */
 export async function getPurchaseOrders(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId                 = req.user!.orgId;
   const supplier_id          = req.query.supplier_id          as string | undefined;
   const destination_store_id = req.query.destination_store_id as string | undefined;
   const statusRaw            = req.query.status               as string | undefined;
@@ -123,7 +105,7 @@ export async function getPurchaseOrders(req: AuthenticatedRequest, res: Response
   }
 
   try {
-    const orders = await orderService.getPurchaseOrders({
+    const orders = await orderService.getPurchaseOrders(orgId, {
       supplier_id,
       destination_store_id,
       status,
@@ -146,10 +128,11 @@ export async function getPurchaseOrders(req: AuthenticatedRequest, res: Response
  * Réponse 404 : { success: false, message } si introuvable
  */
 export async function getPurchaseOrderById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   try {
-    const order = await orderService.getPurchaseOrderById(id);
+    const order = await orderService.getPurchaseOrderById(orgId, id);
     res.status(200).json({ success: true, order });
   } catch (error) {
     if (error instanceof Error && error.message === 'ORDER_NOT_FOUND') {
@@ -186,6 +169,7 @@ export async function createPurchaseOrder(req: AuthenticatedRequest, res: Respon
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -195,6 +179,7 @@ export async function createPurchaseOrder(req: AuthenticatedRequest, res: Respon
     ]);
 
     const order = await orderService.createPurchaseOrder(
+      orgId,
       parseResult.data,
       actorId,
       actorName,
@@ -267,6 +252,7 @@ export async function updatePurchaseOrder(req: AuthenticatedRequest, res: Respon
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -276,6 +262,7 @@ export async function updatePurchaseOrder(req: AuthenticatedRequest, res: Respon
     ]);
 
     const order = await orderService.updatePurchaseOrder(
+      orgId,
       id,
       parseResult.data,
       actorId,
@@ -330,6 +317,7 @@ export async function updatePurchaseOrder(req: AuthenticatedRequest, res: Respon
  * Réponse 422 : { success: false, message } si statut invalide
  */
 export async function sendPurchaseOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -341,7 +329,7 @@ export async function sendPurchaseOrder(req: AuthenticatedRequest, res: Response
       resolveStoreName(storeId),
     ]);
 
-    const order = await orderService.sendPurchaseOrder(id, actorId, actorName, storeId, storeName, ip);
+    const order = await orderService.sendPurchaseOrder(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,
@@ -394,6 +382,7 @@ export async function sendPurchaseOrder(req: AuthenticatedRequest, res: Response
  * Réponse 422 : { success: false, message } si statut invalide
  */
 export async function closePurchaseOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -405,7 +394,7 @@ export async function closePurchaseOrder(req: AuthenticatedRequest, res: Respons
       resolveStoreName(storeId),
     ]);
 
-    const order = await orderService.closePurchaseOrder(id, actorId, actorName, storeId, storeName, ip);
+    const order = await orderService.closePurchaseOrder(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,
@@ -441,6 +430,7 @@ export async function closePurchaseOrder(req: AuthenticatedRequest, res: Respons
  * Réponse 422 : { success: false, message } si statut invalide
  */
 export async function cancelPurchaseOrder(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -452,7 +442,7 @@ export async function cancelPurchaseOrder(req: AuthenticatedRequest, res: Respon
       resolveStoreName(storeId),
     ]);
 
-    const order = await orderService.cancelPurchaseOrder(id, actorId, actorName, storeId, storeName, ip);
+    const order = await orderService.cancelPurchaseOrder(orgId, id, actorId, actorName, storeId, storeName, ip);
 
     res.status(200).json({
       success: true,

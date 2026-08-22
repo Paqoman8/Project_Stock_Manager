@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   getCategories,
   getCategoryById,
@@ -20,13 +21,13 @@ import {
 const categoryRouter = Router();
 
 // Raccourci pour la pile de middlewares réservée au Super Administrateur
-const superAdminOnly = [requireAuth, requireRole('Super Administrateur')];
+const superAdminOnly = [requireAuth, requireOrg, requireRole('Super Administrateur')];
 
 // GET /api/categories — liste toutes les catégories avec parent et compteurs
-categoryRouter.get('/', requireAuth, getCategories);
+categoryRouter.get('/', requireAuth, requireOrg, getCategories);
 
 // GET /api/categories/:id — récupère une catégorie par son UUID
-categoryRouter.get('/:id', requireAuth, getCategoryById);
+categoryRouter.get('/:id', requireAuth, requireOrg, getCategoryById);
 
 // POST /api/categories — crée une nouvelle catégorie
 categoryRouter.post('/', superAdminOnly, createCategory);

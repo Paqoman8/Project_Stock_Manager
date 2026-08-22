@@ -4,16 +4,27 @@ Ce guide décrit comment installer et démarrer Stock Manager en environnement d
 
 ---
 
+## Deux modes de travail
+
+| Mode | Commande | Usage |
+|------|----------|-------|
+| **Dev local** | `npm run dev` | Travail quotidien — rechargement à chaud, corrections instantanées |
+| **Docker complet** | `make setup` | Validation, démo, recette — environnement propre proche de la prod |
+
+En mode dev local, seul PostgreSQL tourne dans Docker. Backend et frontend sont natifs (Node.js local).
+
+---
+
 ## Prérequis
 
 | Outil | Version minimale | Usage |
 |-------|-----------------|-------|
 | Node.js | 20.x LTS | Runtime backend et frontend |
 | npm | 10.x | Gestionnaire de paquets |
-| Docker + Docker Compose | Récent | PostgreSQL 16 |
+| Docker Desktop | Récent | PostgreSQL 16 (dev local) ou stack complète (Docker mode) |
 | Git | Récent | Clonage du dépôt |
 
-Vérifier les versions installées :
+Vérifier les versions :
 
 ```bash
 node -v    # >= 20.0.0
@@ -24,90 +35,26 @@ git -v
 
 ---
 
-## Installation étape par étape
+## Mode dev local (recommandé pour le développement)
 
-### 1. Cloner le dépôt
-
-```bash
-git clone <url-du-repo> gstock
-cd gstock
-```
-
-### 2. Démarrer la base de données
-
-PostgreSQL 16 tourne dans un conteneur Docker :
+### Premier setup (une seule fois)
 
 ```bash
-docker compose up -d
-```
+# 1. Cloner le dépôt
+git clone <url-du-repo> stock-manager
+cd stock-manager
 
-Vérifier que le conteneur est actif :
-
-```bash
-docker ps
-# gstock-postgres doit apparaître avec l'état "Up"
-```
-
-Paramètres de la base (définis dans `docker-compose.yml`) :
-
-| Paramètre | Valeur |
-|-----------|--------|
-| Host | `localhost` |
-| Port | `5432` |
-| Database | `gstock_db` |
-| User | `admin` |
-| Password | `adminpassword` |
-
-### 3. Configurer le backend
-
-```bash
-cd backend
-```
-
-Créer le fichier d'environnement :
-
-```bash
-cp .env.example .env
-```
-
-Contenu du fichier `.env` à renseigner :
-
-```env
-# Connexion à la base de données
-DATABASE_URL="postgresql://admin:adminpassword@localhost:5432/gstock_db?schema=public"
-
-# Secret JWT — utiliser une valeur aléatoire longue en production
-JWT_SECRET="changez-moi-avec-openssl-rand-hex-32"
-
-# Environnement
-NODE_ENV="development"
-
-# Port du serveur Express (optionnel, défaut : 5000)
-PORT=5000
-
-# URL du frontend (pour CORS)
-FRONTEND_URL="http://localhost:3000"
-```
-
-> En production, générer un `JWT_SECRET` sécurisé : `openssl rand -hex 32`
-
-### 4. Installer les dépendances backend
-
-```bash
+# 2. Installer toutes les dépendances (backend + frontend en une commande)
 npm install
-```
 
-### 5. Appliquer les migrations et générer le client Prisma
+# 3. Démarrer PostgreSQL
+npm run dev:db
 
-```bash
-npx prisma migrate dev
-npx prisma generate
-```
+# 4. Appliquer les migrations de base de données
+npm run db:migrate
 
-### 6. Peupler la base avec les données initiales
-
-```bash
-npx prisma db seed
+# 5. Peupler la base avec les données initiales
+npm run db:seed
 ```
 
 Le seed crée :
@@ -121,45 +68,100 @@ Le seed crée :
 | Mot de passe | `Admin@2026!` |
 | Rôle | Super Administrateur |
 
-> Ces identifiants sont uniquement pour le développement. Changer le mot de passe après la première connexion en production.
-
-### 7. Démarrer le backend
+### Utilisation quotidienne
 
 ```bash
 npm run dev
 ```
 
-Le serveur Express démarre sur `http://localhost:5000`. Un message de confirmation apparaît dans le terminal.
+Cette commande unique :
+- Démarre PostgreSQL dans Docker sur `localhost:5433` (si pas déjà actif)
+- Lance le backend Express sur `http://localhost:5001`
+- Lance le frontend Next.js sur `http://localhost:3000`
+- Regroupe les logs des deux services dans le même terminal
 
-### 8. Configurer le frontend
+`Ctrl+C` arrête proprement backend et frontend. PostgreSQL continue de tourner en arrière-plan.
 
-Dans un nouveau terminal :
+### URLs de développement
+
+| Service | URL |
+|---------|-----|
+| Application | `http://localhost:3000` |
+| API backend | `http://localhost:5001` |
+| PostgreSQL | `localhost:5433` |
+
+### Après un `git pull`
 
 ```bash
-cd frontend
-cp .env.example .env.local
+npm run db:migrate   # si de nouvelles migrations ont été ajoutées
+npm run dev          # reprendre le travail
 ```
 
-Contenu du fichier `frontend/.env.local` :
+`npm install` n'est nécessaire que si `package.json` a changé.
+
+`npm run db:seed` n'est pas à relancer à chaque session — seulement si vous voulez réinitialiser les données de test.
+
+---
+
+## Configuration optionnelle (variables d'environnement)
+
+Le script `dev-local.sh` utilise des valeurs par défaut fonctionnelles pour le développement. Un fichier `.env` à la racine permet de les surcharger si nécessaire.
+
+Variables disponibles (toutes optionnelles en dev) :
 
 ```env
-# URL de l'API (optionnel en dev — les rewrites Next.js gèrent la redirection)
-NEXT_PUBLIC_API_URL="http://localhost:5000"
+DATABASE_URL="postgresql://admin:adminpassword@localhost:5433/gstock_db?schema=public"
+JWT_SECRET="changez-moi-en-production-avec-openssl-rand-hex-32"
+NODE_ENV="development"
+PORT=5001
+FRONTEND_URL="http://localhost:3000"
+NEXT_PUBLIC_APP_NAME="Stock Manager"
 ```
 
-### 9. Installer les dépendances frontend
+> En production, générer un `JWT_SECRET` fort : `openssl rand -hex 32`
+
+---
+
+## Commandes disponibles depuis la racine
+
+### Dev local
 
 ```bash
-npm install
+npm run dev            # Tout démarrer (PostgreSQL + backend + frontend)
+npm run dev:db         # PostgreSQL seulement
+npm run dev:backend    # Backend seulement
+npm run dev:frontend   # Frontend seulement
+npm install            # Installer les dépendances backend + frontend
 ```
 
-### 10. Démarrer le frontend
+### Base de données
 
 ```bash
-npm run dev
+npm run db:migrate     # Appliquer les migrations en attente
+npm run db:seed        # Rejouer le seed (rôles + Hub Central + super.admin)
+make studio            # Prisma Studio → http://localhost:5555
+make db-shell          # Shell PostgreSQL interactif
+make backup            # Sauvegarder la DB → backups/backup_YYYYMMDD.sql
 ```
 
-L'application Next.js démarre sur `http://localhost:3000`.
+### Backend (depuis `backend/`)
+
+```bash
+npm run dev            # Démarrer en mode watch (ts-node)
+npm run build          # Compiler TypeScript → dist/
+npm start              # Démarrer le build compilé
+npx prisma studio      # Interface graphique DB
+npx prisma migrate reset  # Réinitialiser migrations + seed (⚠️ perd les données)
+```
+
+### Frontend (depuis `frontend/`)
+
+```bash
+npm run dev            # Démarrer en mode développement
+npm run build          # Build de production
+npm start              # Démarrer le build de production
+npm run lint           # Linter
+```
 
 ---
 
@@ -176,90 +178,42 @@ Le dashboard doit s'afficher avec la navigation complète.
 
 ---
 
-## Commandes utiles
-
-### Backend
-
-```bash
-# Démarrer en mode développement (watch)
-npm run dev
-
-# Compiler TypeScript
-npm run build
-
-# Démarrer la version compilée
-npm start
-
-# Ouvrir Prisma Studio (interface graphique DB)
-npx prisma studio
-
-# Réinitialiser la base et relancer le seed
-npx prisma migrate reset
-```
-
-### Frontend
-
-```bash
-# Démarrer en mode développement
-npm run dev
-
-# Build de production
-npm run build
-
-# Démarrer le build de production
-npm start
-
-# Linter
-npm run lint
-```
-
-### Docker
-
-```bash
-# Démarrer PostgreSQL
-docker compose up -d
-
-# Arrêter PostgreSQL
-docker compose down
-
-# Voir les logs PostgreSQL
-docker logs gstock-postgres
-
-# Arrêter et supprimer les volumes (réinitialisation complète)
-docker compose down -v
-```
-
----
-
 ## Dépannage
 
 ### Le backend ne démarre pas
 
-- Vérifier que le fichier `.env` existe dans `backend/`
-- Vérifier que PostgreSQL est actif : `docker ps`
-- Vérifier que le port 5000 est libre : `lsof -i :5000`
+- Vérifier que PostgreSQL est actif : `docker ps` (chercher `stockmanager-postgres`)
+- Vérifier que le port 5000 est libre : `lsof -i :5001`
+- Si PostgreSQL n'est pas démarré : `npm run dev:db`
 
 ### Erreur Prisma "Can't reach database server"
 
-- S'assurer que le conteneur Docker est actif : `docker compose up -d`
-- Vérifier que `DATABASE_URL` dans `.env` correspond aux paramètres de `docker-compose.yml`
+- Démarrer PostgreSQL : `npm run dev:db`
+- Vérifier que `DATABASE_URL` pointe sur le port **5433** (port hôte du conteneur Docker)
 
 ### Le frontend affiche une erreur de réseau
 
-- Vérifier que le backend tourne sur le port 5000
+- Vérifier que le backend tourne : `curl http://localhost:5001/api/health`
 - Vérifier les rewrites dans `frontend/next.config.ts`
-- S'assurer que `withCredentials: true` est configuré dans `frontend/src/lib/apiClient.ts`
+- Vérifier que `withCredentials: true` est configuré dans `frontend/src/lib/apiClient.ts`
 
 ### Erreur "Invalid token" ou redirection vers /login en boucle
 
-- Supprimer manuellement le cookie `auth_token` dans les DevTools du navigateur
+- Supprimer le cookie `auth_token` dans les DevTools du navigateur
 - Se reconnecter
 
-### Réinitialiser complètement l'environnement
+### Réinitialiser complètement l'environnement de dev
 
 ```bash
-docker compose down -v        # Supprimer la base de données
-docker compose up -d          # Recréer le conteneur
-cd backend
-npx prisma migrate reset      # Réappliquer migrations + seed
+docker compose down -v      # Supprimer le conteneur et le volume PostgreSQL
+npm run dev:db              # Recréer PostgreSQL
+npm run db:migrate          # Réappliquer les migrations
+npm run db:seed             # Remettre les données initiales
+```
+
+### Le port 5433 est déjà utilisé
+
+```bash
+lsof -i :5433               # Identifier le processus
+docker compose down         # Arrêter tous les conteneurs du projet
 ```

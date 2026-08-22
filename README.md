@@ -72,6 +72,7 @@ C'est tout. Docker s'occupe de :
 make start    # Démarrer (sans rebuild)
 make stop     # Arrêter (données conservées)
 make restart  # Redémarrer les services
+make dev      # Lancer backend + frontend en local (PostgreSQL reste dans Docker)
 make logs     # Suivre les logs en temps réel
 make reset    # ⚠️  Tout effacer et repartir de zéro
 make help     # Lister toutes les commandes
@@ -91,7 +92,40 @@ docker compose up --build -d  # Rebuild après modification du code
 
 ## Installation manuelle (développement local)
 
-Pour travailler sur le code sans Docker, voir [Docs/INSTALLATION.md](Docs/INSTALLATION.md).
+Pour travailler sur le code sans Docker pour l'application elle-même, voir [Docs/INSTALLATION.md](Docs/INSTALLATION.md).
+
+Résumé rapide :
+
+```bash
+npm install
+npm run dev:db
+npm run db:migrate   # seulement au premier setup ou après nouvelle migration
+npm run db:seed      # seulement pour peupler / réinitialiser
+npm run dev
+```
+
+Cela lance :
+- PostgreSQL dans Docker sur `localhost:5433`
+- le backend Express en local sur `http://localhost:5000`
+- le frontend Next.js en local sur `http://localhost:3000`
+
+En pratique :
+- `npm install` ou `npm i` à la racine installe maintenant les dépendances du workspace backend + frontend
+- `npm run db:migrate` n'est pas à faire à chaque fois
+- `npm run db:seed` n'est pas à faire à chaque fois
+
+### Pourquoi Docker peut relancer une vieille version
+
+Si `docker compose build` échoue, Docker ne produit pas de nouvelle image. Ensuite, `docker compose up -d` redémarre les containers à partir de la dernière image construite avec succès. C'est pour cela que vous pouvez retomber sur une ancienne version malgré un `down` puis `up`.
+
+Pour repartir proprement après un échec réseau pendant l'installation npm :
+
+```bash
+docker compose down
+docker compose build --no-cache backend frontend
+docker compose up -d
+make migrate
+```
 
 ---
 

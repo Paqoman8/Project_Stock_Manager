@@ -19,6 +19,7 @@ import { prisma } from '../config/database';
  */
 export interface SupplierRow {
   id: string;
+  organization_id: string;
   name: string;
   contact_name: string | null;
   email: string | null;
@@ -72,6 +73,7 @@ export interface SupplierFilters {
 
 const SUPPLIER_SELECT = {
   id:               true,
+  organization_id:  true,
   name:             true,
   contact_name:     true,
   email:            true,
@@ -98,11 +100,12 @@ const SUPPLIER_SELECT = {
  * @param filters - { isActive?, search? }
  * @returns Tableau de SupplierRow, potentiellement vide
  */
-export async function findAll(filters: SupplierFilters = {}): Promise<SupplierRow[]> {
+export async function findAll(orgId: string, filters: SupplierFilters = {}): Promise<SupplierRow[]> {
   const { isActive, search } = filters;
 
   return prisma.supplier.findMany({
     where: {
+      organization_id: orgId,
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(search
         ? {
@@ -124,9 +127,9 @@ export async function findAll(filters: SupplierFilters = {}): Promise<SupplierRo
  *
  * @param id - UUID du fournisseur
  */
-export async function findById(id: string): Promise<SupplierRow | null> {
+export async function findById(orgId: string, id: string): Promise<SupplierRow | null> {
   return prisma.supplier.findUnique({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     select: SUPPLIER_SELECT,
   });
 }
@@ -137,9 +140,9 @@ export async function findById(id: string): Promise<SupplierRow | null> {
  *
  * @param email - Adresse email à rechercher
  */
-export async function findByEmail(email: string): Promise<SupplierRow | null> {
-  return prisma.supplier.findUnique({
-    where:  { email },
+export async function findByEmail(orgId: string, email: string): Promise<SupplierRow | null> {
+  return prisma.supplier.findFirst({
+    where:  { organization_id: orgId, email },
     select: SUPPLIER_SELECT,
   });
 }
@@ -150,9 +153,10 @@ export async function findByEmail(email: string): Promise<SupplierRow | null> {
  * @param data - Données du fournisseur à créer
  * @returns Le fournisseur créé
  */
-export async function create(data: CreateSupplierData): Promise<SupplierRow> {
+export async function create(orgId: string, data: CreateSupplierData): Promise<SupplierRow> {
   return prisma.supplier.create({
     data: {
+      organization_id:  orgId,
       name:             data.name,
       contact_name:     data.contact_name     ?? null,
       email:            data.email            ?? null,
@@ -174,7 +178,7 @@ export async function create(data: CreateSupplierData): Promise<SupplierRow> {
  * @returns Le fournisseur mis à jour
  * @throws Prisma P2025 si le fournisseur n'existe pas
  */
-export async function update(id: string, data: UpdateSupplierData): Promise<SupplierRow> {
+export async function update(orgId: string, id: string, data: UpdateSupplierData): Promise<SupplierRow> {
   const updateData: Record<string, unknown> = {};
   if (data.name             !== undefined) updateData.name             = data.name;
   if (data.contact_name     !== undefined) updateData.contact_name     = data.contact_name;
@@ -185,7 +189,7 @@ export async function update(id: string, data: UpdateSupplierData): Promise<Supp
   if (data.is_international !== undefined) updateData.is_international = data.is_international;
 
   return prisma.supplier.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   updateData,
     select: SUPPLIER_SELECT,
   });
@@ -198,9 +202,9 @@ export async function update(id: string, data: UpdateSupplierData): Promise<Supp
  * @param isActive - true pour activer, false pour désactiver
  * @returns Le fournisseur mis à jour
  */
-export async function setActive(id: string, isActive: boolean): Promise<SupplierRow> {
+export async function setActive(orgId: string, id: string, isActive: boolean): Promise<SupplierRow> {
   return prisma.supplier.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   { is_active: isActive },
     select: SUPPLIER_SELECT,
   });

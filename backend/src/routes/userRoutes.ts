@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requireRole } from '../middlewares/roleMiddleware';
+import { requireOrg } from '../middlewares/orgMiddleware';
 import {
   listUsers,
   createUser,
@@ -32,6 +33,7 @@ const userRouter = Router();
 userRouter.get(
   '/',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   listUsers,
 );
@@ -42,6 +44,7 @@ userRouter.get(
 userRouter.post(
   '/',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   createUser,
 );
@@ -52,6 +55,7 @@ userRouter.post(
 userRouter.put(
   '/:id',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   updateUser,
 );
@@ -62,6 +66,7 @@ userRouter.put(
 userRouter.delete(
   '/:id',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   deactivateUser,
 );
@@ -72,6 +77,7 @@ userRouter.delete(
 userRouter.patch(
   '/:id/reactivate',
   requireAuth,
+  requireOrg,
   requireRole('Super Administrateur', 'Administrateur'),
   reactivateUser,
 );

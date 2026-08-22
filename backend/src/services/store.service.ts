@@ -13,12 +13,31 @@ import { prisma } from '../config/database';
 import { logAction } from './audit.service';
 
 // ---------------------------------------------------------------------------
+// Type réservé — "HUB" identifie exclusivement le Hub Central provisionné
+// automatiquement à la création d'une organisation (platform.service.ts).
+// Un utilisateur normal ne peut jamais créer/renommer un établissement avec
+// ce type via l'API publique (createStore / updateStore).
+// ---------------------------------------------------------------------------
+
+const RESERVED_STORE_TYPE = 'HUB';
+
+function assertNotReservedType(type: string | undefined): void {
+  if (type !== undefined && type.trim().toUpperCase() === RESERVED_STORE_TYPE) {
+    throw new Error('STORE_TYPE_RESERVED');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types exposés — contrat entre service et controller
 // ---------------------------------------------------------------------------
 
 /**
  * Un établissement tel que retourné par toutes les fonctions du service.
  * Inclut le compteur d'accès utilisateurs pour l'affichage dans les listes.
+ *
+ * `type` est un champ texte libre : MAGASIN / BOUTIQUE / ENTREPOT sont des
+ * conventions applicatives (proposées dans le formulaire), pas des valeurs
+ * imposées en base. HUB est réservé (voir RESERVED_STORE_TYPE ci-dessus).
  */
 export interface StoreRow {
   id: string;
@@ -28,7 +47,7 @@ export interface StoreRow {
   phone: string | null;
   description: string | null;
   is_protected: boolean;
-  type: 'MAGASIN' | 'BOUTIQUE' | 'ENTREPOT';
+  type: string;
   status: 'ACTIVE' | 'CLOSED';
   closed_at: Date | null;
   _count: { user_access: number };
@@ -39,11 +58,12 @@ export interface StoreRow {
  */
 export interface CreateStoreInput {
   name: string;
-  type: 'MAGASIN' | 'BOUTIQUE' | 'ENTREPOT';
+  type: string;
   location?: string;
   phone?: string;
   description?: string;
   color: string;
+  orgId: string;
 }
 
 /**
@@ -82,8 +102,9 @@ const STORE_SELECT = {
  *
  * @returns Tableau de StoreRow, potentiellement vide
  */
-export async function getAllStores(): Promise<StoreRow[]> {
+export async function getAllStores(orgId: string): Promise<StoreRow[]> {
   return prisma.store.findMany({
+    where:  { organization_id: orgId },
     select: STORE_SELECT,
     orderBy: { name: 'asc' },
   });
@@ -107,14 +128,17 @@ export async function createStore(
   actorName: string,
   ip: string,
 ): Promise<StoreRow> {
+  assertNotReservedType(data.type);
+
   const store = await prisma.store.create({
     data: {
-      name:        data.name,
-      type:        data.type,
-      color:       data.color,
-      location:    data.location    ?? null,
-      phone:       data.phone       ?? null,
-      description: data.description ?? null,
+      name:            data.name,
+      type:            data.type,
+      color:           data.color,
+      location:        data.location    ?? null,
+      phone:           data.phone       ?? null,
+      description:     data.description ?? null,
+      organization_id: data.orgId,
     },
     select: STORE_SELECT,
   });
@@ -130,13 +154,14 @@ export async function createStore(
       targetName: store.name,
       storeId:    store.id,
       storeName:  store.name,
+      orgId:      data.orgId,
       ipAddress:  ip,
     });
   } catch (err) {
     console.error('[audit] Échec du log STORE_CREATED :', err);
   }
 
-  return store;
+  return { ...store, _count: { user_access: 0 } };
 }
 
 /**
@@ -152,12 +177,15 @@ export async function createStore(
  * @throws Error si l'établissement n'existe pas (Prisma P2025)
  */
 export async function updateStore(
+  orgId: string,
   id: string,
   data: UpdateStoreInput,
   actorId: string,
   actorName: string,
   ip: string,
 ): Promise<StoreRow> {
+  assertNotReservedType(data.type);
+
   // On construit l'objet de mise à jour en n'incluant que les champs fournis
   const updateData: Record<string, unknown> = {};
   if (data.name        !== undefined) updateData.name        = data.name;
@@ -168,7 +196,7 @@ export async function updateStore(
   if (data.description !== undefined) updateData.description = data.description;
 
   const store = await prisma.store.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   updateData,
     select: STORE_SELECT,
   });
@@ -184,6 +212,7 @@ export async function updateStore(
       targetName: store.name,
       storeId:    store.id,
       storeName:  store.name,
+      orgId,
       ipAddress:  ip,
       metadata:   { updated_fields: Object.keys(updateData) },
     });
@@ -205,6 +234,7 @@ export async function updateStore(
  * @returns L'établissement mis à jour
  */
 export async function closeStore(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -212,7 +242,7 @@ export async function closeStore(
 ): Promise<StoreRow> {
   // Vérification : un établissement protégé ne peut pas être fermé
   const storeToClose = await prisma.store.findUnique({
-    where: { id },
+    where: { id, organization_id: orgId },
     select: { is_protected: true, name: true },
   });
   if (storeToClose?.is_protected) {
@@ -220,7 +250,7 @@ export async function closeStore(
   }
 
   const store = await prisma.store.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   { status: 'CLOSED', closed_at: new Date() },
     select: STORE_SELECT,
   });
@@ -236,6 +266,7 @@ export async function closeStore(
       targetName: store.name,
       storeId:    store.id,
       storeName:  store.name,
+      orgId,
       ipAddress:  ip,
     });
   } catch (err) {
@@ -256,13 +287,14 @@ export async function closeStore(
  * @returns L'établissement mis à jour
  */
 export async function reopenStore(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
   ip: string,
 ): Promise<StoreRow> {
   const store = await prisma.store.update({
-    where:  { id },
+    where:  { id, organization_id: orgId },
     data:   { status: 'ACTIVE', closed_at: null },
     select: STORE_SELECT,
   });
@@ -278,6 +310,7 @@ export async function reopenStore(
       targetName: store.name,
       storeId:    store.id,
       storeName:  store.name,
+      orgId,
       ipAddress:  ip,
     });
   } catch (err) {
@@ -294,6 +327,8 @@ export async function reopenStore(
  *  - 0 transactions associées
  *  - 0 transferts (from_store ou to_store)
  *  - 0 lignes d'inventaire avec stock_physical > 0 OU stock_reserved > 0
+ *
+ * Un établissement protégé (is_protected) est toujours refusé → Error('STORE_PROTECTED').
  *
  * Si l'établissement possède des données liées → throw Error('STORE_HAS_DEPENDENCIES')
  *
@@ -312,6 +347,7 @@ export async function reopenStore(
  * @throws Error('STORE_HAS_DEPENDENCIES') si des données liées existent
  */
 export async function deleteStore(
+  orgId: string,
   id: string,
   actorId: string,
   actorName: string,
@@ -319,10 +355,17 @@ export async function deleteStore(
 ): Promise<void> {
   // Récupération du nom pour l'audit (avant la suppression)
   const storeRecord = await prisma.store.findUnique({
-    where:  { id },
-    select: { name: true },
+    where:  { id, organization_id: orgId },
+    select: { name: true, is_protected: true },
   });
   const storeName = storeRecord?.name ?? 'inconnu';
+
+  // Un établissement protégé ne peut jamais être supprimé par un membre de
+  // l'organisation (même logique que closeStore). Il garantit notamment
+  // l'intégrité des organisations provisionnées (ex: "Hub Central").
+  if (storeRecord?.is_protected) {
+    throw new Error('STORE_PROTECTED');
+  }
 
   // --- Vérification des dépendances ---
 
@@ -344,6 +387,7 @@ export async function deleteStore(
   // 3. Inventaire avec du stock réel ou réservé
   const nbInventory = await prisma.inventory.count({
     where: {
+      organization_id: orgId,
       store_id: id,
       OR: [
         { stock_physical: { gt: 0 } },
@@ -370,6 +414,7 @@ export async function deleteStore(
       // On ne met PAS storeId ici car la FK AuditLog → Store serait invalide
       // après la suppression. On met juste le nom dénormalisé.
       storeName,
+      orgId,
       ipAddress:  ip,
     });
   } catch (err) {
@@ -378,10 +423,10 @@ export async function deleteStore(
 
   // Suppression des lignes d'inventaire à zéro (non-cascade dans le schéma)
   await prisma.inventory.deleteMany({
-    where: { store_id: id },
+    where: { store_id: id, organization_id: orgId },
   });
 
   // Suppression de l'établissement
   // UserStoreAccess est supprimé en cascade (onDelete: Cascade dans le schéma)
-  await prisma.store.delete({ where: { id } });
+  await prisma.store.delete({ where: { id, organization_id: orgId } });
 }

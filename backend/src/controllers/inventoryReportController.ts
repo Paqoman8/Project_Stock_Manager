@@ -8,16 +8,8 @@ import { ReportStatus } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { resolveActorName, resolveStoreName } from '../services/audit.service';
 import * as reportService from '../services/inventory_report.service';
-
-function formatZodErrors(err: ZodError): string[] {
-  return err.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
-}
-
-function extractIp(req: AuthenticatedRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim() || (req.ip ?? '');
-  return req.ip ?? '';
-}
+import { extractIp } from '../utils/request';
+import { formatZodErrors } from '../utils/zod';
 
 // ---------------------------------------------------------------------------
 // Schémas Zod
@@ -57,6 +49,7 @@ const rejectSchema = z.object({
 
 /** GET /api/inventory-reports */
 export async function getReports(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId     = req.user!.orgId;
   const store_id = req.query.store_id as string | undefined;
   const statusRaw = req.query.status as string | undefined;
 
@@ -65,7 +58,7 @@ export async function getReports(req: AuthenticatedRequest, res: Response): Prom
     : undefined;
 
   try {
-    const reports = await reportService.getReports({ store_id, status });
+    const reports = await reportService.getReports(orgId, { store_id, status });
     res.status(200).json({ success: true, reports });
   } catch (err) {
     console.error('Erreur récupération rapports :', err);
@@ -75,9 +68,10 @@ export async function getReports(req: AuthenticatedRequest, res: Response): Prom
 
 /** GET /api/inventory-reports/:id */
 export async function getReportById(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
   try {
-    const report = await reportService.getReportById(id);
+    const report = await reportService.getReportById(orgId, id);
     res.status(200).json({ success: true, report });
   } catch (error) {
     if (error instanceof Error && error.message === 'REPORT_NOT_FOUND')
@@ -97,6 +91,7 @@ export async function createReport(req: AuthenticatedRequest, res: Response): Pr
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -106,6 +101,7 @@ export async function createReport(req: AuthenticatedRequest, res: Response): Pr
     ]);
 
     const report = await reportService.createReport(
+      orgId,
       {
         store_id:      parseResult.data.store_id,
         period_start:  new Date(parseResult.data.period_start),
@@ -134,6 +130,7 @@ export async function createReport(req: AuthenticatedRequest, res: Response): Pr
 
 /** PUT /api/inventory-reports/:id/lines */
 export async function updateLines(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId = req.user!.orgId;
   const id = req.params.id as string;
 
   const parseResult = updateLinesSchema.safeParse(req.body);
@@ -143,7 +140,7 @@ export async function updateLines(req: AuthenticatedRequest, res: Response): Pro
   }
 
   try {
-    const report = await reportService.updateLines(id, parseResult.data);
+    const report = await reportService.updateLines(orgId, id, parseResult.data);
     res.status(200).json({ success: true, message: 'Lignes mises à jour.', report });
   } catch (error) {
     if (error instanceof Error) {
@@ -159,6 +156,7 @@ export async function updateLines(req: AuthenticatedRequest, res: Response): Pro
 
 /** PATCH /api/inventory-reports/:id/submit */
 export async function submitReport(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -169,7 +167,7 @@ export async function submitReport(req: AuthenticatedRequest, res: Response): Pr
       resolveActorName(actorId),
       resolveStoreName(storeId),
     ]);
-    const report = await reportService.submitReport(id, actorId, actorName, storeId, storeName, ip);
+    const report = await reportService.submitReport(orgId, id, actorId, actorName, storeId, storeName, ip);
     res.status(200).json({ success: true, message: 'Rapport soumis pour validation.', report });
   } catch (error) {
     if (error instanceof Error) {
@@ -185,6 +183,7 @@ export async function submitReport(req: AuthenticatedRequest, res: Response): Pr
 
 /** PATCH /api/inventory-reports/:id/validate */
 export async function validateReport(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -195,7 +194,7 @@ export async function validateReport(req: AuthenticatedRequest, res: Response): 
       resolveActorName(actorId),
       resolveStoreName(storeId),
     ]);
-    const report = await reportService.validateReport(id, actorId, actorId, actorName, storeId, storeName, ip);
+    const report = await reportService.validateReport(orgId, id, actorId, actorId, actorName, storeId, storeName, ip);
     res.status(200).json({ success: true, message: 'Rapport validé.', report });
   } catch (error) {
     if (error instanceof Error) {
@@ -221,6 +220,7 @@ export async function rejectReport(req: AuthenticatedRequest, res: Response): Pr
 
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
+  const orgId   = req.user!.orgId;
   const ip      = extractIp(req);
 
   try {
@@ -228,7 +228,7 @@ export async function rejectReport(req: AuthenticatedRequest, res: Response): Pr
       resolveActorName(actorId),
       resolveStoreName(storeId),
     ]);
-    const report = await reportService.rejectReport(id, parseResult.data.reason, actorId, actorName, storeId, storeName, ip);
+    const report = await reportService.rejectReport(orgId, id, parseResult.data.reason, actorId, actorName, storeId, storeName, ip);
     res.status(200).json({ success: true, message: 'Rapport rejeté.', report });
   } catch (error) {
     if (error instanceof Error) {
@@ -244,6 +244,7 @@ export async function rejectReport(req: AuthenticatedRequest, res: Response): Pr
 
 /** PATCH /api/inventory-reports/:id/apply-adjustments */
 export async function applyAdjustments(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const orgId   = req.user!.orgId;
   const id      = req.params.id as string;
   const actorId = req.user!.userId;
   const storeId = req.user!.storeId;
@@ -254,7 +255,7 @@ export async function applyAdjustments(req: AuthenticatedRequest, res: Response)
       resolveActorName(actorId),
       resolveStoreName(storeId),
     ]);
-    const result = await reportService.applyAdjustments(id, actorId, actorName, storeId, storeName, ip);
+    const result = await reportService.applyAdjustments(orgId, id, actorId, actorName, storeId, storeName, ip);
     res.status(200).json({ success: true, message: `${result.adjustments_count} ajustement(s) appliqué(s).`, ...result });
   } catch (error) {
     if (error instanceof Error) {

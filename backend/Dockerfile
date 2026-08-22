@@ -7,7 +7,10 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-RUN npm install
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm ci
 
 # Copier le reste du code (src/, tsconfig.json, docker-entrypoint.sh, etc.)
 COPY . .
